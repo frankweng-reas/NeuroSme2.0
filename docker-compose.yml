@@ -4,9 +4,9 @@ services:
     container_name: neurosme2.0
     restart: unless-stopped
     environment:
-      POSTGRES_USER: neurosme
-      POSTGRES_PASSWORD: neurosme_secret
-      POSTGRES_DB: neurosme2
+      POSTGRES_USER: ${POSTGRES_USER:-neurosme}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-neurosme2}
     ports:
       - "5434:5432"
     volumes:

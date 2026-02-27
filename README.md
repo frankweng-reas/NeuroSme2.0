@@ -43,6 +43,7 @@ NeuroSme2.0/
 NeuroSme2.0 專用容器，與 local auth 的 PostgreSQL 分開：
 
 ```bash
+cp .env.example .env   # 編輯 .env 設定 POSTGRES_PASSWORD
 docker compose up -d
 ```
 
