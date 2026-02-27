@@ -1,0 +1,16 @@
+services:
+  postgres-neurosme2:
+    image: postgres:16
+    container_name: neurosme2.0
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: neurosme
+      POSTGRES_PASSWORD: neurosme_secret
+      POSTGRES_DB: neurosme2
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_neurosme2_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_neurosme2_data:

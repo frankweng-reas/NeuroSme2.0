@@ -1,0 +1,14 @@
+# FastAPI & Server
+fastapi==0.109.2
+uvicorn[standard]==0.27.1
+
+# Database
+sqlalchemy==2.0.25
+alembic==1.13.1
+asyncpg==0.29.0
+psycopg2-binary==2.9.9
+
+# Utils
+pydantic[email]==2.6.1
+pydantic-settings==2.1.0
+python-dotenv==1.0.1
