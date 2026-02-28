@@ -1,3 +1,10 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  /* 全站最小字型 14px（Tailwind text-xs 已設為 14px） */
+  html {
+    font-size: 16px;
+  }
+}

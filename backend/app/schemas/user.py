@@ -19,3 +19,13 @@ class UserResponse(UserBase):
 
     class Config:
         from_attributes = True
+
+
+class UserAgentsUpdate(BaseModel):
+    """更新使用者可存取的 agent 清單"""
+    agent_ids: list[str]
+
+
+class UserRoleUpdate(BaseModel):
+    """更新使用者角色"""
+    role: str  # 'admin' | 'member'

@@ -120,7 +120,7 @@ export default function HomePage() {
                         <div className={`flex h-10 w-10 flex-shrink-0 items-center justify-center overflow-hidden rounded-lg transition-all duration-300 group-hover:scale-105 ${colors.iconBg}`}>
                           <AgentIcon iconName={agent.icon_name} className={`h-5 w-5 ${colors.iconColor}`} />
                         </div>
-                        <h3 className="ml-3 min-w-0 flex-1 truncate text-base font-semibold text-gray-900 transition-colors duration-200 group-hover:text-gray-700">
+                        <h3 className="ml-3 min-w-0 flex-1 truncate text-lg font-semibold text-gray-900 transition-colors duration-200 group-hover:text-gray-700">
                           {agent.agent_name}
                         </h3>
                       </div>

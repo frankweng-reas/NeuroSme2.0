@@ -8,7 +8,7 @@ import type { User } from '@/types'
 export default function Layout() {
   const location = useLocation()
   const navigate = useNavigate()
-  const hideHeader = location.pathname.startsWith('/agent/') || location.pathname === '/admin'
+  const hideHeader = location.pathname.startsWith('/agent/') || location.pathname.startsWith('/admin') || location.pathname === '/dev-test-chat'
   const [user, setUser] = useState<User | null>(null)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const userMenuRef = useRef<HTMLDivElement>(null)

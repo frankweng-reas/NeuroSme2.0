@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "postgresql://user:password@localhost:5432/neurosme"
 
+    # OpenAI
+    OPENAI_API_KEY: str = ""
+
     # CORS
     CORS_ORIGINS: List[str] = [
         "http://localhost:3000",
