@@ -1,3 +1,4 @@
+"""應用設定：專案名、API 路徑、資料庫 URL、CORS 來源"""
 from pydantic_settings import BaseSettings
 from typing import List
 

@@ -1,3 +1,4 @@
+"""Alembic 遷移環境：載入 models、設定 DB URL、執行 upgrade/downgrade"""
 from logging.config import fileConfig
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool

@@ -1,4 +1,4 @@
-"""Add icon_name to agents
+"""遷移：agents 表新增 icon_name 欄位
 
 Revision ID: 002
 Revises: 001

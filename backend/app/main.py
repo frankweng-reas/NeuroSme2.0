@@ -1,3 +1,4 @@
+"""FastAPI 應用入口：CORS、API 路由、health check"""
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 

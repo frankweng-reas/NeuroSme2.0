@@ -1,3 +1,4 @@
+/** 依 icon_name 顯示對應 Lucide 圖示，無則用 MessageCircle */
 import {
   MessageCircle,
   Bot,
@@ -7,6 +8,7 @@ import {
   Zap,
   ChartNoAxesCombined,
   UsersRound,
+  Calculator,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -19,6 +21,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
   Zap,
   ChartNoAxesCombined,
   UsersRound,
+  Calculator
 }
 
 const DEFAULT_ICON = MessageCircle

@@ -1,8 +1,9 @@
+"""Agent API 回應結構 (AgentResponse)"""
 from pydantic import BaseModel
 
 
 class AgentResponse(BaseModel):
-    id: int
+    id: str
     group_id: str
     group_name: str
     agent_id: str

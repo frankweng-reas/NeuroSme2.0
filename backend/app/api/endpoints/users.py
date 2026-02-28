@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException
+"""Users API：GET /users/ 列表、GET /users/by-email 依 email 查詢、POST /users/ 註冊"""
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -6,6 +7,17 @@ from app.models.user import User
 from app.schemas.user import UserCreate, UserResponse
 
 router = APIRouter()
+
+
+@router.get("/by-email", response_model=UserResponse)
+def get_user_by_email(
+    email: str = Query(..., description="使用者 email"),
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
 
 
 @router.get("/", response_model=list[UserResponse])

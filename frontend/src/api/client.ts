@@ -1,5 +1,15 @@
 const API_BASE = '/api/v1'
 
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public status: number
+  ) {
+    super(message)
+    this.name = 'ApiError'
+  }
+}
+
 export async function apiFetch<T>(
   endpoint: string,
   options?: RequestInit
@@ -13,7 +23,7 @@ export async function apiFetch<T>(
   })
 
   if (!response.ok) {
-    throw new Error(`API Error: ${response.status}`)
+    throw new ApiError(`API Error: ${response.status}`, response.status)
   }
 
   return response.json()

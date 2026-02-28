@@ -56,10 +56,9 @@ docker compose up -d
 ```bash
 cd backend
 python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-pip install -r requirements.txt
+./venv/bin/pip install -r requirements.txt
 cp .env.example .env      # 已預設 Docker 連線
-uvicorn app.main:app --reload --port 8000
+./venv/bin/uvicorn app.main:app --reload --port 8000
 # 若 8000 被佔用：port 8001，並在 frontend/.env 設 VITE_API_PORT=8001
 ```
 
@@ -80,8 +79,8 @@ npm run dev
 ```bash
 cd backend
 # 確保 Docker PostgreSQL 已啟動
-alembic revision --autogenerate -m "Initial migration"
-alembic upgrade head
+./venv/bin/alembic revision --autogenerate -m "描述"
+./venv/bin/alembic upgrade head
 ```
 
 ## 技術棧

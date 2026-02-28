@@ -1,4 +1,4 @@
-"""Add agents table
+"""遷移：建立 agents 表
 
 Revision ID: 001
 Revises: None
