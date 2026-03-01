@@ -27,6 +27,11 @@ const STORAGE_KEY = 'dev-test-chat'
 const MODEL_OPTIONS = [
   { value: 'gpt-4o-mini', label: 'gpt-4o-mini' },
   { value: 'gpt-4o', label: 'gpt-4o' },
+  { value: 'gemini/gemini-2.0-flash', label: 'gemini-2.0-flash' },
+  { value: 'gemini/gemini-2.5-flash', label: 'gemini-2.5-flash' },
+  { value: 'gemini/gemini-1.5-pro', label: 'gemini-1.5-pro' },
+  { value: 'gemini/gemini-pro', label: 'gemini-pro' },
+  { value: 'twcc/Llama3.1-FFM-8B-32K', label: '台智雲 Llama3.1-FFM-8B' },
 ] as const
 
 interface StoredState {
@@ -258,13 +263,12 @@ export default function TestLLMChat() {
           : undefined
       setMessages((prev) => [...prev, { role: 'assistant', content: res.content, meta }])
     } catch (err) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: 'assistant',
-          content: `錯誤：${err instanceof ApiError ? (err.detail ?? err.message) : err instanceof Error ? err.message : '未知錯誤'}`,
-        },
-      ])
+      let msg = '未知錯誤'
+      if (err instanceof ApiError) msg = err.detail ?? err.message
+      else if (err instanceof Error) {
+        msg = err.name === 'AbortError' ? '請求逾時，請檢查網路或稍後再試' : err.message
+      }
+      setMessages((prev) => [...prev, { role: 'assistant', content: `錯誤：${msg}` }])
     } finally {
       setIsLoading(false)
     }

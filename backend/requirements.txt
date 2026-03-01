@@ -12,8 +12,8 @@ psycopg2-binary==2.9.9
 pytest==8.0.0
 httpx>=0.24.0,<0.26
 
-# OpenAI
-openai>=1.0.0
+# LLM（LiteLLM 統一支援 OpenAI / Gemini）
+litellm>=1.30.0
 
 # Utils
 pydantic[email]==2.6.1

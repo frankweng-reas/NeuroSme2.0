@@ -1,14 +1,38 @@
 """FastAPI 應用入口：CORS、API 路由、health check"""
-from fastapi import FastAPI
+import logging
+from contextlib import asynccontextmanager
+
+import aiohttp
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+import litellm
+from litellm.llms.custom_httpx.aiohttp_handler import BaseLLMAIOHTTPHandler
 
 from app.api import router as api_router
 from app.core.config import settings
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """LiteLLM 建議：在 FastAPI 中注入 aiohttp session，避免 acompletion 在 event loop 中出錯"""
+    session = aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=180),
+        connector=aiohttp.TCPConnector(limit=300),
+    )
+    litellm.base_llm_aiohttp_handler = BaseLLMAIOHTTPHandler(client_session=session)
+    yield
+    await session.close()
+
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -20,6 +44,26 @@ app.add_middleware(
 )
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
+
+
+@app.middleware("http")
+async def log_requests(request, call_next):
+    logger.info(f"Request: {request.method} {request.url.path}")
+    response = await call_next(request)
+    logger.info(f"Response: {response.status_code} for {request.url.path}")
+    return response
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    from fastapi import HTTPException as FastAPIHTTPException
+    if isinstance(exc, FastAPIHTTPException):
+        raise exc
+    logger.exception(f"未處理的例外: {request.url.path}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": str(exc)},
+    )
 
 
 @app.get("/health")

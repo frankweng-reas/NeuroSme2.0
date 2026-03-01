@@ -11,8 +11,11 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "postgresql://user:password@localhost:5432/neurosme"
 
-    # OpenAI
+    # LLM API Keys (LiteLLM 支援 OpenAI / Gemini / 台智雲)
     OPENAI_API_KEY: str = ""
+    GEMINI_API_KEY: str = ""
+    TWCC_API_KEY: str = ""
+    TWCC_API_BASE: str = ""  # 台智雲端點，例：https://xxx.twcc.ai/v1
 
     # CORS
     CORS_ORIGINS: List[str] = [
