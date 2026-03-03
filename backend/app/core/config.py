@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "postgresql://user:password@localhost:5432/neurosme"
 
+    # Chat 參考資料字元上限，超過則回傳 413 要求用戶縮小範圍
+    CHAT_DATA_MAX_CHARS: int = 100_000
+
     # LLM API Keys (LiteLLM 支援 OpenAI / Gemini / 台智雲)
     OPENAI_API_KEY: str = ""
     GEMINI_API_KEY: str = ""

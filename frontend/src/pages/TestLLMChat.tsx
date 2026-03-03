@@ -1,7 +1,7 @@
 /** 隱藏測試頁：LLM 聊天測試，僅可透過 /dev-test-chat 存取 */
 import { useState, useRef, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowLeft, Copy, GripHorizontal, GripVertical, Trash2, Upload, X } from 'lucide-react'
+import { ArrowLeft, Copy, GripHorizontal, GripVertical, Loader2, Trash2, Upload, X } from 'lucide-react'
 import { chatCompletionsDev } from '@/api/chat'
 import { ApiError } from '@/api/client'
 
@@ -29,6 +29,7 @@ const MODEL_OPTIONS = [
   { value: 'gpt-4o', label: 'gpt-4o' },
   { value: 'gemini/gemini-2.0-flash', label: 'gemini-2.0-flash' },
   { value: 'gemini/gemini-2.5-flash', label: 'gemini-2.5-flash' },
+  { value: 'gemini/gemini-2.5-flash-lite', label: 'gemini-2.5-flash-lite' },
   { value: 'gemini/gemini-1.5-pro', label: 'gemini-1.5-pro' },
   { value: 'gemini/gemini-pro', label: 'gemini-pro' },
   { value: 'twcc/Llama3.1-FFM-8B-32K', label: '台智雲 Llama3.1-FFM-8B' },
@@ -527,7 +528,15 @@ export default function TestLLMChat() {
                 </ul>
               )}
               {isLoading && (
-                <p className="mt-2 text-lg text-gray-500">助理思考中...</p>
+                <p className="mt-2 flex items-center gap-2 text-lg text-gray-500">
+                  <Loader2 className="h-5 w-5 shrink-0 animate-spin" aria-hidden />
+                  <span>助理思考中</span>
+                  <span className="animate-thinking-dots inline-flex">
+                    <span>.</span>
+                    <span>.</span>
+                    <span>.</span>
+                  </span>
+                </p>
               )}
             </div>
 

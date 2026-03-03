@@ -130,7 +130,29 @@ def _get_selected_source_files_content(db: Session, user_id: int, tenant_id: str
         .order_by(SourceFile.file_name)
         .all()
     )
-    return "\n\n".join(r[0] for r in rows if r[0])
+    result = "\n\n".join(r[0] for r in rows if r[0])
+    if not result.strip():
+        # 診斷：查詢同條件下總檔案數與已選取數
+        total = db.query(SourceFile).filter(
+            SourceFile.user_id == user_id,
+            SourceFile.tenant_id == tenant_id,
+            SourceFile.agent_id == agent_id,
+        ).count()
+        selected = db.query(SourceFile).filter(
+            SourceFile.user_id == user_id,
+            SourceFile.tenant_id == tenant_id,
+            SourceFile.agent_id == agent_id,
+            SourceFile.is_selected.is_(True),
+        ).count()
+        logger.info(
+            "chat 查詢參考資料為空: user_id=%s tenant_id=%r aid=%r → 總檔案=%d 已選取=%d",
+            user_id,
+            tenant_id,
+            agent_id,
+            total,
+            selected,
+        )
+    return result
 
 
 def _load_system_prompt_from_file() -> str:
@@ -160,6 +182,23 @@ async def chat_completions(
     try:
         tenant_id, aid = _check_agent_access(db, current, req.agent_id.strip())
         data = _get_selected_source_files_content(db, current.id, tenant_id, aid)
+        data_len = len(data.strip()) if data else 0
+        max_chars = settings.CHAT_DATA_MAX_CHARS
+        if data_len > max_chars:
+            raise HTTPException(
+                status_code=413,
+                detail=f"參考資料超過 {max_chars:,} 字元（目前約 {data_len:,} 字元），請減少選用的來源檔案後再試。",
+            )
+        if data_len == 0:
+            logger.warning(
+                "chat_completions: 無參考資料 (agent_id=%r, tenant_id=%r, aid=%r, user_id=%s) - 請在該 agent 頁面左欄上傳並勾選來源檔案",
+                req.agent_id,
+                tenant_id,
+                aid,
+                current.id,
+            )
+        else:
+            logger.info("chat_completions: 已載入參考資料 %d 字元", data_len)
 
         model = (req.model or "").strip() or "gpt-4o-mini"
         litellm_model, api_key, api_base = _get_llm_params(model)

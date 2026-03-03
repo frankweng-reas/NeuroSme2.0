@@ -1,7 +1,7 @@
 /** agent_id 含 business 時使用：商務型 agent 專用 UI */
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowLeft, ChevronsLeft, ChevronsRight, Copy, RefreshCw } from 'lucide-react'
+import { ArrowLeft, ChevronsLeft, ChevronsRight, Copy, Loader2, RefreshCw } from 'lucide-react'
 import { Group, Panel, PanelImperativeHandle, Separator } from 'react-resizable-panels'
 import { chatCompletions } from '@/api/chat'
 import { ApiError } from '@/api/client'
@@ -32,6 +32,9 @@ interface StoredState {
   messages: Message[]
   userPrompt: string
   model: string
+  role: string
+  language: string
+  detailLevel: string
 }
 
 function loadStored(agentId: string): Partial<StoredState> | null {
@@ -57,9 +60,27 @@ const MODEL_OPTIONS = [
   { value: 'gpt-4o', label: 'gpt-4o' },
   { value: 'gemini/gemini-2.0-flash', label: 'gemini-2.0-flash' },
   { value: 'gemini/gemini-2.5-flash', label: 'gemini-2.5-flash' },
+  { value: 'gemini/gemini-2.5-flash-lite', label: 'gemini-2.5-flash-lite' },
   { value: 'gemini/gemini-1.5-pro', label: 'gemini-1.5-pro' },
   { value: 'gemini/gemini-pro', label: 'gemini-pro' },
   { value: 'twcc/Llama3.1-FFM-8B-32K', label: '台智雲 Llama3.1-FFM-8B' },
+] as const
+
+const ROLE_OPTIONS = [
+  { value: 'manager', label: '管理者', prompt: '以管理者的角度來分析。' },
+  { value: 'boss', label: '老闆', prompt: '以老闆的角度來分析。' },
+  { value: 'employee', label: '員工', prompt: '以員工的角度來分析。' },
+] as const
+
+const LANGUAGE_OPTIONS = [
+  { value: 'zh-TW', label: '繁中', prompt: '請用繁體中文回覆。' },
+  { value: 'en', label: '英文', prompt: 'Please respond in English.' },
+] as const
+
+const DETAIL_OPTIONS = [
+  { value: 'brief', label: '簡要', prompt: '請簡要回答（3–5 點重點）。' },
+  { value: 'standard', label: '標準', prompt: '請以標準詳細程度回答。' },
+  { value: 'detailed', label: '詳細', prompt: '請詳細分析，包含數據與推論。' },
 ] as const
 
 function ResizeHandle({ className = '' }: { className?: string }) {
@@ -80,6 +101,9 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
   const aiPanelRef = useRef<PanelImperativeHandle>(null)
   const [model, setModel] = useState(() => loadStored(agent.id)?.model ?? 'gpt-4o-mini')
   const [userPrompt, setUserPrompt] = useState(() => loadStored(agent.id)?.userPrompt ?? '')
+  const [role, setRole] = useState(() => loadStored(agent.id)?.role ?? 'manager')
+  const [language, setLanguage] = useState(() => loadStored(agent.id)?.language ?? 'zh-TW')
+  const [detailLevel, setDetailLevel] = useState(() => loadStored(agent.id)?.detailLevel ?? 'brief')
   const [messages, setMessages] = useState<Message[]>(() => loadStored(agent.id)?.messages ?? [])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -97,8 +121,23 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
       messages,
       userPrompt,
       model,
+      role,
+      language,
+      detailLevel,
     })
-  }, [agent.id, messages, userPrompt, model])
+  }, [agent.id, messages, userPrompt, model, role, language, detailLevel])
+
+  function buildUserPrompt(): string {
+    const parts: string[] = []
+    const roleOpt = ROLE_OPTIONS.find((o) => o.value === role)
+    const langOpt = LANGUAGE_OPTIONS.find((o) => o.value === language)
+    const detailOpt = DETAIL_OPTIONS.find((o) => o.value === detailLevel)
+    if (roleOpt) parts.push(roleOpt.prompt)
+    if (langOpt) parts.push(langOpt.prompt)
+    if (detailOpt) parts.push(detailOpt.prompt)
+    if (userPrompt.trim()) parts.push(userPrompt.trim())
+    return parts.join(' ')
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -113,7 +152,7 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
       const res = await chatCompletions({
         agent_id: agent.id,
         system_prompt: '',
-        user_prompt: userPrompt,
+        user_prompt: buildUserPrompt(),
         data: '',
         model,
         messages: [],
@@ -267,7 +306,15 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
                 </ul>
               )}
               {isLoading && (
-                <p className="mt-2 text-[18px] text-gray-500">助理思考中...</p>
+                <p className="mt-2 flex items-center gap-2 text-[18px] text-gray-500">
+                  <Loader2 className="h-5 w-5 shrink-0 animate-spin" aria-hidden />
+                  <span>助理思考中</span>
+                  <span className="animate-thinking-dots inline-flex">
+                    <span>.</span>
+                    <span>.</span>
+                    <span>.</span>
+                  </span>
+                </p>
               )}
             </div>
             <form onSubmit={handleSubmit} className="flex gap-2">
@@ -315,7 +362,7 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
           </header>
           <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden border-b border-gray-200 bg-gray-50 px-4 py-3">
             <div className="flex min-w-0 shrink-0 flex-wrap items-center gap-3 overflow-x-auto">
-              <label className="shrink-0 text-[18px] font-medium text-gray-700">Model</label>
+              <label className="shrink-0 text-[18px] font-medium text-gray-700">模型</label>
               <select
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
@@ -328,13 +375,55 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
                 ))}
               </select>
             </div>
+            <div className="flex min-w-0 shrink-0 flex-wrap items-center gap-3 overflow-x-auto">
+              <label className="shrink-0 text-[18px] font-medium text-gray-700">角色</label>
+              <select
+                value={role}
+                onChange={(e) => setRole(e.target.value)}
+                className="min-w-[100px] shrink-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-[18px] text-gray-800 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400"
+              >
+                {ROLE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex min-w-0 shrink-0 flex-wrap items-center gap-3 overflow-x-auto">
+              <label className="shrink-0 text-[18px] font-medium text-gray-700">語言</label>
+              <select
+                value={language}
+                onChange={(e) => setLanguage(e.target.value)}
+                className="min-w-[100px] shrink-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-[18px] text-gray-800 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400"
+              >
+                {LANGUAGE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex min-w-0 shrink-0 flex-wrap items-center gap-3 overflow-x-auto">
+              <label className="shrink-0 text-[18px] font-medium text-gray-700">詳細程度</label>
+              <select
+                value={detailLevel}
+                onChange={(e) => setDetailLevel(e.target.value)}
+                className="min-w-[100px] shrink-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-[18px] text-gray-800 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400"
+              >
+                {DETAIL_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div className="flex min-h-0 flex-1 flex-col gap-2">
-              <label className="shrink-0 text-[18px] font-medium text-gray-700">User Prompt</label>
+              <label className="shrink-0 text-[18px] font-medium text-gray-700">其他設定 - User Prompt</label>
               <div className="min-h-0 flex-1">
                 <textarea
                   value={userPrompt}
                   onChange={(e) => setUserPrompt(e.target.value)}
-                  placeholder="輸入你對AI的要求，如輸出語言，格式，資料辭典...等等"
+                  placeholder="額外要求（選填），如格式、資料辭典等"
                   className="h-full min-h-[120px] w-full resize-y rounded-lg border border-gray-300 bg-white p-3 text-[18px] text-gray-800 placeholder:text-gray-400 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400"
                 />
               </div>

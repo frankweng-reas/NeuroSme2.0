@@ -8,3 +8,33 @@
     font-size: 16px;
   }
 }
+
+/* 助理思考中：點點波浪動畫（依序淡入淡出） */
+@keyframes thinking-dot {
+  0%, 100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.animate-thinking-dots {
+  margin-left: 2px;
+}
+
+.animate-thinking-dots span {
+  display: inline-block;
+  min-width: 0.4em;
+  animation: thinking-dot 0.8s ease-in-out infinite;
+}
+
+.animate-thinking-dots span:nth-child(1) {
+  animation-delay: 0s;
+}
+.animate-thinking-dots span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.animate-thinking-dots span:nth-child(3) {
+  animation-delay: 0.3s;
+}
