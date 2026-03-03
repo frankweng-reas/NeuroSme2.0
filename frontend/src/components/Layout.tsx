@@ -32,11 +32,11 @@ export default function Layout() {
   }, [userMenuOpen])
 
   return (
-    <div className="flex h-screen flex-col bg-gray-50">
+    <div className="flex h-screen flex-col bg-gradient-to-b from-stone-200 to-stone-300">
       {/* Header - 在 agent 頁面隱藏 */}
       {!hideHeader && (
       <header
-        className="flex-shrink-0 border-b border-gray-200 shadow-sm"
+        className="flex-shrink-0 border-b border-gray-300/50 shadow-md"
         style={{ backgroundColor: '#4b5563' }}
       >
         <div className="container mx-auto px-4">

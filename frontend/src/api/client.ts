@@ -40,8 +40,17 @@ export async function apiFetch<T>(
   if (response.status === 401) {
     localStorage.removeItem(TOKEN_KEY)
     localStorage.removeItem('neurosme_user')
-    window.location.href = '/login'
+    // 儲存當前路徑，登入後可導回
+    const returnPath = window.location.pathname + window.location.search
+    if (returnPath && returnPath !== '/login' && returnPath !== '/register') {
+      sessionStorage.setItem('login_return_url', returnPath)
+    }
+    window.location.href = '/login?expired=1'
     throw new ApiError('未授權，請重新登入', 401)
+  }
+
+  if (response.status === 204) {
+    return undefined as T
   }
 
   if (!response.ok) {

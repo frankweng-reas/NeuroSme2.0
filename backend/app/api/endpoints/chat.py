@@ -1,14 +1,19 @@
 """Chat API：POST /chat/completions（LiteLLM 統一支援 OpenAI / Gemini / 台智雲）"""
 import logging
 import os
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 import litellm
+from sqlalchemy.orm import Session
 
+from app.api.endpoints.source_files import _check_agent_access
 from app.core.config import settings
+from app.core.database import get_db
 from app.core.security import get_current_user
+from app.models.source_file import SourceFile
 from app.models.user import User
 
 router = APIRouter()
@@ -38,9 +43,10 @@ class ChatMessage(BaseModel):
 
 
 class ChatRequest(BaseModel):
+    agent_id: str = ""  # chat.py 必填；chat_dev 不填
     system_prompt: str = ""
     user_prompt: str = ""
-    data: str = ""  # Data 區塊內容，作為參考資料併入 system
+    data: str = ""  # 保留，chat.py 由後端組 data 時忽略
     model: str = "gpt-4o-mini"
     messages: list[ChatMessage] = []
     content: str  # 新使用者訊息
@@ -59,14 +65,17 @@ class ChatResponse(BaseModel):
     finish_reason: str | None = None
 
 
-def _build_messages(req: ChatRequest) -> list[dict]:
-    """組裝 OpenAI messages 格式"""
+def _build_messages(req: ChatRequest, data: str = "") -> list[dict]:
+    """組裝 OpenAI messages 格式。data 由後端依 agent_id 查詢已選取來源檔案組出"""
     msgs: list[dict] = []
     system_parts: list[str] = []
+    file_prompt = _load_system_prompt_from_file()
+    if file_prompt:
+        system_parts.append(file_prompt)
     if req.system_prompt.strip():
         system_parts.append(req.system_prompt.strip())
-    if req.data.strip():
-        system_parts.append(f"以下為參考資料：\n\n{req.data.strip()}")
+    if data.strip():
+        system_parts.append(f"以下為參考資料：\n\n{data.strip()}")
     if system_parts:
         msgs.append({"role": "system", "content": "\n\n".join(system_parts)})
     for m in req.messages:
@@ -108,13 +117,50 @@ def _get_provider_name(model: str) -> str:
     return "OpenAI"
 
 
+def _get_selected_source_files_content(db: Session, user_id: int, tenant_id: str, agent_id: str) -> str:
+    """依 user_id, tenant_id, agent_id 查詢已選取來源檔案的 content，拼接回傳"""
+    rows = (
+        db.query(SourceFile.content)
+        .filter(
+            SourceFile.user_id == user_id,
+            SourceFile.tenant_id == tenant_id,
+            SourceFile.agent_id == agent_id,
+            SourceFile.is_selected.is_(True),
+        )
+        .order_by(SourceFile.file_name)
+        .all()
+    )
+    return "\n\n".join(r[0] for r in rows if r[0])
+
+
+def _load_system_prompt_from_file() -> str:
+    """每次請求時讀取 config/system_prompt_analysis.md，開發人員專用，改檔即生效無需重啟"""
+    base = Path(__file__).resolve().parents[3]  # backend/ 或 Docker 的 /app
+    # 本地：config 在專案根；Docker：volume 掛載於 /app/config
+    for root in (base.parent / "config", base / "config"):
+        path = root / "system_prompt_analysis.md"
+        if path.exists():
+            try:
+                return path.read_text(encoding="utf-8").strip()
+            except (OSError, IOError) as e:
+                logger.debug("system_prompt_analysis.md 讀取失敗: %s", e)
+                return ""
+    return ""
+
+
 @router.post("/completions", response_model=ChatResponse)
 async def chat_completions(
     req: ChatRequest,
+    db: Annotated[Session, Depends(get_db)] = ...,
     current: Annotated[User, Depends(get_current_user)] = ...,
 ):
     logger.info(f"chat_completions: model={req.model!r}, content_len={len(req.content) if req.content else 0}")
+    if not (req.agent_id or "").strip():
+        raise HTTPException(status_code=400, detail="agent_id is required")
     try:
+        tenant_id, aid = _check_agent_access(db, current, req.agent_id.strip())
+        data = _get_selected_source_files_content(db, current.id, tenant_id, aid)
+
         model = (req.model or "").strip() or "gpt-4o-mini"
         litellm_model, api_key, api_base = _get_llm_params(model)
 
@@ -129,7 +175,7 @@ async def chat_completions(
                 detail="台智雲 TWCC_API_BASE 未設定，請在 .env 中設定",
             )
 
-        messages = _build_messages(req)
+        messages = _build_messages(req, data=data)
         if model.startswith("gemini/"):
             os.environ["GEMINI_API_KEY"] = api_key
         elif model.startswith("twcc/"):

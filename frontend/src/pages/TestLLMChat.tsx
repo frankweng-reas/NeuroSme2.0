@@ -2,7 +2,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowLeft, Copy, GripHorizontal, GripVertical, Trash2, Upload, X } from 'lucide-react'
-import { chatCompletions } from '@/api/chat'
+import { chatCompletionsDev } from '@/api/chat'
 import { ApiError } from '@/api/client'
 
 interface ResponseMeta {
@@ -245,7 +245,7 @@ export default function TestLLMChat() {
     setIsLoading(true)
 
     try {
-      const res = await chatCompletions({
+      const res = await chatCompletionsDev({
         system_prompt: systemPrompt,
         user_prompt: userPrompt,
         data: dataContent,
@@ -536,6 +536,9 @@ export default function TestLLMChat() {
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && e.nativeEvent.isComposing) e.preventDefault()
+                }}
                 placeholder="輸入訊息..."
                 className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-lg focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 disabled={isLoading}

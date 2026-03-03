@@ -1,13 +1,17 @@
 /** 登入頁：呼叫 LocalAuth /auth/login */
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
+
+const RETURN_URL_KEY = 'login_return_url'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [searchParams] = useSearchParams()
+  const isExpired = searchParams.get('expired') === '1'
   const { login } = useAuth()
   const navigate = useNavigate()
 
@@ -17,7 +21,13 @@ export default function LoginPage() {
     setLoading(true)
     try {
       await login(email, password)
-      navigate('/', { replace: true })
+      const returnUrl = sessionStorage.getItem(RETURN_URL_KEY)
+      if (returnUrl) {
+        sessionStorage.removeItem(RETURN_URL_KEY)
+        navigate(returnUrl, { replace: true })
+      } else {
+        navigate('/', { replace: true })
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : '登入失敗')
     } finally {
@@ -29,6 +39,14 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-gray-100 px-4">
       <div className="w-full max-w-md rounded-xl border border-gray-200 bg-white p-8 shadow-lg">
         <h1 className="mb-6 text-center text-2xl font-bold text-gray-800">NeuroSme 登入</h1>
+        {isExpired && (
+          <div
+            className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"
+            role="alert"
+          >
+            您的登入已過期，請重新登入以繼續操作
+          </div>
+        )}
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label htmlFor="email" className="block text-sm font-medium text-gray-700">

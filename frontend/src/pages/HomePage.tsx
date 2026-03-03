@@ -40,8 +40,8 @@ export default function HomePage() {
   return (
     <div className="container mx-auto px-4 py-8">
       <div className="mx-auto max-w-7xl">
-        {/* 標題和按鈕區域 - ReadyQA 風格 */}
-        <div className="mb-8 rounded-2xl border-2 border-gray-300 bg-gray-50 px-8 py-6 shadow-lg">
+        {/* 標題和按鈕區域 */}
+        <div className="mb-8 rounded-2xl border border-gray-200/80 bg-white px-8 py-6 shadow-md ring-1 ring-gray-200/50">
           <div className="flex items-center justify-between">
             <div>
               <h1 className="mb-2 text-3xl font-bold text-gray-900">
@@ -69,7 +69,7 @@ export default function HomePage() {
           </div>
         ) : groups.length === 0 ? (
           <div className="py-16 text-center">
-            <div className="mx-auto mb-4 flex h-24 w-24 items-center justify-center rounded-full bg-gray-100">
+            <div className="mx-auto mb-4 flex h-24 w-24 items-center justify-center rounded-full bg-gray-100/80 ring-1 ring-gray-200/50">
               <svg
                 className="h-12 w-12 text-gray-400"
                 fill="none"

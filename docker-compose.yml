@@ -1,4 +1,19 @@
 services:
+  backend:
+    build: ./backend
+    container_name: neurosme2-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - backend/.env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-neurosme}:${POSTGRES_PASSWORD}@postgres-neurosme2:5432/${POSTGRES_DB:-neurosme2}
+    depends_on:
+      - postgres-neurosme2
+    volumes:
+      - ./config:/app/config
+
   postgres-neurosme2:
     image: postgres:16
     container_name: neurosme2.0
