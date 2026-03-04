@@ -1,21 +1,15 @@
 /** agent_id 含 business 時使用：商務型 agent 專用 UI */
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { ChevronsLeft, ChevronsRight, HelpCircle, RefreshCw } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { ChevronsLeft, ChevronsRight, RefreshCw } from 'lucide-react'
 import { Group, Panel, PanelImperativeHandle, Separator } from 'react-resizable-panels'
 import { chatCompletions } from '@/api/chat'
 import { ApiError } from '@/api/client'
-import {
-  createPromptTemplate,
-  deletePromptTemplate,
-  listPromptTemplates,
-  updatePromptTemplate,
-  type PromptTemplateItem,
-} from '@/api/promptTemplates'
+import AISettingsPanel from '@/components/AISettingsPanel'
 import AgentChat, { type Message, type ResponseMeta } from '@/components/AgentChat'
 import AgentHeader from '@/components/AgentHeader'
 import ConfirmModal from '@/components/ConfirmModal'
-import HelpModal from '@/components/HelpModal'
 import SourceFileManager from '@/components/SourceFileManager'
+import { DETAIL_OPTIONS, LANGUAGE_OPTIONS, ROLE_OPTIONS } from '@/constants/aiOptions'
 import type { Agent } from '@/types'
 
 interface AgentBusinessUIProps {
@@ -52,34 +46,6 @@ function saveStored(agentId: string, state: StoredState) {
   }
 }
 
-const MODEL_OPTIONS = [
-  { value: 'gpt-4o-mini', label: 'gpt-4o-mini' },
-  { value: 'gpt-4o', label: 'gpt-4o' },
-  { value: 'gemini/gemini-2.0-flash', label: 'gemini-2.0-flash' },
-  { value: 'gemini/gemini-2.5-flash', label: 'gemini-2.5-flash' },
-  { value: 'gemini/gemini-2.5-flash-lite', label: 'gemini-2.5-flash-lite' },
-  { value: 'gemini/gemini-1.5-pro', label: 'gemini-1.5-pro' },
-  { value: 'gemini/gemini-pro', label: 'gemini-pro' },
-  { value: 'twcc/Llama3.1-FFM-8B-32K', label: '台智雲 Llama3.1-FFM-8B' },
-] as const
-
-const ROLE_OPTIONS = [
-  { value: 'manager', label: '管理者', prompt: '以管理者的角度來分析。' },
-  { value: 'boss', label: '老闆', prompt: '以老闆的角度來分析。' },
-  { value: 'employee', label: '員工', prompt: '以員工的角度來分析。' },
-] as const
-
-const LANGUAGE_OPTIONS = [
-  { value: 'zh-TW', label: '繁中', prompt: '請用繁體中文回覆。' },
-  { value: 'en', label: '英文', prompt: 'Please respond in English.' },
-] as const
-
-const DETAIL_OPTIONS = [
-  { value: 'brief', label: '簡要', prompt: '請簡要回答（3–5 點重點）。' },
-  { value: 'standard', label: '標準', prompt: '請以標準詳細程度回答。' },
-  { value: 'detailed', label: '詳細', prompt: '請詳細分析，包含數據與推論。' },
-] as const
-
 function ResizeHandle({ className = '' }: { className?: string }) {
   return (
     <Separator
@@ -105,38 +71,9 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
   const [isLoading, setIsLoading] = useState(false)
   const [toastMessage, setToastMessage] = useState<string | null>(null)
   const [showClearConfirm, setShowClearConfirm] = useState(false)
-  const [showHelpModal, setShowHelpModal] = useState(false)
-  const [templates, setTemplates] = useState<PromptTemplateItem[]>([])
-  const [templatesLoading, setTemplatesLoading] = useState(true)
   const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(
     () => loadStored(agent.id)?.selectedTemplateId ?? null
   )
-  const [showSaveTemplateModal, setShowSaveTemplateModal] = useState(false)
-  const [saveTemplateName, setSaveTemplateName] = useState('')
-  const [showDeleteTemplateConfirm, setShowDeleteTemplateConfirm] = useState(false)
-
-  const fetchTemplates = useCallback(async () => {
-    setTemplatesLoading(true)
-    try {
-      const list = await listPromptTemplates(agent.id)
-      setTemplates(list)
-    } catch {
-      setTemplates([])
-    } finally {
-      setTemplatesLoading(false)
-    }
-  }, [agent.id])
-
-  useEffect(() => {
-    fetchTemplates()
-  }, [fetchTemplates])
-
-  useEffect(() => {
-    if (templates.length === 0) return
-    if (selectedTemplateId != null && !templates.some((t) => t.id === selectedTemplateId)) {
-      setSelectedTemplateId(null)
-    }
-  }, [templates, selectedTemplateId])
 
   useEffect(() => {
     if (!toastMessage) return
@@ -145,6 +82,22 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
   }, [toastMessage])
 
   useEffect(() => {
+    const stored = loadStored(agent.id)
+    setModel(stored?.model ?? 'gpt-4o-mini')
+    setUserPrompt(stored?.userPrompt ?? '')
+    setRole(stored?.role ?? 'manager')
+    setLanguage(stored?.language ?? 'zh-TW')
+    setDetailLevel(stored?.detailLevel ?? 'brief')
+    setMessages(stored?.messages ?? [])
+    setSelectedTemplateId(stored?.selectedTemplateId ?? null)
+  }, [agent.id])
+
+  const prevAgentIdRef = useRef(agent.id)
+  useEffect(() => {
+    if (prevAgentIdRef.current !== agent.id) {
+      prevAgentIdRef.current = agent.id
+      return
+    }
     saveStored(agent.id, {
       messages,
       userPrompt,
@@ -205,68 +158,6 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
     }
   }
 
-  function handleSelectTemplate(e: React.ChangeEvent<HTMLSelectElement>) {
-    const val = e.target.value
-    if (val === '') {
-      setSelectedTemplateId(null)
-      return
-    }
-    const id = Number(val)
-    const t = templates.find((x) => x.id === id)
-    if (t) {
-      setSelectedTemplateId(id)
-      setUserPrompt(t.content)
-    }
-  }
-
-  async function handleSaveAsTemplate() {
-    const name = saveTemplateName.trim()
-    if (!name) {
-      setToastMessage('請輸入範本名稱')
-      return
-    }
-    try {
-      await createPromptTemplate(agent.id, name, userPrompt)
-      setToastMessage('已儲存範本')
-      setShowSaveTemplateModal(false)
-      setSaveTemplateName('')
-      fetchTemplates()
-    } catch (err) {
-      const msg = err instanceof ApiError ? err.detail ?? err.message : '儲存失敗'
-      setToastMessage(String(msg))
-    }
-  }
-
-  async function handleUpdateTemplate() {
-    if (selectedTemplateId == null) return
-    try {
-      await updatePromptTemplate(selectedTemplateId, { content: userPrompt })
-      setToastMessage('已更新範本')
-      fetchTemplates()
-    } catch (err) {
-      const msg = err instanceof ApiError ? err.detail ?? err.message : '更新失敗'
-      setToastMessage(String(msg))
-    }
-  }
-
-  async function handleDeleteTemplate() {
-    if (selectedTemplateId == null) return
-    try {
-      await deletePromptTemplate(selectedTemplateId)
-      setToastMessage('已刪除範本')
-      setSelectedTemplateId(null)
-      setShowDeleteTemplateConfirm(false)
-      fetchTemplates()
-    } catch (err) {
-      const msg = err instanceof ApiError ? err.detail ?? err.message : '刪除失敗'
-      setToastMessage(String(msg))
-    }
-  }
-
-  const selectedTemplate = selectedTemplateId != null
-    ? templates.find((t) => t.id === selectedTemplateId)
-    : null
-
   return (
     <div className="relative flex h-full flex-col p-4 text-[18px]">
       {toastMessage && (
@@ -289,60 +180,6 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
         }}
         onCancel={() => setShowClearConfirm(false)}
       />
-      <ConfirmModal
-        open={showDeleteTemplateConfirm}
-        title="確認刪除"
-        message={`確定要刪除範本「${selectedTemplate?.name ?? ''}」嗎？`}
-        confirmText="刪除"
-        onConfirm={handleDeleteTemplate}
-        onCancel={() => setShowDeleteTemplateConfirm(false)}
-      />
-      {showSaveTemplateModal && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center"
-          onClick={() => setShowSaveTemplateModal(false)}
-          role="dialog"
-          aria-modal="true"
-        >
-          <div className="absolute inset-0 bg-black/30" />
-          <div
-            className="relative z-10 min-w-[320px] rounded-2xl border-2 border-gray-200 bg-white p-6 shadow-lg"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="mb-4 font-semibold text-gray-800">儲存為範本</h2>
-            <input
-              type="text"
-              value={saveTemplateName}
-              onChange={(e) => setSaveTemplateName(e.target.value)}
-              placeholder="輸入範本名稱"
-              className="mb-6 w-full rounded-lg border border-gray-300 px-3 py-2 text-[18px] focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400"
-              autoFocus
-            />
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setShowSaveTemplateModal(false)}
-                className="rounded-lg border border-gray-300 px-4 py-2 text-gray-700 hover:bg-gray-50"
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                onClick={handleSaveAsTemplate}
-                className="rounded-lg px-4 py-2 text-white hover:opacity-90"
-                style={{ backgroundColor: '#4b5563' }}
-              >
-                儲存
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      <HelpModal
-        open={showHelpModal}
-        onClose={() => setShowHelpModal(false)}
-        url="/help-sourcefile.md"
-      />
       <AgentHeader agent={agent} />
 
       {/* 左、中、右三欄可拖曳調整大小的獨立容器 */}
@@ -355,28 +192,19 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
           minSize="250px"
           className="flex flex-col rounded-2xl border border-gray-200/80 bg-white shadow-md ring-1 ring-gray-200/50"
         >
-          <header className="flex flex-shrink-0 items-center justify-between rounded-t-xl border-b border-slate-200 bg-slate-100 px-4 py-3 font-semibold text-slate-800 shadow-sm">
-            <div className="flex items-center gap-1">
-              <span>來源</span>
+          <SourceFileManager
+            agentId={agent.id}
+            headerActions={
               <button
                 type="button"
-                onClick={() => setShowHelpModal(true)}
-                className="rounded-lg p-1.5 text-gray-600 transition-colors hover:bg-gray-200"
-                aria-label="使用說明"
+                onClick={() => sourcePanelRef.current?.collapse()}
+                className="rounded-lg p-2 text-gray-600 transition-colors hover:bg-gray-200"
+                aria-label="折疊"
               >
-                <HelpCircle className="h-4 w-4" />
+                <ChevronsLeft className="h-5 w-5" />
               </button>
-            </div>
-            <button
-              type="button"
-              onClick={() => sourcePanelRef.current?.collapse()}
-              className="rounded-lg p-2 text-gray-600 transition-colors hover:bg-gray-200"
-              aria-label="折疊"
-            >
-              <ChevronsLeft className="h-5 w-5" />
-            </button>
-          </header>
-          <SourceFileManager agentId={agent.id} />
+            }
+          />
         </Panel>
         <ResizeHandle />
         <Panel
@@ -412,144 +240,32 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
           minSize="250px"
           className="flex min-w-0 flex-col overflow-hidden rounded-2xl border border-gray-200/80 bg-white shadow-md ring-1 ring-gray-200/50"
         >
-          <header className="flex flex-shrink-0 items-center justify-between rounded-t-xl border-b border-slate-200 bg-slate-100 px-4 py-3 font-semibold text-slate-800 shadow-sm">
-            <span>AI 設定區</span>
-            <button
-              type="button"
-              onClick={() => aiPanelRef.current?.collapse()}
-              className="rounded-lg p-2 text-gray-600 transition-colors hover:bg-gray-200"
-              aria-label="折疊"
-            >
-              <ChevronsRight className="h-5 w-5" />
-            </button>
-          </header>
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden border-b border-gray-200 bg-gray-50 px-4 py-3">
-            {/* 基本設定 */}
-            <div className="shrink-0">
-              <h3 className="mb-2 text-[14px] font-semibold uppercase tracking-wide text-blue-600">
-                基本設定
-              </h3>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-                <div className="flex items-center gap-2">
-                  <label className="shrink-0 text-[16px] font-medium text-gray-700">模型</label>
-                  <select
-                    value={model}
-                    onChange={(e) => setModel(e.target.value)}
-                    className="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-[16px] focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400"
-                  >
-                    {MODEL_OPTIONS.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="flex items-center gap-2">
-                  <label className="shrink-0 text-[16px] font-medium text-gray-700">角色</label>
-                  <select
-                    value={role}
-                    onChange={(e) => setRole(e.target.value)}
-                    className="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-[16px] focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400"
-                  >
-                    {ROLE_OPTIONS.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="flex items-center gap-2">
-                  <label className="shrink-0 text-[16px] font-medium text-gray-700">語言</label>
-                  <select
-                    value={language}
-                    onChange={(e) => setLanguage(e.target.value)}
-                    className="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-[16px] focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400"
-                  >
-                    {LANGUAGE_OPTIONS.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="flex items-center gap-2">
-                  <label className="shrink-0 text-[16px] font-medium text-gray-700">詳略</label>
-                  <select
-                    value={detailLevel}
-                    onChange={(e) => setDetailLevel(e.target.value)}
-                    className="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-[16px] focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400"
-                  >
-                    {DETAIL_OPTIONS.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            <div className="shrink-0 border-t border-gray-200" />
-
-            {/* 進階設定 */}
-            <div className="flex min-h-0 flex-1 flex-col gap-2">
-              <h3 className="shrink-0 text-[14px] font-semibold uppercase tracking-wide text-blue-600">
-                進階設定
-              </h3>
-              <div className="flex min-w-0 shrink-0 w-full items-center gap-2">
-                <label className="shrink-0 text-[16px] font-medium text-gray-700">範本</label>
-                <select
-                  value={selectedTemplateId ?? ''}
-                  onChange={handleSelectTemplate}
-                  disabled={templatesLoading}
-                  className="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-[16px] focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400 disabled:opacity-50"
-                >
-                  <option value="">無</option>
-                  {templates.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex min-w-0 shrink-0 flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSaveTemplateName('')
-                    setShowSaveTemplateModal(true)
-                  }}
-                  className="shrink-0 rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-[14px] text-gray-700 hover:bg-gray-50"
-                >
-                  儲存到範本
-                </button>
-                <button
-                  type="button"
-                  onClick={handleUpdateTemplate}
-                  disabled={selectedTemplateId == null}
-                  className="shrink-0 rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-[14px] text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-                >
-                  更新
-                </button>
-                <button
-                  type="button"
-                  onClick={() => selectedTemplateId != null && setShowDeleteTemplateConfirm(true)}
-                  disabled={selectedTemplateId == null}
-                  className="shrink-0 rounded-lg border border-red-200 bg-white px-2 py-1.5 text-[14px] text-red-600 hover:bg-red-50 disabled:opacity-50"
-                >
-                  刪除
-                </button>
-              </div>
-              <div className="min-h-0 flex-1">
-                <textarea
-                  value={userPrompt}
-                  onChange={(e) => setUserPrompt(e.target.value)}
-                  placeholder="User Prompt（選填），如格式、資料辭典等"
-                  className="h-full min-h-[80px] w-full resize-y rounded-lg border border-gray-300 bg-white p-2 text-[16px] text-gray-800 placeholder:text-gray-400 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400"
-                />
-              </div>
-            </div>
-          </div>
+          <AISettingsPanel
+            agentId={agent.id}
+            model={model}
+            onModelChange={setModel}
+            role={role}
+            onRoleChange={setRole}
+            language={language}
+            onLanguageChange={setLanguage}
+            detailLevel={detailLevel}
+            onDetailLevelChange={setDetailLevel}
+            userPrompt={userPrompt}
+            onUserPromptChange={setUserPrompt}
+            selectedTemplateId={selectedTemplateId}
+            onSelectedTemplateIdChange={setSelectedTemplateId}
+            onToast={setToastMessage}
+            headerActions={
+              <button
+                type="button"
+                onClick={() => aiPanelRef.current?.collapse()}
+                className="rounded-lg p-2 text-gray-600 transition-colors hover:bg-gray-200"
+                aria-label="折疊"
+              >
+                <ChevronsRight className="h-5 w-5" />
+              </button>
+            }
+          />
         </Panel>
       </Group>
     </div>

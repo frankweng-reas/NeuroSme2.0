@@ -1,7 +1,8 @@
-/** 可重複使用的來源檔案管理元件：列表、上傳、選用、重新命名、刪除 */
+/** 可重複使用的來源檔案管理元件：列表、上傳、選用、重新命名、刪除（含 header） */
 import { useEffect, useState } from 'react'
-import { FileEdit, FileText, Pencil, Plus, X } from 'lucide-react'
+import { FileEdit, FileText, HelpCircle, Pencil, Plus, X } from 'lucide-react'
 import ConfirmModal from '@/components/ConfirmModal'
+import HelpModal from '@/components/HelpModal'
 import {
   listSourceFiles,
   uploadSourceFile,
@@ -24,9 +25,16 @@ function getErrorMessage(err: unknown): string {
 export interface SourceFileManagerProps {
   agentId: string
   onError?: (message: string) => void
+  /** 標題列右側按鈕（如折疊） */
+  headerActions?: React.ReactNode
 }
 
-export default function SourceFileManager({ agentId, onError }: SourceFileManagerProps) {
+export default function SourceFileManager({
+  agentId,
+  onError,
+  headerActions,
+}: SourceFileManagerProps) {
+  const [showHelpModal, setShowHelpModal] = useState(false)
   const [addSourceOpen, setAddSourceOpen] = useState(false)
   const [sourceFiles, setSourceFiles] = useState<SourceFileItem[]>([])
   const [sourceFilesLoading, setSourceFilesLoading] = useState(true)
@@ -218,6 +226,20 @@ export default function SourceFileManager({ agentId, onError }: SourceFileManage
 
   return (
     <>
+      <header className="flex flex-shrink-0 items-center justify-between rounded-t-xl border-b border-slate-200 bg-slate-100 px-4 py-3 font-semibold text-slate-800 shadow-sm">
+        <div className="flex items-center gap-1">
+          <span>來源</span>
+          <button
+            type="button"
+            onClick={() => setShowHelpModal(true)}
+            className="rounded-lg p-1.5 text-gray-600 transition-colors hover:bg-gray-200"
+            aria-label="使用說明"
+          >
+            <HelpCircle className="h-4 w-4" />
+          </button>
+        </div>
+        {headerActions}
+      </header>
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
         {listError && (
           <div className="flex items-center justify-between gap-2 rounded-lg bg-red-50 px-3 py-2 text-red-800">
@@ -590,7 +612,7 @@ export default function SourceFileManager({ agentId, onError }: SourceFileManage
           const id = deleteConfirmId
           const file = sourceFiles.find((x) => x.id === id)
           setDeleteConfirmId(null)
-          if (!file) return
+          if (!file || id === null) return
           const prevFiles = [...sourceFiles]
           setSourceFiles((prev) => prev.filter((x) => x.id !== id))
           deleteSourceFile(id)
@@ -601,6 +623,11 @@ export default function SourceFileManager({ agentId, onError }: SourceFileManage
             })
         }}
         onCancel={() => setDeleteConfirmId(null)}
+      />
+      <HelpModal
+        open={showHelpModal}
+        onClose={() => setShowHelpModal(false)}
+        url="/help-sourcefile.md"
       />
     </>
   )
