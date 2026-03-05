@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { getAgents } from '@/api/agents'
 import { getUserAgentIds, listUsers, updateUserAgents, updateUserRole } from '@/api/users'
 import { ApiError } from '@/api/client'
+import { useToast } from '@/contexts/ToastContext'
 import type { Agent, User, UserRole } from '@/types'
 import AgentIcon from '@/components/AgentIcon'
 
@@ -25,8 +26,8 @@ export default function AdminAgentPermissions() {
   const [isLoadingAgents, setIsLoadingAgents] = useState(true)
   const [isLoadingUserAgents, setIsLoadingUserAgents] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
-  const [saveMessage, setSaveMessage] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
   const [usersError, setUsersError] = useState<string | null>(null)
+  const { showToast } = useToast()
 
   useEffect(() => {
     setUsersError(null)
@@ -98,21 +99,23 @@ export default function AdminAgentPermissions() {
   const handleSave = useCallback(async () => {
     if (selectedUserId == null) return
     setIsSaving(true)
-    setSaveMessage(null)
     try {
-      await updateUserRole(selectedUserId, userRole)
+      // 僅 admin/member 可透過此 API 更新；super_admin 略過角色更新
+      if (userRole === 'admin' || userRole === 'member') {
+        await updateUserRole(selectedUserId, userRole)
+      }
       await updateUserAgents(selectedUserId, Array.from(userAgentIds))
-      setSaveMessage({ type: 'ok', text: '已儲存' })
+      showToast('已儲存')
       setUsers((prev) =>
         prev.map((u) => (u.id === selectedUserId ? { ...u, role: userRole } : u))
       )
     } catch (err) {
       const msg = err instanceof ApiError && err.detail ? err.detail : '儲存失敗'
-      setSaveMessage({ type: 'err', text: msg })
+      showToast(msg, 'error')
     } finally {
       setIsSaving(false)
     }
-  }, [selectedUserId, userAgentIds, userRole])
+  }, [selectedUserId, userAgentIds, userRole, showToast])
 
   const selectedUser = users.find((u) => u.id === selectedUserId)
   const isOnlyAdmin = selectedUser?.role === 'admin' && users.filter((u) => u.role === 'admin').length <= 1
@@ -172,14 +175,20 @@ export default function AdminAgentPermissions() {
               <div className="flex items-center gap-3">
                 <label className="flex items-center gap-2 text-sm text-gray-700">
                   <span>角色</span>
-                  <select
-                    value={userRole}
-                    onChange={(e) => setUserRole(e.target.value as UserRole)}
-                    className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400"
-                  >
-                    <option value="member" disabled={isOnlyAdmin}>member</option>
-                    <option value="admin">admin</option>
-                  </select>
+                  {selectedUser?.role === 'super_admin' ? (
+                    <span className="rounded-lg border border-gray-200 bg-gray-100 px-3 py-2 text-sm text-gray-600">
+                      super_admin（不可變更）
+                    </span>
+                  ) : (
+                    <select
+                      value={userRole}
+                      onChange={(e) => setUserRole(e.target.value as UserRole)}
+                      className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400"
+                    >
+                      <option value="member" disabled={isOnlyAdmin}>member</option>
+                      <option value="admin">admin</option>
+                    </select>
+                  )}
                 </label>
                 <button
                 type="button"
@@ -192,15 +201,6 @@ export default function AdminAgentPermissions() {
               </button>
               </div>
             </div>
-            {saveMessage && (
-              <p
-                className={`mb-3 text-sm ${
-                  saveMessage.type === 'ok' ? 'text-green-600' : 'text-red-600'
-                }`}
-              >
-                {saveMessage.text}
-              </p>
-            )}
             {isLoadingAgents || isLoadingUserAgents ? (
               <div className="flex flex-1 items-center justify-center">
                 <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-400 border-t-transparent" />

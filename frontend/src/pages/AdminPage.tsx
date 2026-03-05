@@ -1,13 +1,28 @@
 /** 管理頁面：admin 專用，含 sidebar 導航 */
+import { useEffect, useState } from 'react'
 import { Link, NavLink, Outlet } from 'react-router-dom'
-import { ArrowLeft, ShieldCheck, Users } from 'lucide-react'
+import { ArrowLeft, Building2, ShieldCheck, Users } from 'lucide-react'
+import { getMe } from '@/api/users'
+import type { User } from '@/types'
 
 const SIDEBAR_ITEMS = [
-  { to: '/admin/agent-permissions', label: 'Agent 權限設定', icon: ShieldCheck },
-  { to: '/admin/users', label: '會員管理', icon: Users },
+  { to: '/admin/agent-permissions', label: 'Agent 權限設定', icon: ShieldCheck, superAdminOnly: false },
+  { to: '/admin/users', label: '會員管理', icon: Users, superAdminOnly: false },
+  { to: '/admin/tenant-settings', label: 'Tenant 設定', icon: Building2, superAdminOnly: true },
 ] as const
 
 export default function AdminPage() {
+  const [user, setUser] = useState<User | null>(null)
+
+  useEffect(() => {
+    getMe()
+      .then(setUser)
+      .catch(() => setUser(null))
+  }, [])
+
+  const visibleItems = SIDEBAR_ITEMS.filter(
+    (item) => !item.superAdminOnly || user?.role === 'super_admin'
+  )
   return (
     <div className="flex h-full flex-col p-4">
       {/* Header 容器 - 與既有風格一致 */}
@@ -35,7 +50,7 @@ export default function AdminPage() {
           style={{ backgroundColor: '#4b5563' }}
         >
           <nav className="flex flex-col py-4">
-            {SIDEBAR_ITEMS.map(({ to, label, icon: Icon }) => (
+            {visibleItems.map(({ to, label, icon: Icon }) => (
               <NavLink
                 key={to}
                 to={to}

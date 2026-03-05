@@ -1,10 +1,10 @@
-/** 需 admin 權限才能存取，非 admin 導向首頁 */
+/** 需 super_admin 權限才能存取，非 super_admin 導向 admin 首頁 */
 import { useEffect, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import { getMe } from '@/api/users'
 import type { User } from '@/types'
 
-export default function AdminRoute({ children }: { children: React.ReactNode }) {
+export default function SuperAdminRoute({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -23,8 +23,8 @@ export default function AdminRoute({ children }: { children: React.ReactNode }) 
     )
   }
 
-  if (!user || (user.role !== 'admin' && user.role !== 'super_admin')) {
-    return <Navigate to="/" replace />
+  if (!user || user.role !== 'super_admin') {
+    return <Navigate to="/admin" replace />
   }
 
   return <>{children}</>

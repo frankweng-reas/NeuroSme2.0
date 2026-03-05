@@ -39,6 +39,11 @@ const MARKDOWN_COMPONENTS = {
       {children}
     </ul>
   ),
+  ol: ({ children, ...props }: React.HTMLAttributes<HTMLOListElement>) => (
+    <ol className="mb-3 ml-4 list-decimal list-outside pl-6 space-y-1 text-slate-700" {...props}>
+      {children}
+    </ol>
+  ),
   li: ({ children, ...props }: React.HTMLAttributes<HTMLLIElement>) => (
     <li className="leading-relaxed" {...props}>
       {children}

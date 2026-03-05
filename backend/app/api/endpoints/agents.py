@@ -37,14 +37,20 @@ def list_agents(
 ):
     """取得 agents 列表。admin 且 is_purchased 時回傳 tenant 內所有已購買的 agents；否則依 user_agents ∩ tenant_agents 過濾"""
     user = current
-    if is_purchased and str(is_purchased).lower() == "true" and user.role == "admin":
+    if is_purchased and str(is_purchased).lower() == "true" and user.role in ("admin", "super_admin"):
         # admin 權限設定：回傳 tenant 已購買的 agents
         purchased_ids = _get_tenant_purchased_agent_ids(db, user.tenant_id)
-        catalogs = db.query(AgentCatalog).filter(AgentCatalog.id.in_(purchased_ids)).order_by(AgentCatalog.id).all()
+        catalogs = db.query(AgentCatalog).filter(AgentCatalog.id.in_(purchased_ids)).order_by(
+            AgentCatalog.sort_id.asc().nulls_last(),
+            AgentCatalog.id.asc(),
+        ).all()
         return [AgentResponse.from_catalog(c, user.tenant_id) for c in catalogs]
     # 一般：回傳 user 有權限的 agents（user_agents ∩ tenant_agents）
     allowed_ids = get_agent_ids_for_user(db, user.id)
-    catalogs = db.query(AgentCatalog).filter(AgentCatalog.id.in_(allowed_ids)).order_by(AgentCatalog.id).all()
+    catalogs = db.query(AgentCatalog).filter(AgentCatalog.id.in_(allowed_ids)).order_by(
+            AgentCatalog.sort_id.asc().nulls_last(),
+            AgentCatalog.id.asc(),
+        ).all()
     return [AgentResponse.from_catalog(c, user.tenant_id) for c in catalogs]
 
 

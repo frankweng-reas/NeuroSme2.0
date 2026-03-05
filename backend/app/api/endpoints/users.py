@@ -16,9 +16,14 @@ from app.services.permission import get_agent_ids_for_user
 router = APIRouter()
 
 
+def _is_admin_or_super(user: User) -> bool:
+    """admin 或 super_admin 可執行管理操作"""
+    return user.role in ("admin", "super_admin")
+
+
 def _require_self_or_admin(current: User, target_user_id: int) -> None:
-    """僅本人或 admin 可操作"""
-    if current.id != target_user_id and current.role != "admin":
+    """僅本人或 admin/super_admin 可操作"""
+    if current.id != target_user_id and not _is_admin_or_super(current):
         raise HTTPException(status_code=403, detail="無權限")
 
 
@@ -38,7 +43,7 @@ def get_user_by_email(
     user = db.query(User).filter(func.lower(User.email) == email.lower()).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    if current.id != user.id and current.role != "admin":
+    if current.id != user.id and not _is_admin_or_super(current):
         raise HTTPException(status_code=403, detail="無權限")
     return user
 
@@ -49,7 +54,7 @@ def list_users(
     current: Annotated[User, Depends(get_current_user)] = ...,
 ):
     """列出當前 admin 所屬 tenant 內所有使用者"""
-    if current.role != "admin":
+    if not _is_admin_or_super(current):
         raise HTTPException(status_code=403, detail="需 admin 權限")
     return db.query(User).filter(User.tenant_id == current.tenant_id).all()
 
@@ -60,7 +65,7 @@ def create_user(
     db: Session = Depends(get_db),
     current: Annotated[User, Depends(get_current_user)] = ...,
 ):
-    if current.role != "admin":
+    if not _is_admin_or_super(current):
         raise HTTPException(status_code=403, detail="需 admin 權限")
     db_user = db.query(User).filter(
         func.lower(User.email) == user.email.lower(),
@@ -105,7 +110,7 @@ def update_user_role(
     current: Annotated[User, Depends(get_current_user)] = ...,
 ):
     """更新該 user 的角色（僅 admin）"""
-    if current.role != "admin":
+    if not _is_admin_or_super(current):
         raise HTTPException(status_code=403, detail="需 admin 權限")
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -136,7 +141,7 @@ def update_user_agents(
     current: Annotated[User, Depends(get_current_user)] = ...,
 ):
     """更新該 user 可存取的 agent 清單（僅 admin）"""
-    if current.role != "admin":
+    if not _is_admin_or_super(current):
         raise HTTPException(status_code=403, detail="需 admin 權限")
     user = db.query(User).filter(User.id == user_id).first()
     if not user:

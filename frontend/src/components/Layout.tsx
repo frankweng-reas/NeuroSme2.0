@@ -58,7 +58,7 @@ export default function Layout() {
 
             {/* 右側：管理工具、用戶資訊 */}
             <div className="flex items-center gap-4">
-              {user?.role === 'admin' && (
+              {(user?.role === 'admin' || user?.role === 'super_admin') && (
                 <button
                   type="button"
                   onClick={() => navigate('/admin')}
