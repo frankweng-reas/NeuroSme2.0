@@ -43,7 +43,7 @@ export default function InputModal({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg border border-gray-300 px-4 py-2 text-[18px] font-medium text-gray-700 hover:bg-gray-50"
+            className="rounded-2xl border border-gray-300 px-4 py-2 text-[18px] font-medium text-gray-700 hover:bg-gray-50"
           >
             取消
           </button>
@@ -51,7 +51,7 @@ export default function InputModal({
             type="button"
             onClick={onSubmit}
             disabled={loading}
-            className="rounded-lg px-4 py-2 text-[18px] font-medium text-white shadow-sm disabled:opacity-50"
+            className="rounded-2xl px-4 py-2 text-[18px] font-medium text-white shadow-sm disabled:opacity-50"
             style={{ backgroundColor: '#4b5563' }}
           >
             {loading ? '儲存中...' : submitLabel}

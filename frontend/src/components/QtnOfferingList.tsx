@@ -138,7 +138,7 @@ export default function QtnOfferingList({
                   type="button"
                   onClick={handleApplyCatalog}
                   disabled={!selectedCatalogId || applyingCatalog || !projectId || isAlreadyApplied}
-                  className="shrink-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-base text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50"
+                  className="shrink-0 rounded-2xl border border-gray-300 bg-white px-3 py-2 text-base text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50"
                 >
                   {applyingCatalog ? '套用中...' : isAlreadyApplied ? '已套用' : '套用'}
                 </button>
@@ -160,7 +160,7 @@ export default function QtnOfferingList({
                     <button
                       type="button"
                       onClick={() => setDeleteId(s.source_id)}
-                      className="shrink-0 rounded p-1 text-gray-500 hover:bg-red-50 hover:text-red-600"
+                      className="shrink-0 rounded-2xl p-1 text-gray-500 hover:bg-red-50 hover:text-red-600"
                       aria-label="刪除"
                     >
                       <Trash2 className="h-4 w-4" />

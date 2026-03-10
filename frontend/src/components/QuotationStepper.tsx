@@ -32,28 +32,28 @@ export default function QuotationStepper({
               type="button"
               onClick={() => canClick && onStepClick(step.num)}
               disabled={!canClick}
-              className={`flex flex-col items-center gap-1.5 py-2 transition-all ${
+              className={`flex flex-row items-center gap-1.5 rounded-xl py-1 px-2 transition-all ${
                 canClick ? 'cursor-pointer hover:opacity-80' : 'cursor-default'
               }`}
               aria-current={isCurrent ? 'step' : undefined}
               aria-label={`步驟 ${step.num}：${step.label}`}
             >
               <span
-                className={`flex shrink-0 items-center justify-center rounded-full text-sm font-semibold transition-all ${
+                className={`flex shrink-0 items-center justify-center rounded-full text-base font-semibold transition-all ${
                   isCompleted && isCurrent
-                    ? 'h-10 w-10 border-2 border-sky-600 bg-sky-50 text-sky-700 ring-2 ring-sky-200'
+                    ? 'h-9 w-9 border-2 border-sky-600 bg-sky-50 text-sky-700 ring-2 ring-sky-200'
                     : isCompleted
                       ? 'h-8 w-8 bg-gray-700 text-white'
                       : isCurrent
-                        ? 'h-10 w-10 border-2 border-sky-600 bg-sky-50 text-sky-800 ring-2 ring-sky-200'
+                        ? 'h-9 w-9 border-2 border-sky-600 bg-sky-50 text-sky-800 ring-2 ring-sky-200'
                         : 'h-8 w-8 border border-gray-300 bg-gray-100 text-gray-500'
                 }`}
               >
-                {isCompleted ? <Check className="h-4 w-4" /> : step.num}
+                {isCompleted ? <Check className="h-5 w-5" /> : step.num}
               </span>
               <span
-                className={`font-medium ${
-                  isCurrent ? 'text-sm text-sky-800' : isCompleted ? 'text-xs text-gray-600' : 'text-xs text-gray-400'
+                className={`whitespace-nowrap font-medium ${
+                  isCurrent ? 'text-lg text-sky-800' : isCompleted ? 'text-lg text-gray-600' : 'text-lg text-gray-400'
                 }`}
               >
                 {step.label}
@@ -65,7 +65,7 @@ export default function QuotationStepper({
           idx < STEPS.length - 1 ? (
             <div
               key={`connector-${step.num}`}
-              className={`h-1 rounded-full transition-colors ${
+              className={`h-0.5 rounded-full transition-colors ${
                 completedSteps.includes(step.num) ? 'bg-sky-500' : 'bg-gray-200'
               }`}
               aria-hidden

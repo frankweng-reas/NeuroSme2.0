@@ -85,12 +85,16 @@ def create_qtn_project(
     """新增報價專案"""
     tenant_id, agent_id = _check_agent_access(db, current, body.agent_id)
 
+    name = (body.project_name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="專案名稱不可為空")
+
     proj = QtnProject(
         tenant_id=tenant_id,
         user_id=str(current.id),
         agent_id=agent_id,
-        project_name=body.project_name.strip(),
-        project_desc=body.project_desc.strip() or None,
+        project_name=name,
+        project_desc=(body.project_desc or "").strip() or None,
     )
     db.add(proj)
     db.commit()
@@ -161,8 +165,12 @@ def update_qtn_project(
     if not proj:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    proj.project_name = body.project_name.strip()
-    proj.project_desc = body.project_desc.strip() or None
+    name = (body.project_name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="專案名稱不可為空")
+
+    proj.project_name = name
+    proj.project_desc = (body.project_desc or "").strip() or None
     db.commit()
     db.refresh(proj)
     return QtnProjectResponse(

@@ -24,8 +24,8 @@ export default function ConfirmModal({
 
   const confirmClass =
     variant === 'danger'
-      ? 'rounded-lg bg-red-600 px-4 py-2 text-white hover:bg-red-700'
-      : 'rounded-lg px-4 py-2 text-white hover:opacity-90'
+      ? 'rounded-2xl bg-red-600 px-4 py-2 text-white hover:bg-red-700'
+      : 'rounded-2xl px-4 py-2 text-white hover:opacity-90'
   const confirmStyle = variant === 'primary' ? { backgroundColor: '#4b5563' } : undefined
 
   return (
@@ -46,7 +46,7 @@ export default function ConfirmModal({
           <button
             type="button"
             onClick={onCancel}
-            className="rounded-lg border border-gray-300 px-4 py-2 text-gray-700 hover:bg-gray-50"
+            className="rounded-2xl border border-gray-300 px-4 py-2 text-gray-700 hover:bg-gray-50"
           >
             {cancelText}
           </button>

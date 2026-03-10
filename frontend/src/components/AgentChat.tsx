@@ -214,7 +214,7 @@ export default function AgentChat({
                         <button
                           type="button"
                           onClick={() => handleCopy(m.content)}
-                          className="flex items-center gap-1 rounded px-2 py-1 text-[18px] text-gray-600 transition-colors hover:bg-gray-200"
+                          className="flex items-center gap-1 rounded-2xl px-2 py-1 text-[18px] text-gray-600 transition-colors hover:bg-gray-200"
                         >
                           <Copy className="h-4 w-4" />
                           複製
@@ -263,7 +263,7 @@ export default function AgentChat({
           <button
             type="submit"
             disabled={isLoading || !input.trim()}
-            className="rounded-lg px-4 py-2 text-[18px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+            className="rounded-2xl px-4 py-2 text-[18px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
             style={{ backgroundColor: '#4b5563' }}
           >
             送出

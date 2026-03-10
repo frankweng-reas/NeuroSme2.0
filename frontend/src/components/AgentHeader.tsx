@@ -127,7 +127,6 @@ export default function AgentHeader({ agent, className = '', showManagerTools: s
           <div className="flex items-center gap-3">
             <AgentIcon iconName={agent.icon_name} className="h-6 w-6 text-white" />
             <div>
-              <span className="text-xs text-white/70">Componet: AgentHeader</span>
               <h1 className="text-2xl font-bold text-white">{agent.agent_name}</h1>
             </div>
           </div>

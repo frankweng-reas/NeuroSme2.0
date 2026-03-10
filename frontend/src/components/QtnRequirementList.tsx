@@ -30,7 +30,7 @@ export default function QtnRequirementList({
             <button
               type="button"
               onClick={onCollapseLeft}
-              className="shrink-0 rounded p-1 text-gray-600 transition-colors hover:bg-sky-200 hover:text-gray-800"
+              className="shrink-0 rounded-2xl p-1 text-gray-600 transition-colors hover:bg-sky-200 hover:text-gray-800"
               aria-label="縮小左側區塊"
               title="縮小左側區塊"
             >
@@ -60,7 +60,7 @@ export default function QtnRequirementList({
               e.stopPropagation()
               onCollapseLeft()
             }}
-            className="shrink-0 rounded p-1 text-gray-600 transition-colors hover:bg-sky-200 hover:text-gray-800"
+            className="shrink-0 rounded-2xl p-1 text-gray-600 transition-colors hover:bg-sky-200 hover:text-gray-800"
             aria-label="縮小左側區塊"
             title="縮小左側區塊"
           >

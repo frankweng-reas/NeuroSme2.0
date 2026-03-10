@@ -239,6 +239,7 @@ const STORAGE_VERSION = 2
 const STORAGE_KEY_PREFIX = `quotation_parse_v${STORAGE_VERSION}_`
 const STEP_STORAGE_KEY_PREFIX = `quotation_step_v${STORAGE_VERSION}_`
 const PROJECT_STORAGE_KEY_PREFIX = `quotation_project_v${STORAGE_VERSION}_`
+const SHARE_STORAGE_KEY_PREFIX = `quotation_share_v${STORAGE_VERSION}_`
 
 function getStorageKey(agentId: string, projectId?: string) {
   return projectId ? `${STORAGE_KEY_PREFIX}${agentId}:${projectId}` : `${STORAGE_KEY_PREFIX}${agentId}`
@@ -250,6 +251,10 @@ function getStepStorageKey(agentId: string) {
 
 function getProjectStorageKey(agentId: string) {
   return `${PROJECT_STORAGE_KEY_PREFIX}${agentId}`
+}
+
+function getShareStorageKey(agentId: string, projectId: string) {
+  return `${SHARE_STORAGE_KEY_PREFIX}${agentId}:${projectId}`
 }
 
 interface StoredResult {
@@ -532,6 +537,33 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
     }
   }, [agent.id, selectedProject?.project_id])
 
+  /** 從 localStorage 載入發送跟進建議（依專案） */
+  useEffect(() => {
+    const pid = selectedProject?.project_id
+    if (!pid) {
+      setShareSuggestions(null)
+      setShareError(null)
+      return
+    }
+    try {
+      const key = getShareStorageKey(agent.id, pid)
+      const raw = localStorage.getItem(key)
+      if (raw) {
+        const stored = JSON.parse(raw) as { email: string; messaging: string; phone: string }
+        if (stored && typeof stored.email === 'string' && typeof stored.messaging === 'string' && typeof stored.phone === 'string') {
+          setShareSuggestions(stored)
+        } else {
+          setShareSuggestions(null)
+        }
+      } else {
+        setShareSuggestions(null)
+      }
+      setShareError(null)
+    } catch {
+      setShareSuggestions(null)
+    }
+  }, [agent.id, selectedProject?.project_id])
+
   /** 依 selectedProject.status 判斷 currentStep（PARSING→1, DRAFT→2, 未來可擴充） */
   useEffect(() => {
     const status = selectedProject?.status
@@ -585,18 +617,24 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
     }
   }
 
-  /** 清空專案：保留 Step 1（parseResult、schema、rawContent），清空 Step 2–4（qtn_draft、qtn_final、status） */
+  /** 清空專案：保留 Step 1（parseResult、schema、rawContent），清空 Step 2–4（qtn_draft、qtn_final、status、發送建議） */
   async function handleClearProject(projectId: string) {
     setClearProjectLoading(true)
     try {
       await updateQtnDraft(agent.id, projectId, null)
       await updateQtnFinal(agent.id, projectId, null)
       await updateQtnStatus(agent.id, projectId, 'PARSING')
+      try {
+        localStorage.removeItem(getShareStorageKey(agent.id, projectId))
+      } catch {
+        // 忽略
+      }
       setProjects((prev) =>
         prev.map((p) => (p.project_id === projectId ? { ...p, qtn_draft: null, qtn_final: null, status: 'PARSING' } : p))
       )
       if (selectedProject?.project_id === projectId) {
         setSelectedProject((prev) => (prev?.project_id === projectId ? { ...prev, qtn_draft: null, qtn_final: null, status: 'PARSING' } : prev))
+        setShareSuggestions(null)
         persistStep(1)
       }
     } catch {
@@ -615,6 +653,7 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
       await deleteQtnProject(agent.id, projectId)
       try {
         localStorage.removeItem(getStorageKey(agent.id, projectId))
+        localStorage.removeItem(getShareStorageKey(agent.id, projectId))
       } catch {
         // 忽略
       }
@@ -631,6 +670,7 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
         setRawContent(null)
         setChatMessages([])
         setChatPreviewData(null)
+        setShareSuggestions(null)
       }
       setProjects((prev) => prev.filter((p) => p.project_id !== projectId))
     } catch {
@@ -777,10 +817,10 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
     updateDraftHeader({ quotation_date: today })
   }, [currentStep, selectedProject?.project_id])
 
-  /** Step 3 完成前驗證：所有必填欄位與報價項目 */
+  /** Step 3 完成前驗證：所有必填欄位與報價項目（seller_logo_url 為 display-only，選填） */
   function validateStep3Draft(draft: QuotationDraft): { valid: boolean; missing: string[] } {
     const missing: string[] = []
-    const allFields = [...SELLER_FIELDS, ...BUYER_FIELDS]
+    const allFields = [...SELLER_FIELDS, ...BUYER_FIELDS].filter((f) => f.key !== 'seller_logo_url')
     for (const f of allFields) {
       const val = draft[f.key as keyof QuotationDraft]
       if (f.type === 'number') {
@@ -999,8 +1039,14 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
         content: '請根據上述報價單生成 Email、通訊軟體、電話三種管道的發送跟進建議。',
       })
       const parsed = parseShareResponse(res.content ?? '')
-      if (parsed) setShareSuggestions(parsed)
-      else setShareError('無法解析 LLM 回傳格式')
+      if (parsed) {
+        setShareSuggestions(parsed)
+        try {
+          localStorage.setItem(getShareStorageKey(agent.id, selectedProject.project_id), JSON.stringify(parsed))
+        } catch {
+          // 忽略
+        }
+      } else setShareError('無法解析 LLM 回傳格式')
     } catch (err) {
       const msg =
         err instanceof ApiError ? err.detail ?? err.message : err instanceof Error ? err.message : '生成失敗，請稍後再試'
@@ -1117,7 +1163,7 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
               <button
                 type="button"
                 onClick={() => setOtherSuggestionsModal(null)}
-                className="rounded-lg px-2 py-1 text-gray-600 hover:bg-gray-200"
+                className="rounded-2xl px-2 py-1 text-gray-600 hover:bg-gray-200"
               >
                 關閉
               </button>
@@ -1137,7 +1183,7 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
                       onClick={() =>
                         handleApplyAlternative(otherSuggestionsModal.rowIndex, alt)
                       }
-                      className="shrink-0 rounded-lg bg-gray-700 px-3 py-1.5 text-base font-medium text-white transition-colors hover:bg-gray-800"
+                      className="shrink-0 rounded-2xl bg-gray-700 px-3 py-1.5 text-base font-medium text-white transition-colors hover:bg-gray-800"
                     >
                       選取
                     </button>
@@ -1170,7 +1216,7 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
               <button
                 type="button"
                 onClick={() => setPreviewRowModal(null)}
-                className="rounded-lg p-2 text-gray-500 hover:bg-gray-100"
+                className="rounded-2xl p-2 text-gray-500 hover:bg-gray-100"
                 aria-label="關閉"
               >
                 ×
@@ -1206,14 +1252,14 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
               <button
                 type="button"
                 onClick={() => setPreviewRowModal(null)}
-                className="rounded-lg border border-gray-300 px-4 py-2 text-base text-gray-700 hover:bg-gray-50"
+                className="rounded-2xl border border-gray-300 px-4 py-2 text-base text-gray-700 hover:bg-gray-50"
               >
                 取消
               </button>
               <button
                 type="button"
                 onClick={handleSavePreviewRow}
-                className="rounded-lg bg-gray-700 px-4 py-2 text-base font-medium text-white hover:bg-gray-800"
+                className="rounded-2xl bg-gray-700 px-4 py-2 text-base font-medium text-white hover:bg-gray-800"
               >
                 儲存
               </button>
@@ -1287,7 +1333,7 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
               <button
                 type="button"
                 onClick={() => setStep3ValidationError(null)}
-                className="rounded-lg bg-amber-600 px-4 py-2 text-white hover:bg-amber-700"
+                className="rounded-2xl bg-amber-600 px-4 py-2 text-white hover:bg-amber-700"
               >
                 確定
               </button>
@@ -1306,7 +1352,7 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
           style={{ backgroundColor: '#4b5563' }}
         >
           <div
-              className={`flex shrink-0 items-center justify-between border-b border-gray-300/50 py-2 ${
+              className={`flex shrink-0 items-center justify-between border-b border-gray-300/50 py-2.5 ${
                 projectPanelCollapsed ? 'px-2' : 'pl-6 pr-3'
               }`}
             >
@@ -1314,7 +1360,7 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
               <button
                 type="button"
                 onClick={() => setProjectPanelCollapsed(false)}
-                className="flex items-center justify-center rounded-lg p-1.5 text-white/80 transition-colors hover:bg-white/10"
+                className="flex items-center justify-center rounded-2xl p-1.5 text-white/80 transition-colors hover:bg-white/10"
                 title="展開報價專案"
                 aria-label="展開報價專案"
               >
@@ -1327,7 +1373,7 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
                   <button
                     type="button"
                     onClick={() => setProjectPanelCollapsed(true)}
-                    className="rounded-lg px-1.5 py-1 text-white/80 transition-colors hover:bg-white/10"
+                    className="rounded-2xl px-1.5 py-1 text-white/80 transition-colors hover:bg-white/10"
                     title="折疊報價專案"
                     aria-label="折疊報價專案"
                   >
@@ -1336,7 +1382,7 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
                   <button
                     type="button"
                     onClick={handleOpenNewProject}
-                    className="flex items-center gap-1 rounded-lg border border-white/30 bg-white/10 px-2.5 py-1.5 text-base font-medium text-white transition-colors hover:bg-white/20"
+                    className="flex items-center gap-1 rounded-2xl border border-white/30 bg-white/10 px-2.5 py-1 text-base font-medium text-white transition-colors hover:bg-white/20"
                   >
                     <Plus className="h-3.5 w-3.5" />
                     New
@@ -1375,7 +1421,7 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
                           e.stopPropagation()
                           setProjectMenuOpen((prev) => (prev === p.project_id ? null : p.project_id))
                         }}
-                        className="shrink-0 rounded p-1 text-white/70 hover:bg-white/10 hover:text-white"
+                        className="shrink-0 rounded-2xl p-1 text-white/70 hover:bg-white/10 hover:text-white"
                         aria-label="專案選單"
                       >
                         <MoreVertical className="h-4 w-4" />
@@ -1387,14 +1433,14 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
                         >
                           <button
                             type="button"
-                            className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100"
+                            className="w-full rounded-2xl px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100"
                             onClick={() => handleOpenEditProject(p)}
                           >
                             修改
                           </button>
                           <button
                             type="button"
-                            className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100"
+                            className="w-full rounded-2xl px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100"
                             onClick={() => {
                               setProjectMenuOpen(null)
                               setDeleteProjectConfirm(p.project_id)
@@ -1404,7 +1450,7 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
                           </button>
                           <button
                             type="button"
-                            className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100"
+                            className="w-full rounded-2xl px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100"
                             onClick={() => {
                               setProjectMenuOpen(null)
                               setClearProjectConfirm(p.project_id)
@@ -1518,6 +1564,7 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
                   onStepClick={handleStepClick}
                 />
               </div>
+              <div className="h-6 w-px shrink-0 bg-gray-200" aria-hidden />
               <ModelSelect
                 value={model}
                 onChange={setModel}
@@ -1574,7 +1621,7 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
                             type="button"
                             onClick={() => chatMessages.length > 0 && setChatClearConfirmOpen(true)}
                             disabled={chatLoading || chatMessages.length === 0}
-                            className="rounded-lg border border-gray-300 bg-white p-2 text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50"
+                            className="rounded-2xl border border-gray-300 bg-white p-2 text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50"
                             aria-label="清除對話"
                           >
                             <RefreshCw className="h-4 w-4" />
@@ -1610,7 +1657,7 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
                           }
                         }}
                         disabled={!getPreviewData() || !selectedProject}
-                        className="rounded-lg bg-gray-700 px-3 py-1.5 text-base font-medium text-white transition-colors hover:bg-gray-800 disabled:opacity-50 disabled:hover:bg-gray-700"
+                        className="rounded-2xl bg-gray-700 px-3 py-1.5 text-base font-medium text-white transition-colors hover:bg-gray-800 disabled:opacity-50 disabled:hover:bg-gray-700"
                       >
                         完成
                       </button>
@@ -1688,7 +1735,7 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
                         <button
                           type="button"
                           onClick={handleOpenAddPreviewModal}
-                          className="flex items-center gap-1 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-base text-gray-700 transition-colors hover:bg-gray-50"
+                          className="flex items-center gap-1 rounded-2xl border border-gray-300 bg-white px-3 py-1.5 text-base text-gray-700 transition-colors hover:bg-gray-50"
                         >
                           <Plus className="h-4 w-4" />
                           新增
@@ -1720,7 +1767,7 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
                             }
                           }}
                           disabled={!getPreviewData() || !selectedProject}
-                          className="rounded-lg bg-gray-700 px-3 py-1.5 text-base font-medium text-white transition-colors hover:bg-gray-800 disabled:opacity-50 disabled:hover:bg-gray-700"
+                          className="rounded-2xl bg-gray-700 px-3 py-1.5 text-base font-medium text-white transition-colors hover:bg-gray-800 disabled:opacity-50 disabled:hover:bg-gray-700"
                         >
                           完成
                         </button>
@@ -1779,7 +1826,7 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
                                             <button
                                               type="button"
                                               onClick={() => handleOpenEditPreviewModal(i)}
-                                              className="rounded p-1 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700"
+                                              className="rounded-2xl p-1 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700"
                                               aria-label="編輯"
                                             >
                                               <Pencil className="h-4 w-4" />
@@ -1787,7 +1834,7 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
                                             <button
                                               type="button"
                                               onClick={() => setDeleteRowConfirm({ source: 'preview', rowIndex: i })}
-                                              className="rounded p-1 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600"
+                                              className="rounded-2xl p-1 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600"
                                               aria-label="刪除"
                                             >
                                               <Trash2 className="h-4 w-4" />
@@ -1839,7 +1886,7 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
                         setCurrentStep(1)
                         persistStep(1)
                       }}
-                      className="rounded-lg bg-gray-700 px-4 py-2 text-white hover:bg-gray-800"
+                      className="rounded-2xl bg-gray-700 px-4 py-2 text-white hover:bg-gray-800"
                     >
                       回到 Step 1
                     </button>
@@ -1855,7 +1902,7 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
                         <button
                           type="button"
                           onClick={handleAddRow}
-                          className="flex items-center gap-1 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-base text-gray-700 transition-colors hover:bg-gray-50"
+                          className="flex items-center gap-1 rounded-2xl border border-gray-300 bg-white px-3 py-1.5 text-base text-gray-700 transition-colors hover:bg-gray-50"
                         >
                           <Plus className="h-4 w-4" />
                           新增
@@ -1997,7 +2044,7 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
                                         <button
                                           type="button"
                                           onClick={() => setDeleteRowConfirm({ source: 'parse', rowIndex: i })}
-                                          className="rounded p-1 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600"
+                                          className="rounded-2xl p-1 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600"
                                           aria-label="刪除此列"
                                         >
                                           <Trash2 className="h-4 w-4" />
@@ -2047,6 +2094,24 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
                         setStep3FormSeed((s) => s + 1)
                       }
                       const renderField = (f: { key: string; label: string; type: 'text' | 'number' | 'date' }) => {
+                        if (f.key === 'seller_logo_url') {
+                          return (
+                            <div key={f.key} className="flex flex-col gap-1">
+                              <label className="text-base font-medium text-gray-700">{f.label}</label>
+                              <div className="flex h-12 items-center rounded-lg border border-gray-200 bg-gray-50 px-3">
+                                {draft.seller_logo_url ? (
+                                  <img
+                                    src={draft.seller_logo_url}
+                                    alt="公司 Logo"
+                                    className="h-10 w-auto max-w-[200px] object-contain"
+                                  />
+                                ) : (
+                                  <span className="text-sm text-gray-500">（選擇公司後顯示）</span>
+                                )}
+                              </div>
+                            </div>
+                          )
+                        }
                         const val = draft[f.key as keyof QuotationDraft]
                         let displayVal = val === undefined || val === null ? '' : String(val)
                         if (f.key === 'quotation_date' && !displayVal.trim()) {
@@ -2153,7 +2218,7 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
                           setCurrentStep(4)
                           persistStep(4)
                         }}
-                        className="rounded-lg bg-gray-700 px-3 py-1.5 text-base font-medium text-white transition-colors hover:bg-gray-800"
+                        className="rounded-2xl bg-gray-700 px-3 py-1.5 text-base font-medium text-white transition-colors hover:bg-gray-800"
                       >
                         完成
                       </button>
@@ -2180,7 +2245,7 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
                       type="button"
                       onClick={handleExportPdf}
                       disabled={!getPreviewData() || pdfExporting}
-                      className="flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-base font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="flex items-center gap-1.5 rounded-2xl border border-gray-300 bg-white px-3 py-1.5 text-base font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <FileDown className="h-4 w-4" />
                       {pdfExporting ? '輸出中…' : '輸出 PDF'}
@@ -2203,7 +2268,7 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
                       type="button"
                       onClick={handleGenerateShare}
                       disabled={!selectedProject || !getPreviewData() || shareLoading}
-                      className="flex items-center gap-1.5 rounded-lg bg-gray-700 px-3 py-1.5 text-base font-medium text-white transition-colors hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="flex items-center gap-1.5 rounded-2xl bg-gray-700 px-3 py-1.5 text-base font-medium text-white transition-colors hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {shareLoading ? (
                         <Loader2 className="h-4 w-4 animate-spin" aria-hidden />

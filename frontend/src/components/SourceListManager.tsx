@@ -260,7 +260,7 @@ export default function SourceListManager({
             <button
               type="button"
               onClick={() => setShowHelpModal(true)}
-              className="rounded-lg p-1.5 text-gray-600 transition-colors hover:bg-gray-200"
+              className="rounded-2xl p-1.5 text-gray-600 transition-colors hover:bg-gray-200"
               aria-label="使用說明"
             >
               <HelpCircle className="h-4 w-4" />
@@ -278,14 +278,14 @@ export default function SourceListManager({
               <button
                 type="button"
                 onClick={refresh}
-                className="rounded px-2 py-0.5 text-red-700 underline hover:bg-red-100"
+                className="rounded-2xl px-2 py-0.5 text-red-700 underline hover:bg-red-100"
               >
                 重試
               </button>
               <button
                 type="button"
                 onClick={() => setListError(null)}
-                className="rounded p-0.5 hover:bg-red-100"
+                className="rounded-2xl p-0.5 hover:bg-red-100"
                 aria-label="關閉"
               >
                 <X className="h-4 w-4" />
@@ -296,7 +296,7 @@ export default function SourceListManager({
         <button
           type="button"
           onClick={() => setAddSourceOpen(true)}
-          className="flex w-full shrink-0 items-center justify-center gap-1 rounded-lg border-2 border-dashed border-gray-300 bg-gray-50/80 py-4 text-gray-600 transition-colors hover:border-gray-400 hover:bg-gray-100 hover:shadow-sm"
+          className="flex w-full shrink-0 items-center justify-center gap-1 rounded-2xl border-2 border-dashed border-gray-300 bg-gray-50/80 py-4 text-gray-600 transition-colors hover:border-gray-400 hover:bg-gray-100 hover:shadow-sm"
         >
           <Plus className="h-5 w-5" />
           新增來源
@@ -401,7 +401,7 @@ export default function SourceListManager({
                     setRenamingId(f.id)
                     setRenameValue(f.file_name)
                   }}
-                  className="shrink-0 rounded p-0.5 text-gray-500 hover:bg-gray-200 hover:text-gray-700"
+                  className="shrink-0 rounded-2xl p-0.5 text-gray-500 hover:bg-gray-200 hover:text-gray-700"
                   aria-label="重新命名"
                 >
                   <Pencil className="h-4 w-4" />
@@ -413,7 +413,7 @@ export default function SourceListManager({
                     setEditContentValue('')
                     loadEditContent(f.id)
                   }}
-                  className="shrink-0 rounded p-0.5 text-gray-500 hover:bg-gray-200 hover:text-gray-700"
+                  className="shrink-0 rounded-2xl p-0.5 text-gray-500 hover:bg-gray-200 hover:text-gray-700"
                   aria-label="編輯內容"
                 >
                   <FileEdit className="h-4 w-4" />
@@ -421,7 +421,7 @@ export default function SourceListManager({
                 <button
                   type="button"
                   onClick={() => setDeleteConfirmId(f.id)}
-                  className="shrink-0 rounded p-0.5 text-gray-500 hover:bg-gray-200 hover:text-gray-700"
+                  className="shrink-0 rounded-2xl p-0.5 text-gray-500 hover:bg-gray-200 hover:text-gray-700"
                   aria-label="刪除"
                 >
                   <X className="h-4 w-4" />
@@ -481,7 +481,7 @@ export default function SourceListManager({
                   return !prev
                 })
               }}
-              className="mb-4 flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-gray-300 bg-gray-50 py-4 transition-colors hover:border-gray-400 hover:bg-gray-100"
+              className="mb-4 flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-gray-300 bg-gray-50 py-4 transition-colors hover:border-gray-400 hover:bg-gray-100"
             >
               <FileText className="h-5 w-5 text-gray-500" />
               <span className="text-gray-600">輸入文字</span>
@@ -507,7 +507,7 @@ export default function SourceListManager({
                 <button
                   type="button"
                   onClick={addPendingTextItem}
-                  className="rounded-lg bg-gray-700 px-3 py-1.5 text-white hover:bg-gray-800"
+                  className="rounded-2xl bg-gray-700 px-3 py-1.5 text-white hover:bg-gray-800"
                 >
                   加入
                 </button>
@@ -524,7 +524,7 @@ export default function SourceListManager({
                     <button
                       type="button"
                       onClick={() => removePendingFile(i)}
-                      className="shrink-0 rounded p-0.5 text-gray-500 hover:bg-gray-200 hover:text-gray-700"
+                      className="shrink-0 rounded-2xl p-0.5 text-gray-500 hover:bg-gray-200 hover:text-gray-700"
                       aria-label="移除"
                     >
                       <X className="h-4 w-4" />
@@ -540,7 +540,7 @@ export default function SourceListManager({
                     <button
                       type="button"
                       onClick={() => removePendingTextItem(i)}
-                      className="shrink-0 rounded p-0.5 text-gray-500 hover:bg-gray-200 hover:text-gray-700"
+                      className="shrink-0 rounded-2xl p-0.5 text-gray-500 hover:bg-gray-200 hover:text-gray-700"
                       aria-label="移除"
                     >
                       <X className="h-4 w-4" />
@@ -553,7 +553,7 @@ export default function SourceListManager({
               <button
                 type="button"
                 onClick={handleCancel}
-                className="rounded-lg border border-gray-300 px-4 py-2 text-gray-700 hover:bg-gray-50"
+                className="rounded-2xl border border-gray-300 px-4 py-2 text-gray-700 hover:bg-gray-50"
               >
                 取消
               </button>
@@ -563,7 +563,7 @@ export default function SourceListManager({
                 disabled={
                   (pendingFiles.length === 0 && pendingTextItems.length === 0) || uploading
                 }
-                className="rounded-lg bg-gray-700 px-4 py-2 text-white hover:bg-gray-800 disabled:opacity-50"
+                className="rounded-2xl bg-gray-700 px-4 py-2 text-white hover:bg-gray-800 disabled:opacity-50"
               >
                 {uploading && uploadProgress
                   ? `上傳中 ${uploadProgress.current}/${uploadProgress.total}`
@@ -607,7 +607,7 @@ export default function SourceListManager({
                     type="button"
                     onClick={() => setEditContentId(null)}
                     disabled={editContentSaving}
-                    className="rounded-lg border border-gray-300 px-4 py-2 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                    className="rounded-2xl border border-gray-300 px-4 py-2 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
                   >
                     取消
                   </button>
@@ -632,7 +632,7 @@ export default function SourceListManager({
                       }
                     }}
                     disabled={editContentSaving}
-                    className="rounded-lg bg-gray-700 px-4 py-2 text-white hover:bg-gray-800 disabled:opacity-50"
+                    className="rounded-2xl bg-gray-700 px-4 py-2 text-white hover:bg-gray-800 disabled:opacity-50"
                   >
                     {editContentSaving ? '儲存中...' : '儲存'}
                   </button>
