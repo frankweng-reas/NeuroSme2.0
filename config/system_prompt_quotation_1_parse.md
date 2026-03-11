@@ -22,7 +22,6 @@ Output Format（單一 JSON 物件）:
         "qty": 1,
         "unit": "單位",
         "unit_price": 0,
-        "discount": 1.0,
         "subtotal": 0,
         "notes": "備註"
       }

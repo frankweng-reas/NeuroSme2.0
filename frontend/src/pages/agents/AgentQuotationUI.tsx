@@ -48,7 +48,6 @@ export interface QuotationItem {
   qty: number
   unit: string
   unit_price: number
-  discount: number
   subtotal: number
   notes: string
 }
@@ -84,25 +83,23 @@ const EMPTY_QUOTATION_ITEM: QuotationItem = {
   qty: 1,
   unit: '',
   unit_price: 0,
-  discount: 1,
   subtotal: 0,
   notes: '',
 }
 
-const QUOTATION_ITEM_FIELDS: (keyof QuotationItem)[] = ['name', 'qty', 'unit', 'unit_price', 'discount', 'subtotal', 'notes']
+const QUOTATION_ITEM_FIELDS: (keyof QuotationItem)[] = ['name', 'qty', 'unit', 'unit_price', 'subtotal', 'notes']
 
 const FIELD_LABELS: Record<keyof QuotationItem, string> = {
   name: '品項名稱',
   qty: '數量',
   unit: '單位',
   unit_price: '單價',
-  discount: '折扣',
   subtotal: '小計',
   notes: '備註',
 }
 
 /** 數字欄位：右靠對齊 */
-const NUMERIC_FIELDS = new Set<keyof QuotationItem>(['qty', 'unit_price', 'discount', 'subtotal'])
+const NUMERIC_FIELDS = new Set<keyof QuotationItem>(['qty', 'unit_price', 'subtotal'])
 
 const DRAFT_FIELD_LABELS: Record<string, string> = {
   tax_rate: '稅率',
@@ -154,13 +151,6 @@ const BUYER_FIELDS = [
   { key: 'buyer_phone', label: '電話', type: 'text' as const },
 ] as const
 
-/** 右側預覽顯示的 header 欄位順序（含 total_amount 唯讀） */
-const HEADER_DISPLAY_ORDER = [
-  'seller_company_name', 'seller_tax_id', 'seller_logo_url', 'seller_address', 'seller_phone', 'seller_email', 'seller_contact_person',
-  'quotation_no', 'quotation_date', 'valid_until', 'customer_name', 'contact_person',
-  'currency', 'tax_rate', 'status', 'remarks', 'total_amount',
-] as const
-
 /** 將任意物件正規化為 QuotationItem */
 function toQuotationItem(row: unknown): QuotationItem {
   const r = (row && typeof row === 'object' ? row : {}) as Record<string, unknown>
@@ -171,15 +161,14 @@ function toQuotationItem(row: unknown): QuotationItem {
     qty: num(r.qty ?? r.quantity ?? r.數量),
     unit: str(r.unit ?? r.單位),
     unit_price: num(r.unit_price ?? r.單價),
-    discount: num(r.discount ?? r.折扣) || 1,
     subtotal: num(r.subtotal ?? r.小計),
     notes: str(r.notes ?? r.備註),
   }
 }
 
-/** 計算 subtotal = unit_price × qty × discount */
+/** 計算 subtotal = unit_price × qty */
 function computeSubtotal(item: QuotationItem): QuotationItem {
-  const subtotal = Math.round(item.unit_price * item.qty * item.discount * 100) / 100
+  const subtotal = Math.round(item.unit_price * item.qty * 100) / 100
   return { ...item, subtotal }
 }
 
@@ -301,7 +290,7 @@ function QuotationPreviewContent({
   innerRef,
 }: {
   draft: QuotationDraft
-  innerRef?: React.RefObject<HTMLDivElement | null>
+  innerRef?: React.Ref<HTMLDivElement>
 }) {
   const items = draft.items ?? []
   const totalSubtotal = items.reduce((sum, r) => sum + (r.subtotal ?? 0), 0)
@@ -498,6 +487,8 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
   const [step3FormSeed, setStep3FormSeed] = useState(0)
   const quotationPdfRef = useRef<HTMLDivElement>(null)
   const leftPanelRef = useRef<PanelImperativeHandle>(null)
+  /** Step 2 grid 單一資料來源：編輯時直接更新此 state，完成時直接使用 */
+  const [step2Draft, setStep2Draft] = useState<QuotationDraft | null>(null)
 
   useEffect(() => {
     if (!projectMenuOpen) return
@@ -515,8 +506,12 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
       setParseResult(null)
       setSchema(null)
       setRawContent(null)
+      setChatPreviewData(null)
+      setStep2Draft(null)
       return
     }
+    setChatPreviewData(null)
+    setStep2Draft(null)
     try {
       const key = getStorageKey(agent.id, pid)
       const raw = localStorage.getItem(key)
@@ -564,11 +559,12 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
     }
   }, [agent.id, selectedProject?.project_id])
 
-  /** 依 selectedProject.status 判斷 currentStep（PARSING→1, DRAFT→2, 未來可擴充） */
+  /** 依 selectedProject.status 判斷 currentStep（STEP1→1, STEP2→2, STEP3→3, STEP4→4） */
   useEffect(() => {
     const status = selectedProject?.status
-    const stepMap: Record<string, StepNum> = { PARSING: 1, DRAFT: 2, GENERATING: 3, FINAL: 4 }
-    const step = (status && stepMap[status]) ?? 1
+    const stepMap: Record<string, StepNum> = { STEP1: 1, STEP2: 2, STEP3: 3, STEP4: 4 }
+    const mapped = status ? stepMap[status] : undefined
+    const step: StepNum = (mapped === 1 || mapped === 2 || mapped === 3 || mapped === 4) ? mapped : 1
     setCurrentStep(step)
   }, [selectedProject?.project_id, selectedProject?.status])
 
@@ -584,6 +580,14 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
       setStep3FormSeed(0)
     }
   }, [currentStep])
+
+  /** Step 2：進入時從 qtn_draft 初始化 grid 資料來源 */
+  useEffect(() => {
+    if (currentStep !== 2 || !selectedProject?.qtn_draft) return
+    const raw = selectedProject.qtn_draft as Record<string, unknown>
+    const arr = Array.isArray(raw.items) ? raw.items : []
+    setStep2Draft({ ...raw, items: arr.map(toQuotationItem) } as QuotationDraft)
+  }, [currentStep, selectedProject?.project_id, selectedProject?.qtn_draft])
 
   useEffect(() => {
     setProjectsLoading(true)
@@ -623,17 +627,17 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
     try {
       await updateQtnDraft(agent.id, projectId, null)
       await updateQtnFinal(agent.id, projectId, null)
-      await updateQtnStatus(agent.id, projectId, 'PARSING')
+      await updateQtnStatus(agent.id, projectId, 'STEP1')
       try {
         localStorage.removeItem(getShareStorageKey(agent.id, projectId))
       } catch {
         // 忽略
       }
       setProjects((prev) =>
-        prev.map((p) => (p.project_id === projectId ? { ...p, qtn_draft: null, qtn_final: null, status: 'PARSING' } : p))
+        prev.map((p) => (p.project_id === projectId ? { ...p, qtn_draft: null, qtn_final: null, status: 'STEP1' } : p))
       )
       if (selectedProject?.project_id === projectId) {
-        setSelectedProject((prev) => (prev?.project_id === projectId ? { ...prev, qtn_draft: null, qtn_final: null, status: 'PARSING' } : prev))
+        setSelectedProject((prev) => (prev?.project_id === projectId ? { ...prev, qtn_draft: null, qtn_final: null, status: 'STEP1' } : prev))
         setShareSuggestions(null)
         persistStep(1)
       }
@@ -685,12 +689,12 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
   const step2PreviewData = selectedProject?.qtn_draft ?? null
   const step3FinalData = selectedProject?.qtn_final ?? null
   const status = selectedProject?.status
-  /** 依 qtn_project.status 判斷 completed steps：PARSING→無, DRAFT→[1], GENERATING→[1,2], FINAL→[1,2,3,4] */
+  /** 依 qtn_project.status 判斷 completed steps：STEP1→無, STEP2→[1], STEP3→[1,2], STEP4→[1,2,3,4] */
   const completedSteps: number[] = []
-  if (status === 'DRAFT' || status === 'GENERATING' || status === 'FINAL') completedSteps.push(1)
-  if (status === 'GENERATING' || status === 'FINAL') completedSteps.push(2)
-  if (status === 'FINAL') completedSteps.push(3)
-  if (status === 'FINAL') completedSteps.push(4)
+  if (status === 'STEP2' || status === 'STEP3' || status === 'STEP4') completedSteps.push(1)
+  if (status === 'STEP3' || status === 'STEP4') completedSteps.push(2)
+  if (status === 'STEP4') completedSteps.push(3)
+  if (status === 'STEP4') completedSteps.push(4)
 
   const saveToStorage = (
     result: ParsedItem[] | null,
@@ -743,18 +747,17 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
     setDeleteRowConfirm(null)
   }
 
-  /** 報價預覽資料來源：Step 1 用 chatPreviewData；Step 2 用 qtn_draft；Step 3/4 用 qtn_final（無則 fallback qtn_draft） */
-  function getPreviewData(): QuotationDraft | null {
-    const raw =
-      currentStep === 1
-        ? chatPreviewData
-        : currentStep === 3 || currentStep === 4
-          ? (step3FinalData ?? step2PreviewData ?? chatPreviewData)
-          : (step2PreviewData ?? chatPreviewData)
+  function rawToDraft(raw: Record<string, unknown> | null): QuotationDraft | null {
     if (!raw || typeof raw !== 'object') return null
-    const data = raw as Record<string, unknown>
-    const arr = Array.isArray(data.items) ? data.items : []
-    return { ...data, items: arr.map(toQuotationItem) } as QuotationDraft
+    const arr = Array.isArray(raw.items) ? raw.items : []
+    return { ...raw, items: arr.map(toQuotationItem) } as QuotationDraft
+  }
+
+  /** 報價預覽資料來源：Step 1 用 chatPreviewData；Step 2 用 step2Draft（grid 單一來源）；Step 3/4 只讀 qtn_final */
+  function getPreviewData(): QuotationDraft | null {
+    if (currentStep === 1) return rawToDraft(chatPreviewData as Record<string, unknown> | null)
+    if (currentStep === 3 || currentStep === 4) return rawToDraft(step3FinalData as Record<string, unknown> | null)
+    return step2Draft ?? rawToDraft(step2PreviewData as Record<string, unknown> | null)
   }
 
   /** 報價預覽 items（固定 schema） */
@@ -774,6 +777,7 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
       )
       setSelectedProject((prev) => (prev?.project_id === selectedProject.project_id ? { ...prev, qtn_final: updated.qtn_final } : prev))
     } else if (currentStep === 2 && selectedProject) {
+      setStep2Draft(next)
       const updated = await updateQtnDraft(agent.id, selectedProject.project_id, next as unknown as Record<string, unknown>)
       setProjects((prev) =>
         prev.map((p) => (p.project_id === selectedProject.project_id ? { ...p, qtn_draft: updated.qtn_draft, status: updated.status } : p))
@@ -849,6 +853,7 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
       )
       setSelectedProject((prev) => (prev?.project_id === selectedProject.project_id ? { ...prev, qtn_final: updated.qtn_final } : prev))
     } else if (currentStep === 2 && selectedProject) {
+      setStep2Draft(next)
       const updated = await updateQtnDraft(agent.id, selectedProject.project_id, next as unknown as Record<string, unknown>)
       setProjects((prev) =>
         prev.map((p) => (p.project_id === selectedProject.project_id ? { ...p, qtn_draft: updated.qtn_draft, status: updated.status } : p))
@@ -879,7 +884,6 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
       qty: Number(formData.qty) || 0,
       unit: String(formData.unit ?? '').trim(),
       unit_price: Number(formData.unit_price) || 0,
-      discount: Number(formData.discount) || 1,
       subtotal: 0,
       notes: String(formData.notes ?? '').trim(),
     }
@@ -1234,6 +1238,7 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
                       <label className="text-sm font-medium text-gray-700">{label}</label>
                       <input
                         type={isNum ? 'number' : 'text'}
+                        step={isNum ? (field === 'unit_price' ? '0.01' : '1') : undefined}
                         value={displayVal}
                         onChange={(e) => {
                           const v = e.target.value
@@ -1400,7 +1405,7 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
                   {projects.map((p) => (
                     <li
                       key={p.project_id}
-                      className={`relative flex cursor-pointer items-center justify-between gap-2 rounded-lg px-3 py-2 text-base transition-colors ${
+                      className={`group relative flex cursor-pointer items-center justify-between gap-2 rounded-lg px-3 py-2 text-base transition-colors ${
                         selectedProject?.project_id === p.project_id
                           ? 'bg-white/20 font-medium text-white'
                           : 'text-white/90 hover:bg-white/10'
@@ -1414,7 +1419,27 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
                         }
                       }}
                     >
+                      <span className="flex shrink-0 items-center gap-0.5" aria-label={`進度 ${p.status ?? 'STEP1'}`}>
+                        {(() => {
+                          const stepMap: Record<string, number> = { STEP1: 1, STEP2: 2, STEP3: 3, STEP4: 4 }
+                          const completedCount = stepMap[p.status ?? 'STEP1'] ?? 1
+                          const isAllDone = (p.status ?? 'STEP1') === 'STEP4'
+                          return [1, 2, 3, 4].map((i) => (
+                            <span
+                              key={i}
+                              className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                                i <= completedCount ? (isAllDone ? 'bg-emerald-400' : 'bg-amber-400') : 'bg-white/30'
+                              }`}
+                            />
+                          ))
+                        })()}
+                      </span>
                       <span className="min-w-0 flex-1 truncate">{p.project_name}</span>
+                      {p.project_name && (
+                        <span className="pointer-events-none absolute left-0 right-10 top-full z-[100] mt-1 hidden max-w-full whitespace-normal rounded-md bg-gray-900 px-2 py-1.5 text-xs text-white shadow-lg group-hover:block">
+                          {p.project_name}
+                        </span>
+                      )}
                       <button
                         type="button"
                         onClick={(e) => {
@@ -1651,12 +1676,16 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
                             setCurrentStep(2)
                             persistStep(2)
                           } catch {
-                            // 儲存失敗時仍可進入 step 2，使用記憶體中的 chatPreviewData
+                            // 儲存失敗時仍可進入 step 2（qtn_draft 可能為空，會顯示解析結果或提示回到 Step 1）
                             setCurrentStep(2)
                             persistStep(2)
                           }
                         }}
-                        disabled={!getPreviewData() || !selectedProject}
+                        disabled={
+                          !getPreviewData() ||
+                          !selectedProject ||
+                          (status === 'STEP2' || status === 'STEP3' || status === 'STEP4')
+                        }
                         className="rounded-2xl bg-gray-700 px-3 py-1.5 text-base font-medium text-white transition-colors hover:bg-gray-800 disabled:opacity-50 disabled:hover:bg-gray-700"
                       >
                         完成
@@ -1727,7 +1756,7 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
 
             {currentStep === 2 && (
               <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden rounded-2xl border-2 border-gray-200 bg-gradient-to-b from-stone-200 to-stone-300 shadow-sm">
-                {(step2PreviewData ?? chatPreviewData) ? (
+                {(step2Draft ?? step2PreviewData) ? (
                   <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                     <div className="flex shrink-0 items-center justify-between border-b border-gray-200 bg-yellow-50 px-4 py-3">
                       <h3 className="font-medium text-gray-800">報價單預覽</h3>
@@ -1746,18 +1775,24 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
                             if (!selectedProject) return
                             const draft = getPreviewData()
                             try {
-                              await updateQtnStatus(agent.id, selectedProject.project_id, 'GENERATING')
-                              if (draft && !selectedProject.qtn_final) {
-                                const fin = await updateQtnFinal(agent.id, selectedProject.project_id, draft as unknown as Record<string, unknown>)
+                              await updateQtnStatus(agent.id, selectedProject.project_id, 'STEP3')
+                              if (draft) {
+                                const existing = step3FinalData as Record<string, unknown> | null
+                                const merged = {
+                                  ...(existing ?? {}),
+                                  ...(draft as unknown as Record<string, unknown>),
+                                  items: (draft as unknown as Record<string, unknown>).items,
+                                }
+                                const fin = await updateQtnFinal(agent.id, selectedProject.project_id, merged)
                                 setProjects((prev) =>
-                                  prev.map((p) => (p.project_id === selectedProject.project_id ? { ...p, qtn_final: fin.qtn_final, status: 'GENERATING' } : p))
+                                  prev.map((p) => (p.project_id === selectedProject.project_id ? { ...p, qtn_final: fin.qtn_final, status: 'STEP3' } : p))
                                 )
-                                setSelectedProject((prev) => (prev?.project_id === selectedProject.project_id ? { ...prev, qtn_final: fin.qtn_final, status: 'GENERATING' } : prev))
+                                setSelectedProject((prev) => (prev?.project_id === selectedProject.project_id ? { ...prev, qtn_final: fin.qtn_final, status: 'STEP3' } : prev))
                               } else {
                                 setProjects((prev) =>
-                                  prev.map((p) => (p.project_id === selectedProject.project_id ? { ...p, status: 'GENERATING' } : p))
+                                  prev.map((p) => (p.project_id === selectedProject.project_id ? { ...p, status: 'STEP3' } : p))
                                 )
-                                setSelectedProject((prev) => (prev?.project_id === selectedProject.project_id ? { ...prev, status: 'GENERATING' } : prev))
+                                setSelectedProject((prev) => (prev?.project_id === selectedProject.project_id ? { ...prev, status: 'STEP3' } : prev))
                               }
                               setCurrentStep(3)
                               persistStep(3)
@@ -2005,6 +2040,7 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
                                             ) : isEditing ? (
                                               <input
                                                 type={isNum ? 'number' : 'text'}
+                                                step={isNum ? (field === 'unit_price' ? '0.01' : '1') : undefined}
                                                 defaultValue={display === '-' ? '' : display}
                                                 autoFocus
                                                 className="min-w-[60px] max-w-full rounded border border-gray-300 px-1.5 py-0.5 text-base"
@@ -2079,8 +2115,6 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
                     {(() => {
                       const draft = getPreviewData()
                       if (!draft) return <p className="text-base text-gray-500">尚無報價資料</p>
-                      const items = draft.items ?? []
-                      const totalSubtotal = items.reduce((sum, r) => sum + (r.subtotal ?? 0), 0)
                       const formKey = `header-${selectedProject?.project_id ?? 'none'}-${step3FormSeed}`
                       const applyCompany = (c: Company) => {
                         updateDraftHeader({
@@ -2090,6 +2124,7 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
                           seller_address: c.address ?? '',
                           seller_phone: c.phone ?? '',
                           seller_email: c.email ?? '',
+                          terms: c.quotation_terms ?? '',
                         })
                         setStep3FormSeed((s) => s + 1)
                       }
@@ -2206,7 +2241,7 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
                           setStep3ValidationError(null)
                           if (selectedProject) {
                             try {
-                              const updated = await updateQtnStatus(agent.id, selectedProject.project_id, 'FINAL')
+                              const updated = await updateQtnStatus(agent.id, selectedProject.project_id, 'STEP4')
                               setProjects((prev) =>
                                 prev.map((p) => (p.project_id === selectedProject.project_id ? { ...p, status: updated.status } : p))
                               )

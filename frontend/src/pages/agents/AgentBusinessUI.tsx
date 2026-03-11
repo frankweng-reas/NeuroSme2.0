@@ -25,6 +25,7 @@ interface StoredState {
   role: string
   language: string
   detailLevel: string
+  exampleQuestionsCount: string
   selectedTemplateId: number | null
 }
 
@@ -67,6 +68,9 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
   const [role, setRole] = useState(() => loadStored(agent.id)?.role ?? 'manager')
   const [language, setLanguage] = useState(() => loadStored(agent.id)?.language ?? 'zh-TW')
   const [detailLevel, setDetailLevel] = useState(() => loadStored(agent.id)?.detailLevel ?? 'brief')
+  const [exampleQuestionsCount, setExampleQuestionsCount] = useState(
+    () => loadStored(agent.id)?.exampleQuestionsCount ?? '0'
+  )
   const [messages, setMessages] = useState<Message[]>(() => loadStored(agent.id)?.messages ?? [])
   const [isLoading, setIsLoading] = useState(false)
   const [toastMessage, setToastMessage] = useState<string | null>(null)
@@ -88,6 +92,7 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
     setRole(stored?.role ?? 'manager')
     setLanguage(stored?.language ?? 'zh-TW')
     setDetailLevel(stored?.detailLevel ?? 'brief')
+    setExampleQuestionsCount(stored?.exampleQuestionsCount ?? '0')
     setMessages(stored?.messages ?? [])
     setSelectedTemplateId(stored?.selectedTemplateId ?? null)
   }, [agent.id])
@@ -105,9 +110,10 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
       role,
       language,
       detailLevel,
+      exampleQuestionsCount,
       selectedTemplateId,
     })
-  }, [agent.id, messages, userPrompt, model, role, language, detailLevel, selectedTemplateId])
+  }, [agent.id, messages, userPrompt, model, role, language, detailLevel, exampleQuestionsCount, selectedTemplateId])
 
   function buildUserPrompt(): string {
     const parts: string[] = []
@@ -117,6 +123,10 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
     if (roleOpt) parts.push(roleOpt.prompt)
     if (langOpt) parts.push(langOpt.prompt)
     if (detailOpt) parts.push(detailOpt.prompt)
+    const n = parseInt(exampleQuestionsCount, 10)
+    if (n > 0) {
+      parts.push(`回覆結尾請提供 ${n} 個建議追問的問題，對營運管理有幫助的。`)
+    }
     if (userPrompt.trim()) parts.push(userPrompt.trim())
     return parts.join(' ')
   }
@@ -250,6 +260,8 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
             onLanguageChange={setLanguage}
             detailLevel={detailLevel}
             onDetailLevelChange={setDetailLevel}
+            exampleQuestionsCount={exampleQuestionsCount}
+            onExampleQuestionsCountChange={setExampleQuestionsCount}
             userPrompt={userPrompt}
             onUserPromptChange={setUserPrompt}
             selectedTemplateId={selectedTemplateId}

@@ -17,3 +17,4 @@ class Company(Base):
     email = Column(String(255), nullable=True)
     contact = Column(String(255), nullable=True)
     sort_order = Column(String(50), nullable=True)
+    quotation_terms = Column(Text, nullable=True)  # 報價預設條款

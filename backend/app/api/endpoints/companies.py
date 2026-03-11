@@ -35,8 +35,11 @@ def list_companies(
 
 
 def _to_response(c: Company) -> CompanyResponse:
-    return CompanyResponse(id=str(c.id), legal_name=c.legal_name, tax_id=c.tax_id, logo_url=c.logo_url,
-                          address=c.address, phone=c.phone, email=c.email, contact=c.contact, sort_order=c.sort_order)
+    return CompanyResponse(
+        id=str(c.id), legal_name=c.legal_name, tax_id=c.tax_id, logo_url=c.logo_url,
+        address=c.address, phone=c.phone, email=c.email, contact=c.contact, sort_order=c.sort_order,
+        quotation_terms=c.quotation_terms,
+    )
 
 
 @router.post("/", response_model=CompanyResponse)
@@ -57,6 +60,7 @@ def create_company(
         email=body.email,
         contact=body.contact,
         sort_order=body.sort_order,
+        quotation_terms=body.quotation_terms,
     )
     db.add(company)
     db.commit()

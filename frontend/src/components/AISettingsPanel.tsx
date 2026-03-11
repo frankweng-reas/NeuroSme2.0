@@ -29,6 +29,8 @@ export interface AISettingsPanelProps {
   onLanguageChange: (v: string) => void
   detailLevel: string
   onDetailLevelChange: (v: string) => void
+  exampleQuestionsCount: string
+  onExampleQuestionsCountChange: (v: string) => void
   userPrompt: string
   onUserPromptChange: (v: string) => void
   selectedTemplateId: number | null
@@ -47,6 +49,8 @@ export default function AISettingsPanel({
   onLanguageChange,
   detailLevel,
   onDetailLevelChange,
+  exampleQuestionsCount,
+  onExampleQuestionsCountChange,
   userPrompt,
   onUserPromptChange,
   selectedTemplateId,
@@ -209,6 +213,19 @@ export default function AISettingsPanel({
                     {opt.label}
                   </option>
                 ))}
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="shrink-0 text-[16px] font-medium text-gray-700">提供範例問題</label>
+              <select
+                value={exampleQuestionsCount}
+                onChange={(e) => onExampleQuestionsCountChange(e.target.value)}
+                className="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-[16px] focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400"
+              >
+                <option value="0">0</option>
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
               </select>
             </div>
           </div>

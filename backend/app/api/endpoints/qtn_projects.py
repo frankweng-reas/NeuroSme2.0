@@ -210,7 +210,7 @@ def update_qtn_draft(
 
     proj.qtn_draft = body.qtn_draft
     if body.qtn_draft:
-        proj.status = "DRAFT"
+        proj.status = "STEP2"
     db.commit()
     db.refresh(proj)
     return QtnProjectResponse(

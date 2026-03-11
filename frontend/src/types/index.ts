@@ -44,4 +44,5 @@ export interface Company {
   email?: string | null
   contact?: string | null
   sort_order?: string | null
+  quotation_terms?: string | null
 }

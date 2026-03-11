@@ -17,7 +17,7 @@ class QtnProject(Base):
     project_desc = Column(Text, nullable=True)
     qtn_draft = Column(JSONB, nullable=True)
     qtn_final = Column(JSONB, nullable=True)
-    status = Column(String(50), nullable=False, default="PARSING")
+    status = Column(String(50), nullable=False, default="STEP1")
     total_amount = Column(Numeric(15, 2), nullable=True)
     currency = Column(String(10), nullable=True, default="TWD")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

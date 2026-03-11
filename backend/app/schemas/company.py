@@ -11,6 +11,7 @@ class CompanyCreate(BaseModel):
     email: str | None = None
     contact: str | None = None
     sort_order: str | None = None
+    quotation_terms: str | None = None
 
 
 class CompanyUpdate(BaseModel):
@@ -22,6 +23,7 @@ class CompanyUpdate(BaseModel):
     email: str | None = None
     contact: str | None = None
     sort_order: str | None = None
+    quotation_terms: str | None = None
 
 
 class CompanyResponse(BaseModel):
@@ -34,6 +36,7 @@ class CompanyResponse(BaseModel):
     email: str | None
     contact: str | None
     sort_order: str | None
+    quotation_terms: str | None
 
     @field_validator("id", mode="before")
     @classmethod

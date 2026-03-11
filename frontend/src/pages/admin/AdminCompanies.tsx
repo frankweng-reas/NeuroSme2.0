@@ -56,6 +56,7 @@ const EMPTY_FORM: Record<string, string> = {
   email: '',
   contact: '',
   sort_order: '',
+  quotation_terms: '',
 }
 
 export default function AdminCompanies() {
@@ -102,6 +103,7 @@ export default function AdminCompanies() {
       email: c.email ?? '',
       contact: c.contact ?? '',
       sort_order: c.sort_order ?? '',
+      quotation_terms: c.quotation_terms ?? '',
     })
     setFormOpen(true)
   }, [])
@@ -122,6 +124,7 @@ export default function AdminCompanies() {
       email: form.email.trim() || null,
       contact: form.contact.trim() || null,
       sort_order: form.sort_order.trim() || null,
+      quotation_terms: form.quotation_terms?.trim() || null,
     }
     setSaving(true)
     try {
@@ -359,6 +362,16 @@ export default function AdminCompanies() {
               onChange={(e) => updateForm('contact', e.target.value)}
               className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400"
               placeholder="聯絡人姓名"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700">報價預設條款</label>
+            <textarea
+              value={form.quotation_terms}
+              onChange={(e) => updateForm('quotation_terms', e.target.value)}
+              rows={6}
+              className="w-full resize-y rounded-lg border border-gray-300 px-3 py-2 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400"
+              placeholder="選用此公司時，報價單條款說明會自動帶入此內容"
             />
           </div>
           <div>

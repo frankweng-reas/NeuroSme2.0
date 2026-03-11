@@ -26,7 +26,7 @@ class QtnProjectFinalUpdate(BaseModel):
 
 
 class QtnProjectStatusUpdate(BaseModel):
-    status: str = Field(..., description="專案狀態：PARSING, DRAFT, GENERATING, FINAL")
+    status: str = Field(..., description="專案狀態：STEP1, STEP2, STEP3, STEP4")
 
 
 class QtnProjectResponse(BaseModel):
@@ -36,7 +36,7 @@ class QtnProjectResponse(BaseModel):
     created_at: datetime
     qtn_draft: dict[str, Any] | None = None
     qtn_final: dict[str, Any] | None = None
-    status: str = "PARSING"
+    status: str = "STEP1"
 
     class Config:
         from_attributes = True
