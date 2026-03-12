@@ -9,6 +9,7 @@ import {
   ChartNoAxesCombined,
   UsersRound,
   Calculator,
+  Calendar,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -21,7 +22,8 @@ const ICON_MAP: Record<string, LucideIcon> = {
   Zap,
   ChartNoAxesCombined,
   UsersRound,
-  Calculator
+  Calculator,
+  Calendar,
 }
 
 const DEFAULT_ICON = MessageCircle

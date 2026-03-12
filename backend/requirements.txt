@@ -15,6 +15,9 @@ httpx>=0.24.0,<0.26
 # LLM（LiteLLM 統一支援 OpenAI / Gemini）
 litellm>=1.30.0
 
+# Scheduling（OR-Tools）
+ortools>=9.8.0
+
 # Utils
 pydantic[email]==2.6.1
 PyJWT>=2.8.0

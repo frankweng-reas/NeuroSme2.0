@@ -8,7 +8,8 @@ import {
   type ReactNode,
 } from 'react'
 
-const TOKEN_KEY = 'neurosme_access_token'
+export const TOKEN_KEY = 'neurosme_access_token'
+export const REFRESH_TOKEN_KEY = 'neurosme_refresh_token'
 const USER_KEY = 'neurosme_user'
 
 /** LocalAuth API 位址。開發時用 /auth（Vite proxy）；正式環境可設 VITE_AUTH_API_URL */
@@ -44,6 +45,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(() => {
     localStorage.removeItem(TOKEN_KEY)
+    localStorage.removeItem(REFRESH_TOKEN_KEY)
     localStorage.removeItem(USER_KEY)
     setState({ user: null, token: null, loading: false })
   }, [])
@@ -52,6 +54,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const token = localStorage.getItem(TOKEN_KEY)
     const userStr = localStorage.getItem(USER_KEY)
     if (!token || !userStr) {
+      localStorage.removeItem(REFRESH_TOKEN_KEY)
       setState({ user: null, token: null, loading: false })
       return
     }
@@ -89,10 +92,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     const data = await res.json()
     const token = data.access_token
+    const refreshToken = data.refresh_token
     const user: AuthUser = data.user
       ? { id: data.user.id, email: data.user.email, name: data.user.name }
       : { id: '', email, name: '' }
     localStorage.setItem(TOKEN_KEY, token)
+    if (refreshToken) localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken)
     localStorage.setItem(USER_KEY, JSON.stringify(user))
     setState({ user, token, loading: false })
   }, [])
@@ -120,10 +125,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     const data = await res.json()
     const token = data.access_token
+    const refreshToken = data.refresh_token
     const user: AuthUser = data.user
       ? { id: data.user.id, email: data.user.email, name: data.user.name }
       : { id: '', email, name: name || '' }
     localStorage.setItem(TOKEN_KEY, token)
+    if (refreshToken) localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken)
     localStorage.setItem(USER_KEY, JSON.stringify(user))
     setState({ user, token, loading: false })
   }, [])

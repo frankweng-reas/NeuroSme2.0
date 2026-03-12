@@ -7,6 +7,7 @@ import type { Agent } from '@/types'
 import AgentBusinessUI from './agents/AgentBusinessUI'
 import AgentCustomerUI from './agents/AgentCustomerUI'
 import AgentQuotationUI from './agents/AgentQuotationUI'
+import AgentSchedulingUI from './agents/AgentSchedulingUI'
 import AgentDefaultUI from './agents/AgentDefaultUI'
 
 function getAgentUI(agent: Agent) {
@@ -14,6 +15,7 @@ function getAgentUI(agent: Agent) {
   if (id.includes('business')) return AgentBusinessUI
   if (id.includes('customer')) return AgentCustomerUI
   if (id.includes('quotation')) return AgentQuotationUI
+  if (id.includes('scheduling')) return AgentSchedulingUI
 
   return AgentDefaultUI
 }

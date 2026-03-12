@@ -1,6 +1,7 @@
-const API_BASE = '/api/v1'
+import { TOKEN_KEY, REFRESH_TOKEN_KEY } from '@/contexts/AuthContext'
 
-const TOKEN_KEY = 'neurosme_access_token'
+const API_BASE = '/api/v1'
+const AUTH_BASE = import.meta.env.VITE_AUTH_API_URL?.replace(/\/$/, '') || ''
 
 export class ApiError extends Error {
   constructor(
@@ -14,6 +15,46 @@ export class ApiError extends Error {
 }
 
 const DEFAULT_TIMEOUT_MS = 90_000
+
+let refreshPromise: Promise<string | null> | null = null
+
+async function tryRefreshToken(): Promise<string | null> {
+  if (refreshPromise) return refreshPromise
+  refreshPromise = (async () => {
+    const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY)
+    if (!refreshToken) return null
+    try {
+      const res = await fetch(`${AUTH_BASE}/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      })
+      if (!res.ok) return null
+      const data = await res.json()
+      localStorage.setItem(TOKEN_KEY, data.access_token)
+      if (data.refresh_token) {
+        localStorage.setItem(REFRESH_TOKEN_KEY, data.refresh_token)
+      }
+      return data.access_token
+    } catch {
+      return null
+    } finally {
+      refreshPromise = null
+    }
+  })()
+  return refreshPromise
+}
+
+function clearAuthAndRedirect(): void {
+  localStorage.removeItem(TOKEN_KEY)
+  localStorage.removeItem(REFRESH_TOKEN_KEY)
+  localStorage.removeItem('neurosme_user')
+  const returnPath = window.location.pathname + window.location.search
+  if (returnPath && returnPath !== '/login' && returnPath !== '/register') {
+    sessionStorage.setItem('login_return_url', returnPath)
+  }
+  window.location.href = '/login?expired=1'
+}
 
 export async function apiFetch<T>(
   endpoint: string,
@@ -30,7 +71,7 @@ export async function apiFetch<T>(
   }
   if (token) headers['Authorization'] = `Bearer ${token}`
 
-  const response = await fetch(`${API_BASE}${endpoint}`, {
+  let response = await fetch(`${API_BASE}${endpoint}`, {
     ...rest,
     headers,
     signal: controller.signal,
@@ -38,15 +79,26 @@ export async function apiFetch<T>(
   clearTimeout(id)
 
   if (response.status === 401) {
-    localStorage.removeItem(TOKEN_KEY)
-    localStorage.removeItem('neurosme_user')
-    // 儲存當前路徑，登入後可導回
-    const returnPath = window.location.pathname + window.location.search
-    if (returnPath && returnPath !== '/login' && returnPath !== '/register') {
-      sessionStorage.setItem('login_return_url', returnPath)
+    const newToken = await tryRefreshToken()
+    if (newToken) {
+      const retryHeaders: Record<string, string> = {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${newToken}`,
+        ...(rest.headers as Record<string, string>),
+      }
+      const retryController = new AbortController()
+      const retryId = setTimeout(() => retryController.abort(), timeout)
+      response = await fetch(`${API_BASE}${endpoint}`, {
+        ...rest,
+        headers: retryHeaders,
+        signal: retryController.signal,
+      })
+      clearTimeout(retryId)
     }
-    window.location.href = '/login?expired=1'
-    throw new ApiError('未授權，請重新登入', 401)
+    if (response.status === 401) {
+      clearAuthAndRedirect()
+      throw new ApiError('未授權，請重新登入', 401)
+    }
   }
 
   if (response.status === 204) {

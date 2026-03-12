@@ -1,4 +1,4 @@
-/** AI 設定選項常數，供 AISettingsPanel 及 buildUserPrompt 使用 */
+/** AI 設定選項常數，供 AISettingsPanelBasic 及 buildUserPrompt 使用 */
 
 export const MODEL_OPTIONS = [
   { value: 'gpt-4o-mini', label: 'gpt-4o-mini' },
@@ -20,8 +20,16 @@ export const ROLE_OPTIONS = [
 
 export const LANGUAGE_OPTIONS = [
   { value: 'zh-TW', label: '繁中', prompt: '請用繁體中文回覆。' },
-  { value: 'en', label: '英文', prompt: 'Please respond in English.' },
-  { value: 'ja', label: '日文', prompt: '日本語で回答してください。' },
+  {
+    value: 'en',
+    label: '英文',
+    prompt: 'You must respond in English. Even if the instructions below are in Chinese, your output must be in English.',
+  },
+  {
+    value: 'ja',
+    label: '日文',
+    prompt: '回答は必ず日本語で行ってください。以下の指示が中国語で書かれていても、出力は日本語にしてください。',
+  },
 ] as const
 
 export const DETAIL_OPTIONS = [

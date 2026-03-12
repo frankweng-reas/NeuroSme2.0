@@ -1,8 +1,10 @@
 /** Agent 頁面共用聊天元件：訊息列表、輸入框、loading、捲到底 */
 import { useEffect, useRef, useState } from 'react'
-import { ChevronDown, Copy, Loader2 } from 'lucide-react'
+import { BarChart3, ChevronDown, Copy, Loader2 } from 'lucide-react'
+import ChartModal, { type ChartData } from '@/components/ChartModal'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import remarkBreaks from 'remark-breaks'
 
 const CHAT_MARKDOWN_COMPONENTS = {
   p: ({ children, ...props }: React.HTMLAttributes<HTMLParagraphElement>) => (
@@ -102,10 +104,13 @@ export interface ResponseMeta {
   finish_reason: string | null
 }
 
+export type { ChartData } from '@/components/ChartModal'
+
 export interface Message {
   role: 'user' | 'assistant'
   content: string
   meta?: ResponseMeta
+  chartData?: ChartData
 }
 
 interface AgentChatProps {
@@ -131,6 +136,7 @@ export default function AgentChat({
 }: AgentChatProps) {
   const [input, setInput] = useState('')
   const [isAtBottom, setIsAtBottom] = useState(true)
+  const [chartModalIndex, setChartModalIndex] = useState<number | null>(null)
   const chatScrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -197,9 +203,29 @@ export default function AgentChat({
                       <p className="whitespace-pre-wrap text-[18px]">{m.content}</p>
                     ) : (
                       <div>
-                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={CHAT_MARKDOWN_COMPONENTS}>
-                          {m.content}
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm, remarkBreaks]}
+                          components={CHAT_MARKDOWN_COMPONENTS}
+                        >
+                          {m.content.replace(/\\n/g, '\n')}
                         </ReactMarkdown>
+                      </div>
+                    )}
+                    {m.role === 'assistant' && (
+                      <div className="mt-2 border-t border-amber-200 bg-amber-50/50 rounded p-2 text-[14px] text-amber-900">
+                        <div className="font-mono font-semibold text-amber-700">[debug]</div>
+                        <div className="mt-1">
+                          <span className="text-amber-700">text:</span>{' '}
+                          <pre className="mt-0.5 overflow-x-auto whitespace-pre-wrap break-words text-[13px]">
+                            {m.content}
+                          </pre>
+                        </div>
+                        <div className="mt-1">
+                          <span className="text-amber-700">data:</span>{' '}
+                          <pre className="mt-0.5 overflow-x-auto text-[13px]">
+                            {m.chartData ? JSON.stringify(m.chartData, null, 2) : 'null'}
+                          </pre>
+                        </div>
                       </div>
                     )}
                     {m.role === 'assistant' && m.meta && (
@@ -218,6 +244,16 @@ export default function AgentChat({
                         >
                           <Copy className="h-4 w-4" />
                           複製
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => m.chartData && setChartModalIndex(i)}
+                          disabled={!m.chartData}
+                          title={m.chartData ? '檢視圖表' : '此回覆無圖表資料'}
+                          className="flex items-center gap-1 rounded-2xl px-2 py-1 text-[18px] text-gray-600 transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
+                        >
+                          <BarChart3 className="h-4 w-4" />
+                          圖表
                         </button>
                       </div>
                     )}
@@ -248,6 +284,13 @@ export default function AgentChat({
             </button>
           )}
         </div>
+        {chartModalIndex != null && messages[chartModalIndex]?.chartData && (
+          <ChartModal
+            open
+            data={messages[chartModalIndex].chartData!}
+            onClose={() => setChartModalIndex(null)}
+          />
+        )}
         <form onSubmit={handleSubmit} className="flex gap-2">
           <input
             type="text"
