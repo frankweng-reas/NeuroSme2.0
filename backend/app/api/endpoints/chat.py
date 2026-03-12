@@ -17,6 +17,8 @@ from app.api.endpoints.source_files import _check_agent_access
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import get_current_user
+from app.models.bi_project import BiProject
+from app.models.bi_source import BiSource
 from app.models.qtn_catalog import QtnCatalog
 from app.models.qtn_project import QtnProject
 from app.models.qtn_source import QtnSource
@@ -233,6 +235,28 @@ def _get_selected_source_files_content(db: Session, user_id: int, tenant_id: str
     return result
 
 
+def _get_bi_sources_content(db: Session, user_id: int, project_id: str) -> str:
+    """依 project_id 查詢 bi_sources 的 content（is_selected=True），拼接回傳（專案須屬於該 user）"""
+    try:
+        pid = UUID(project_id)
+    except ValueError:
+        return ""
+    proj = db.query(BiProject).filter(BiProject.project_id == pid).first()
+    if not proj or proj.user_id != str(user_id):
+        return ""
+    rows = (
+        db.query(BiSource.file_name, BiSource.content)
+        .filter(BiSource.project_id == pid, BiSource.is_selected.is_(True))
+        .order_by(BiSource.file_name)
+        .all()
+    )
+    parts = []
+    for file_name, content in rows:
+        if content and content.strip():
+            parts.append(f"--- 檔名：{file_name} ---\n{content.strip()}")
+    return "\n\n".join(parts)
+
+
 def _get_qtn_sources_content(db: Session, user_id: int, project_id: str) -> str:
     """依 project_id 查詢 qtn_sources 的 content，拼接回傳（專案須屬於該 user）。
     source_type=OFFERING 時，依 file_name 對應 qtn_catalog.catalog_name 取得 content。"""
@@ -340,6 +364,7 @@ async def chat_completions(
 
         # quotation_parse + project_id：從 qtn_sources 取資料
         # quotation_share + project_id：從 qtn_final 取資料
+        # project_id + bi_project：從 bi_sources（is_selected）取資料
         # 否則從 source_files
         pt = (req.prompt_type or "").strip()
         pid = (req.project_id or "").strip()
@@ -347,6 +372,15 @@ async def chat_completions(
             data = _get_qtn_sources_content(db, current.id, pid)
         elif pt == "quotation_share" and pid:
             data = _get_qtn_final_content(db, current.id, pid)
+        elif pid:
+            try:
+                bi_proj = db.query(BiProject).filter(BiProject.project_id == UUID(pid)).first()
+                if bi_proj and bi_proj.user_id == str(current.id):
+                    data = _get_bi_sources_content(db, current.id, pid)
+                else:
+                    data = _get_selected_source_files_content(db, current.id, tenant_id, aid)
+            except ValueError:
+                data = _get_selected_source_files_content(db, current.id, tenant_id, aid)
         else:
             data = _get_selected_source_files_content(db, current.id, tenant_id, aid)
         data_len = len(data.strip()) if data else 0

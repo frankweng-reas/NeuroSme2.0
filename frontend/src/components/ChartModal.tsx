@@ -330,27 +330,27 @@ export default function ChartModal({ open, data, onClose }: ChartModalProps) {
         }`}
         onClick={(e) => e.stopPropagation()}
       >
-        <header className="flex flex-shrink-0 items-center justify-between border-b border-gray-100 bg-gray-50/90 px-6 py-4">
-          <h2 className="text-[16px] font-semibold text-gray-800">{data.title ?? '圖表'}</h2>
+        <header className="flex flex-shrink-0 items-center justify-between border-b border-slate-200 bg-slate-100 px-6 py-4">
+          <h2 className="text-[16px] font-semibold text-slate-800">{data.title ?? '圖表'}</h2>
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => setIsFullscreen(!isFullscreen)}
-              className="rounded-lg p-2 text-gray-600 transition-colors hover:bg-gray-200 hover:text-gray-800"
+              className="rounded-2xl p-2 text-slate-600 transition-colors hover:bg-slate-200 hover:text-slate-800"
               title={isFullscreen ? '縮小' : '放大至全螢幕'}
               aria-label={isFullscreen ? '縮小' : '放大至全螢幕'}
             >
               {isFullscreen ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
             </button>
             {availableTypes.length > 1 && (
-              <div className="flex gap-1 rounded-xl bg-gray-200/70 p-1.5">
+              <div className="flex gap-1 rounded-2xl bg-slate-200/80 p-1.5">
                 {availableTypes.map((t) => (
                   <button
                     key={t}
                     type="button"
                     onClick={() => setViewType(t)}
-                    className={`rounded-lg px-4 py-2 text-[16px] font-medium transition-all ${
-                      viewType === t ? 'bg-white text-gray-800 shadow-md' : 'text-gray-600 hover:text-gray-800 hover:bg-white/50'
+                    className={`rounded-2xl px-4 py-2 text-[16px] font-medium transition-all ${
+                      viewType === t ? 'bg-white text-slate-800 shadow-md' : 'text-slate-600 hover:text-slate-800 hover:bg-white/60'
                     }`}
                   >
                     {CHART_TYPE_LABELS[t]}
@@ -367,11 +367,11 @@ export default function ChartModal({ open, data, onClose }: ChartModalProps) {
             {viewType === 'line' && renderLine()}
           </div>
         </div>
-        <footer className="flex flex-shrink-0 justify-end border-t border-gray-100 bg-gray-50/50 px-6 py-4">
+        <footer className="flex flex-shrink-0 justify-end border-t border-slate-200 bg-slate-100 px-6 py-4">
           <button
             type="button"
             onClick={handleClose}
-            className="rounded-xl border border-gray-300 bg-white px-5 py-2.5 text-[16px] font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50"
+            className="rounded-2xl border border-slate-300 bg-white px-5 py-2.5 text-[16px] font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-50"
           >
             關閉
           </button>

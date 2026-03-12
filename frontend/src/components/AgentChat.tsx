@@ -1,7 +1,8 @@
 /** Agent 頁面共用聊天元件：訊息列表、輸入框、loading、捲到底 */
 import { useEffect, useRef, useState } from 'react'
-import { BarChart3, ChevronDown, Copy, Loader2 } from 'lucide-react'
+import { BarChart3, ChevronDown, Copy, FileDown, Loader2 } from 'lucide-react'
 import ChartModal, { type ChartData } from '@/components/ChartModal'
+import PdfPreviewModal from '@/components/PdfPreviewModal'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
@@ -137,6 +138,7 @@ export default function AgentChat({
   const [input, setInput] = useState('')
   const [isAtBottom, setIsAtBottom] = useState(true)
   const [chartModalIndex, setChartModalIndex] = useState<number | null>(null)
+  const [pdfPreviewTarget, setPdfPreviewTarget] = useState<{ content: string; chartData?: ChartData } | null>(null)
   const chatScrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -171,6 +173,10 @@ export default function AgentChat({
       () => onCopySuccess?.(),
       () => onCopyError?.()
     )
+  }
+
+  function handleOpenPdfPreview(content: string, chartData?: ChartData) {
+    setPdfPreviewTarget({ content, chartData })
   }
 
   return (
@@ -211,23 +217,6 @@ export default function AgentChat({
                         </ReactMarkdown>
                       </div>
                     )}
-                    {m.role === 'assistant' && (
-                      <div className="mt-2 border-t border-amber-200 bg-amber-50/50 rounded p-2 text-[14px] text-amber-900">
-                        <div className="font-mono font-semibold text-amber-700">[debug]</div>
-                        <div className="mt-1">
-                          <span className="text-amber-700">text:</span>{' '}
-                          <pre className="mt-0.5 overflow-x-auto whitespace-pre-wrap break-words text-[13px]">
-                            {m.content}
-                          </pre>
-                        </div>
-                        <div className="mt-1">
-                          <span className="text-amber-700">data:</span>{' '}
-                          <pre className="mt-0.5 overflow-x-auto text-[13px]">
-                            {m.chartData ? JSON.stringify(m.chartData, null, 2) : 'null'}
-                          </pre>
-                        </div>
-                      </div>
-                    )}
                     {m.role === 'assistant' && m.meta && (
                       <div className="mt-2 border-t border-gray-200 pt-2 text-[18px] text-gray-600">
                         model: {m.meta.model} · prompt: {m.meta.usage.prompt_tokens} · completion:{' '}
@@ -254,6 +243,15 @@ export default function AgentChat({
                         >
                           <BarChart3 className="h-4 w-4" />
                           圖表
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenPdfPreview(m.content, m.chartData)}
+                          title="匯出 PDF"
+                          className="flex items-center gap-1 rounded-2xl px-2 py-1 text-[18px] text-gray-600 transition-colors hover:bg-gray-200"
+                        >
+                          <FileDown className="h-4 w-4" />
+                          PDF
                         </button>
                       </div>
                     )}
@@ -289,6 +287,15 @@ export default function AgentChat({
             open
             data={messages[chartModalIndex].chartData!}
             onClose={() => setChartModalIndex(null)}
+          />
+        )}
+        {pdfPreviewTarget && (
+          <PdfPreviewModal
+            open
+            content={pdfPreviewTarget.content}
+            chartData={pdfPreviewTarget.chartData}
+            onClose={() => setPdfPreviewTarget(null)}
+            onDownloadError={onCopyError}
           />
         )}
         <form onSubmit={handleSubmit} className="flex gap-2">
