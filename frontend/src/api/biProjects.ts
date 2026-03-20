@@ -68,3 +68,28 @@ export async function syncDuckdb(
     { method: 'POST' }
   )
 }
+
+/** 取得專案 DuckDB 資料筆數 */
+export async function getDuckdbStatus(
+  agentId: string,
+  projectId: string
+): Promise<{ row_count: number; has_data: boolean }> {
+  return apiFetch(
+    `/bi-projects/${encodeURIComponent(projectId)}/duckdb-status?agent_id=${encodeURIComponent(agentId)}`
+  )
+}
+
+/** 依 mapping template 將 CSV 匯入 DuckDB */
+export async function importCsvToDuckdb(
+  agentId: string,
+  projectId: string,
+  blocks: { template_name: string; files: { file_name: string; content: string }[] }[]
+): Promise<{ ok: boolean; message: string; row_count?: number }> {
+  return apiFetch(
+    `/bi-projects/${encodeURIComponent(projectId)}/import-csv?agent_id=${encodeURIComponent(agentId)}`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ blocks }),
+    }
+  )
+}

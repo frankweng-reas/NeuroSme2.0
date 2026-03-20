@@ -365,7 +365,7 @@ async def chat_completions(
 
         # quotation_parse + project_id：從 qtn_sources 取資料
         # quotation_share + project_id：從 qtn_final 取資料
-        # project_id + bi_project：從 bi_sources（is_selected）取資料
+        # project_id + bi_project：從 DuckDB 取資料（get_project_data_as_csv）
         # 否則從 source_files
         pt = (req.prompt_type or "").strip()
         pid = (req.project_id or "").strip()
@@ -408,7 +408,7 @@ async def chat_completions(
                     if bi_proj and bi_proj.user_id == str(current.id):
                         raise HTTPException(
                             status_code=400,
-                            detail="請先同步專案至 DuckDB",
+                            detail="DuckDB 尚無資料，請先在 CSV 分頁匯入資料",
                         )
                 except HTTPException:
                     raise

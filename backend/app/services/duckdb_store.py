@@ -44,9 +44,13 @@ def get_project_duckdb_path(project_id: str) -> Path | None:
     """
     base = _get_base_dir()
     if not base or not str(base).strip():
+        logger.warning("get_project_duckdb_path: DUCKDB_DATA_DIR 未設定或為空")
         return None
     path = base / f"{project_id}.duckdb"
-    return path if path.exists() else None
+    if not path.exists():
+        logger.warning("get_project_duckdb_path: 檔案不存在 project_id=%r path=%s", project_id, path)
+        return None
+    return path
 
 
 def sync_transformed_rows_to_duckdb(
@@ -139,6 +143,23 @@ def delete_project_duckdb(project_id: str) -> bool:
     except Exception as e:
         logger.warning("DuckDB 刪除失敗 %s: %s", project_id, e)
         return False
+
+
+def get_project_duckdb_row_count(project_id: str) -> int | None:
+    """
+    取得專案 DuckDB 的資料筆數。
+    若無 DuckDB 或無資料則回傳 None。
+    """
+    path = get_project_duckdb_path(project_id)
+    if not path:
+        return None
+    df = execute_sql_on_duckdb_file(path, "SELECT COUNT(*) as cnt FROM data")
+    if df is None or df.empty:
+        return None
+    try:
+        return int(df.iloc[0]["cnt"])
+    except (KeyError, ValueError, IndexError):
+        return None
 
 
 def get_project_data_as_csv(project_id: str) -> str | None:

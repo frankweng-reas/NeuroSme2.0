@@ -321,6 +321,28 @@ def save_mapping_template(
     )
 
 
+@router.delete("/mapping-templates/{template_name}", status_code=204)
+def delete_mapping_template(
+    template_name: str,
+    db: Annotated[Session, Depends(get_db)],
+    current: Annotated[User, Depends(get_current_user)] = ...,
+):
+    """刪除 mapping 範本"""
+    row = (
+        db.query(UserSchemaMapping)
+        .filter(
+            UserSchemaMapping.user_id == current.id,
+            UserSchemaMapping.schema_id == SCHEMA_ID,
+            UserSchemaMapping.template_name == template_name,
+        )
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="範本不存在")
+    db.delete(row)
+    db.commit()
+
+
 @router.post("/sync-duckdb", response_model=SyncResponse)
 def sync_to_duckdb(
     body: SyncRequest,

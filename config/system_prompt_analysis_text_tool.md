@@ -7,7 +7,7 @@
 - 不可推測未提供的資訊。
 - 注意，精準回答問題，不要過度延伸。
 - **你只能使用計算結果中的精確數字**，不可編造、不可估算、不可四捨五入。
-- 注意，"valueLabel", "valueSuffix"，顯示正確描述
+- 注意："valueLabel", "valueSuffix"，顯示正確描述
 
 
 ## 輸入（Compute Flow）

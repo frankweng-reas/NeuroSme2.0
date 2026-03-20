@@ -1,0 +1,130 @@
+---
+# Standard Sales Schema v1.0
+# Purpose: Universal mapping for Sales Analytics Agent
+# Logic:
+#   - gross_amount = unit_price * quantity
+#   - sales_amount = gross_amount - discount_amount
+#   - gross_profit = sales_amount - cost_amount
+
+- field: order_id
+  type: str
+  attr: dim
+  aliases: [訂單編號, 單號, Order ID]
+  required: true
+
+- field: timestamp
+  type: timestamp
+  attr: dim_time
+  aliases: [日期, 時間, 交易時間, Time]
+  required: true
+
+- field: item_id
+  type: str
+  attr: dim
+  aliases: [品號, 料號, SKU]
+  required: false
+  default: "N/A"
+
+- field: item_name
+  type: str
+  attr: dim
+  aliases: [品名, 產品, 商品, Item Name]
+  required: true
+
+- field: quantity
+  type: num
+  attr: val
+  aliases: [數量, 件數, Qty]
+  required: true
+  default: 1
+
+- field: unit_price
+  type: num
+  attr: val_avg
+  aliases: [單價, 定價, 售價, Unit Price]
+  required: false
+  default: 0
+
+- field: gross_amount
+  type: num
+  attr: val
+  aliases: [原價總額, 牌價總額, Gross Amount]
+  required: false
+  default: 0
+
+- field: discount_amount
+  type: num
+  attr: val
+  aliases: [折扣金額, 讓利, 優惠金額, Discount, 折抵]
+  required: false
+  default: 0
+
+- field: sales_amount
+  type: num
+  attr: val
+  aliases: [營收, 實收金額, 實付金額, 業績, Revenue, Amount]
+  required: true
+
+- field: cost_amount
+  type: num
+  attr: val
+  aliases: [成本, 進貨價, Cost]
+  required: false
+  default: 0
+
+- field: gross_profit
+  type: num
+  attr: val
+  aliases: [毛利, 獲利, Gross Profit]
+  required: false
+  default: 0
+
+- field: region
+  type: str
+  attr: dim
+  aliases: [地區, 區域, 城市, 省份, Region]
+  required: false
+  default: "台灣"
+
+- field: store_name
+  type: str
+  attr: dim
+  aliases: [通路, 平台, 店名, Channel, Store]
+  required: false
+  default: "主要通路"
+
+- field: sales_rep
+  type: str
+  attr: dim
+  aliases: [業務員, 經手人, 業務, Sales Rep]
+  required: false
+  default: "系統"
+
+- field: category_l1
+  type: str
+  attr: dim
+  aliases: [大類, 分類, Category L1]
+  required: false
+  default: "全品項"
+
+- field: category_l2
+  type: str
+  attr: dim
+  aliases: [中類, 子類, Category L2]
+  required: false
+  default: "未分類"
+
+- field: guest_count
+  type: num
+  attr: val
+  aliases: [來客數, 人數, 交易筆數, Guest Count]
+  required: false
+  default: 1
+
+- field: is_member
+  type: str
+  attr: dim
+  aliases: [會員標記, 是否會員, Member]
+  required: false
+  default: "N"
+  
