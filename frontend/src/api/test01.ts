@@ -69,7 +69,12 @@ export async function syncToDuckdb(params: {
 export async function suggestMapping(params: {
   csv_headers: string[]
   model?: string
-}): Promise<{ mapping: Record<string, string> }> {
+}): Promise<{
+  mapping: Record<string, string>
+  model?: string | null
+  input_tokens?: number | null
+  output_tokens?: number | null
+}> {
   return apiFetch('/test01/suggest-mapping', {
     method: 'POST',
     body: JSON.stringify({ csv_headers: params.csv_headers, model: params.model ?? 'gpt-4o-mini' }),

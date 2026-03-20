@@ -79,8 +79,71 @@ def _find_schema_path() -> Path | None:
     return None
 
 
+def _parse_default(default_str: str, type_str: str) -> Any:
+    """解析 default 字串為適當型別"""
+    s = default_str.strip()
+    if not s:
+        return None
+    if type_str == "num":
+        try:
+            return int(s) if "." not in s else float(s)
+        except ValueError:
+            return 0
+    return s
+
+
+def _normalize_bi_sales_item(item: Any) -> dict[str, Any] | None:
+    """
+    將 schema 項目正規化為 {field, type, attr, aliases, required?, default?}。
+    支援兩種格式：
+    - 舊格式：{"field": "x", "type": "str", "attr": "dim", "aliases": [...], ...}
+    - 新格式：{"field_name": "type|attr|aliases|required|default"}
+    """
+    if not isinstance(item, dict):
+        return None
+    # 新格式：單一 key 為 field，value 為 "type|attr|aliases|required|default"
+    if "field" not in item and len(item) == 1:
+        field_name, value = next(iter(item.items()))
+        if not isinstance(value, str):
+            return None
+        parts = [p.strip() for p in value.split("|")]
+        type_str = parts[0] if len(parts) > 0 else "str"
+        attr_str = parts[1] if len(parts) > 1 else "dim"
+        aliases_str = parts[2] if len(parts) > 2 else ""
+        required_str = parts[3].lower() if len(parts) > 3 else "false"
+        default_str = parts[4] if len(parts) > 4 else ""
+
+        aliases = [a.strip() for a in aliases_str.split(",") if a.strip()]
+        required = required_str in ("true", "1", "yes")
+        default_val = _parse_default(default_str, type_str)
+
+        result: dict[str, Any] = {
+            "field": field_name,
+            "type": type_str,
+            "attr": attr_str,
+            "aliases": aliases,
+            "required": required,
+        }
+        if default_val is not None:
+            result["default"] = default_val
+        elif type_str == "num":
+            result["default"] = 1 if field_name == "quantity" else 0
+        elif type_str == "timestamp":
+            result["default"] = ""
+        else:
+            result["default"] = ""
+        return result
+    # 舊格式：已有 field 等欄位，直接回傳（確保 aliases 為 list）
+    if "field" in item:
+        out = dict(item)
+        if "aliases" in out and isinstance(out["aliases"], str):
+            out["aliases"] = [a.strip() for a in out["aliases"].split(",") if a.strip()]
+        return out
+    return None
+
+
 def load_bi_sales_schema() -> list[dict[str, Any]]:
-    """載入 bi_sales_table.yaml，回傳欄位定義列表"""
+    """載入 bi_sales_table.yaml，回傳欄位定義列表（支援新格式 type|attr|aliases）"""
     path = _find_schema_path()
     if not path:
         logger.warning("bi_sales_table.yaml 找不到，嘗試路徑: %s", Path(__file__).resolve().parents[3] / "config" / "schemas" / _SCHEMA_FILENAME)
@@ -88,7 +151,14 @@ def load_bi_sales_schema() -> list[dict[str, Any]]:
     try:
         with open(path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
-        return data if isinstance(data, list) else []
+        if not isinstance(data, list):
+            return []
+        result: list[dict[str, Any]] = []
+        for item in data:
+            normalized = _normalize_bi_sales_item(item)
+            if normalized:
+                result.append(normalized)
+        return result
     except yaml.YAMLError as e:
         logger.exception("bi_sales_table.yaml 解析失敗: %s", e)
         return []

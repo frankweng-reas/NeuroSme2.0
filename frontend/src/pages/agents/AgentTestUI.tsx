@@ -106,6 +106,11 @@ export default function AgentTestUI({ agent }: AgentTestUIProps) {
   const [suggestLoading, setSuggestLoading] = useState(false)
   const [saveTemplateLoading, setSaveTemplateLoading] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
+  const [suggestLastUsage, setSuggestLastUsage] = useState<{
+    model: string
+    input_tokens: number
+    output_tokens: number
+  } | null>(null)
 
   const csvHeaders = useMemo(() => parseCsvHeaders(csvContent), [csvContent])
   const csvFirstRow = useMemo(() => parseCsvFirstRow(csvContent), [csvContent])
@@ -210,10 +215,22 @@ export default function AgentTestUI({ agent }: AgentTestUIProps) {
   const handleApplySuggestions = async () => {
     if (!csvHeaders.length) return
     setSuggestLoading(true)
+    setSuggestLastUsage(null)
     try {
       const res = await suggestMapping({ csv_headers: csvHeaders })
       setMapping((prev) => ({ ...prev, ...res.mapping }))
       setToast(`已建議 ${Object.keys(res.mapping).length} 個欄位對應`)
+      if (
+        res.model != null &&
+        res.input_tokens != null &&
+        res.output_tokens != null
+      ) {
+        setSuggestLastUsage({
+          model: res.model,
+          input_tokens: res.input_tokens,
+          output_tokens: res.output_tokens,
+        })
+      }
     } catch (err) {
       setToast(err instanceof Error ? err.message : 'LLM 建議失敗')
     } finally {
@@ -321,7 +338,7 @@ export default function AgentTestUI({ agent }: AgentTestUIProps) {
         <Panel
           defaultSize={50}
           minSize={20}
-          className="flex flex-col overflow-hidden rounded-2xl border-2 border-gray-200 bg-white shadow-sm"
+          className="flex flex-col overflow-hidden rounded-2xl border-2 border-gray-200 bg-white shadow-sm text-lg"
         >
           <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-4">
             <div className="flex shrink-0 flex-col gap-2">
@@ -367,7 +384,7 @@ export default function AgentTestUI({ agent }: AgentTestUIProps) {
               </div>
               {previewRows === null && (
                 <div className="flex items-center gap-2">
-                  <label className="shrink-0 text-gray-600">資料來源：</label>
+                  <label className="shrink-0 text-gray-600">對應模板：</label>
                   <select
                     className="rounded border border-gray-300 px-2 py-1.5 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
                     value={selectedTemplateName}
@@ -456,10 +473,9 @@ export default function AgentTestUI({ agent }: AgentTestUIProps) {
                     <table className="min-w-full table-fixed border-collapse">
                       <thead>
                         <tr className="border-b border-gray-200">
-                          <th className="w-1/4 px-2 py-1.5 text-left font-medium text-gray-600">Schema 欄位</th>
-                          <th className="w-1/4 px-2 py-1.5 text-left font-medium text-gray-600">中文</th>
-                          <th className="w-1/4 px-2 py-1.5 text-left font-medium text-gray-600">對應</th>
-                          <th className="w-1/4 px-2 py-1.5 text-left font-medium text-gray-600">內容</th>
+                          <th className="w-2/5 px-2 py-1.5 text-left font-medium text-gray-600">系統欄位</th>
+                          <th className="w-1/5 px-2 py-1.5 text-left font-medium text-gray-600">來源欄位</th>
+                          <th className="w-2/5 px-2 py-1.5 text-left font-medium text-gray-600">內容</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -481,13 +497,13 @@ export default function AgentTestUI({ agent }: AgentTestUIProps) {
                           const isComputedNoMapping = isComputed && !hasMapping
                           const computedVal = isComputed ? computedValues[f.field as keyof typeof computedValues] : undefined
                           const chineseName = f.aliases?.[0] ?? '—'
+                          const systemFieldLabel = `${f.field} (${chineseName})`
                           return (
                             <tr key={f.field} className="border-b border-gray-100">
                               <td className="px-2 py-1.5 text-gray-700">
-                                {f.field}
+                                {systemFieldLabel}
                                 {f.required && <span className="text-red-500">*</span>}
                               </td>
-                              <td className="px-2 py-1.5 text-gray-600">{chineseName}</td>
                               <td className="px-2 py-1.5">
                                 <select
                                   className="w-full min-w-0 rounded border border-gray-300 px-2 py-1.5 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
@@ -542,6 +558,17 @@ export default function AgentTestUI({ agent }: AgentTestUIProps) {
                     </table>
                   )}
                 </div>
+              )}
+            </div>
+            <div className="shrink-0 border-t border-gray-200 pt-3">
+              {suggestLastUsage ? (
+                <div className="flex items-center gap-4 text-gray-500">
+                  <span>Model: {suggestLastUsage.model}</span>
+                  <span>Input tokens: {suggestLastUsage.input_tokens.toLocaleString()}</span>
+                  <span>Output tokens: {suggestLastUsage.output_tokens.toLocaleString()}</span>
+                </div>
+              ) : (
+                <div className="text-gray-400">自動建議後顯示 LLM 用量</div>
               )}
             </div>
           </div>

@@ -55,6 +55,9 @@ class SuggestMappingRequest(BaseModel):
 
 class SuggestMappingResponse(BaseModel):
     mapping: dict[str, str]  # schema_field -> csv_header
+    model: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
 
 
 class MappingTemplateItem(BaseModel):
@@ -180,7 +183,19 @@ Standard Schema：
             for k, v in mapping.items()
             if k in schema_fields and v in valid_headers
         }
-        return SuggestMappingResponse(mapping=filtered)
+
+        # 取得 usage 與 model
+        usage = getattr(resp, "usage", None)
+        input_tokens = usage.prompt_tokens if usage else None
+        output_tokens = usage.completion_tokens if usage else None
+        resp_model = getattr(resp, "model", None) or model
+
+        return SuggestMappingResponse(
+            mapping=filtered,
+            model=resp_model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
     except HTTPException:
         raise
     except Exception as e:
