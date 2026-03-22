@@ -42,7 +42,7 @@ store_name,channel,item_name,gross_profit,sales_amount,cost_amount,quantity
 **Intent**：
 ```json
 {
-  "group_by_column": "store_name",
+  "group_by_column": ["store_name"],
   "indicator": ["margin_rate", "roi"],
   "value_columns": [
     {"column": "gross_profit", "aggregation": "sum"},
@@ -68,8 +68,8 @@ store_name,channel,item_name,gross_profit,sales_amount,cost_amount,quantity
 **Intent**：
 ```json
 {
-  "group_by_column": "store_name",
-  "indicator": "margin_rate",
+  "group_by_column": ["store_name"],
+  "indicator": ["margin_rate"],
   "value_columns": [
     {"column": "gross_profit", "aggregation": "sum"},
     {"column": "sales_amount", "aggregation": "sum"}
@@ -91,7 +91,7 @@ store_name,channel,item_name,gross_profit,sales_amount,cost_amount,quantity
 **Intent**：
 ```json
 {
-  "group_by_column": null,
+  "group_by_column": [],
   "indicator": ["margin_rate", "roi"],
   "value_columns": [
     {"column": "gross_profit", "aggregation": "sum"},
@@ -116,7 +116,7 @@ store_name,channel,item_name,gross_profit,sales_amount,cost_amount,quantity
 **Intent**：
 ```json
 {
-  "group_by_column": "store_name",
+  "group_by_column": ["store_name"],
   "series_by_column": "channel",
   "value_columns": [{"column": "sales_amount", "aggregation": "sum"}],
   "display_fields": ["sales_amount"]
@@ -137,7 +137,7 @@ store_name,channel,item_name,gross_profit,sales_amount,cost_amount,quantity
 **Intent**：
 ```json
 {
-  "group_by_column": "store_name",
+  "group_by_column": ["store_name"],
   "value_columns": [
     {"column": "sales_amount", "aggregation": "sum"},
     {"column": "cost_amount", "aggregation": "sum"}
@@ -160,7 +160,7 @@ store_name,channel,item_name,gross_profit,sales_amount,cost_amount,quantity
 **Intent**：
 ```json
 {
-  "group_by_column": null,
+  "group_by_column": [],
   "value_columns": [
     {"column": "sales_amount", "aggregation": "sum"},
     {"column": "cost_amount", "aggregation": "sum"},

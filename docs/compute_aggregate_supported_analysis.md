@@ -4,9 +4,7 @@
 
 **group_by_column** 為分組維度（X 軸），可為單一欄位或陣列。若需階層顯示（例如「大類 > 中類 > 品名」），請設為依層級排序的欄位陣列，如 `["category_l1", "category_l2", "item_name"]`。彙總以最後一層為準，輸出會帶 `groupDetails` 供前端呈現階層。
 
-**value_column / value_columns** 為彙總數值欄位，例如銷售金額、銷售數量、毛利。
-
-**aggregation** 為彙總方式，支援 sum、avg、count。
+**value_columns** 為 `[{ "column": "string", "aggregation": "sum|avg|count" }, ...]`，每欄位必帶 aggregation。例如：`[{"column": "sales_amount", "aggregation": "sum"}, {"column": "patient_id", "aggregation": "count"}]`，可支援不同欄位使用不同彙總方式。
 
 ---
 
@@ -18,11 +16,11 @@
 
 單一 value 欄位，依 group 分組。輸出為 `labels` 搭配 `data`。
 
-### 2. 多數值分別彙總
+### 2. 多數值分別彙總（可每欄位不同 aggregation）
 
-範例：「精華液和乳霜的銷售數量與銷售金額？」
+範例：「精華液和乳霜的銷售數量與銷售金額？」、「內科醫師的平均候診時間與總看診人次」
 
-多個 value_columns，依 group 分組。輸出為 `labels` 搭配 `datasets`，每個欄位一組 data。
+多個 value_columns，每欄位可指定不同 aggregation（sum、avg、count）。輸出為 `labels` 搭配 `datasets`，每個欄位一組 data。
 
 ### 3. 複合指標
 
@@ -30,7 +28,7 @@
 
 複合指標需 value_columns 兩欄（分子、分母）。支援項目：margin_rate（gross_profit / net_amount，%）、roi（gross_profit / cost_amount）、arpu（net_amount / quantity，元）、discount_rate（discount_amount / net_amount，%）。輸出為 `labels`、`data`，並附 `valueLabel`、`valueSuffix`。
 
-若要同時輸出複合指標與其他數值（例如 ROI 加 net_amount），value_columns 須包含所有欄位，前兩欄供指標計算，其餘為額外彙總。例如：`["gross_profit", "cost_amount", "net_amount"]`。
+若要同時輸出複合指標與其他數值（例如 ROI 加 net_amount），value_columns 須包含所有欄位，前兩欄供指標計算，其餘為額外彙總。例如：`[{"column": "gross_profit", "aggregation": "sum"}, {"column": "cost_amount", "aggregation": "sum"}, {"column": "net_amount", "aggregation": "sum"}]`。
 
 ### 4. 時間趨勢（多系列）
 
@@ -76,9 +74,9 @@ group_by_column 為空時，輸出為單一總計或複合指標組成欄位。
 
 **display_fields**：指定要輸出的指標，用於過濾 datasets。
 
-**top_n**：取前 N 名。
+**top_n**：取前 N 名。可為 `number` 或 `{ "count": number, "based_on": "string" }`（based_on 可選，排序由 sort_order 決定）。
 
-**sort_order**：desc 或 asc。
+**sort_order**：`"desc"` | `"asc"`（舊格式）或 `[{ "column": "string", "order": "desc|asc" }, ...]`（新格式，可指定依哪一欄排序，支援複合排序）。
 
 **time_order**：時間維度依時間排序。
 
@@ -89,3 +87,33 @@ group_by_column 為空時，輸出為單一總計或複合指標組成欄位。
 **單一系列**：`labels`、`data`、`valueLabel`、`valueSuffix`。多層 group 時另含 `groupDetails`（每筆對應 `labels` 順序，含各層欄位值）。
 
 **多系列**：`labels`、`datasets`（每項含 `label`、`data`、`valueLabel`、`valueSuffix`，單位在 dataset 內）。多層 group 時另含 `groupDetails`。
+
+---
+
+## 七、比較期間指標 (compare_periods)
+
+當需 YoY 年增率等**雙期間比較**時，使用 `compare_periods` 而非 filters：
+
+```json
+{
+  "compare_periods": {
+    "current": { "column": "timestamp", "value": "2026-01-01/2026-12-31" },
+    "compare": { "column": "timestamp", "value": "2025-01-01/2025-12-31" }
+  },
+  "indicator": ["sales_yoy_growth"],
+  "value_columns": [{"column": "sales_amount", "aggregation": "sum"}],
+  "group_by_column": ["channel"]
+}
+```
+
+- **current**：本期期間
+- **compare**：對照期（如去年同期）
+- **indicator**：`sales_yoy_growth` 或 `{value}_yoy_growth`（如 net_amount_yoy_growth）
+- 輸出：本期數值、去年同期數值、YoY 成長率（%）
+- `filters` 中的其他欄位仍會套用，僅 date column 由 compare_periods 獨立處理
+
+---
+
+## 八、限制
+
+- **同欄位多 filter 為 OR**：同欄位多筆 filter 會合併為 OR。若要雙期間比較，請使用 `compare_periods`。

@@ -14,6 +14,12 @@
 
 ```
 compute_aggregate
+├── [0a] compare_periods + YoY 類 indicator（有分組）
+│   └── _run_compare_periods_flow：兩期間分別彙總 → join → YoY
+│
+├── [0b] compare_periods + ratio 指標（有分組）
+│   └── _run_compare_periods_ratio_flow：兩期間分別算 ratio → 輸出 本期＋前期
+│
 ├── [1] series_by_column 有值
 │   ├── 1a. has_indicator → _aggregate_multi_series_with_metrics：全算，_filter_datasets_by_display_fields
 │   └── 1b. 無 indicator → _aggregate_multi_series → _filter_datasets_by_display_fields
@@ -48,3 +54,4 @@ compute_aggregate
 - 維度（store_name 等）：不進 datasets
 - value：銷售金額↔sales_amount、毛利↔gross_profit 等
 - indicator：毛利率↔margin_rate、ROI↔roi 等
+- 前期 indicator（compare_periods + ratio）：前期客單價↔previous_arpu、arpu_compare 等（由 schema 自動推導）

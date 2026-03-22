@@ -1,6 +1,6 @@
 /** agent_id 含 business 時使用：商務型 agent 專用 UI */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ChevronRight, ChevronsRight, Database, HelpCircle, Loader2, MoreVertical, Plus, RefreshCw } from 'lucide-react'
+import { ChevronRight, ChevronsRight, Database, HelpCircle, Loader2, MoreVertical, Plus, RefreshCw, X } from 'lucide-react'
 import { Group, Panel, PanelImperativeHandle, Separator } from 'react-resizable-panels'
 import { chatCompletionsComputeToolStream, type ComputeStage } from '@/api/chat'
 import { ApiError } from '@/api/client'
@@ -9,13 +9,15 @@ import AISettingsPanelAdvanced from '@/components/AISettingsPanelAdvanced'
 import AgentChat, { type Message, type ResponseMeta } from '@/components/AgentChat'
 import { type ChartData } from '@/components/ChartModal'
 import HelpModal from '@/components/HelpModal'
+import MappingTemplateEditor from '@/components/MappingTemplateEditor'
 import AgentHeader from '@/components/AgentHeader'
 import ConfirmModal from '@/components/ConfirmModal'
 import InputModal from '@/components/InputModal'
 import { createBiProject, deleteBiProject, getDuckdbStatus, importCsvToDuckdb, listBiProjects, updateBiProject, type BiProjectItem, type MessageStored } from '@/api/biProjects'
 import { listMappingTemplates, type MappingTemplateItem } from '@/api/test01'
+import { getMe } from '@/api/users'
 import { DETAIL_OPTIONS, LANGUAGE_OPTIONS, ROLE_OPTIONS } from '@/constants/aiOptions'
-import type { Agent } from '@/types'
+import type { Agent, User } from '@/types'
 
 interface AgentBusinessUIProps {
   agent: Agent
@@ -269,22 +271,26 @@ function BlockCard({
   block,
   templates,
   canDelete,
+  canAddTemplate,
   onTemplateChange,
   onFilesChange,
   onRemoveFile,
   onClearFiles,
   onDelete,
+  onAddTemplateClick,
   onValidationError,
   fileInputId,
 }: {
   block: BlockItem
   templates: MappingTemplateItem[]
   canDelete: boolean
+  canAddTemplate: boolean
   onTemplateChange: (id: string, value: string) => void
   onFilesChange: (id: string, files: File[]) => void
   onRemoveFile: (id: string, index: number) => void
   onClearFiles: (id: string) => void
   onDelete: (id: string) => void
+  onAddTemplateClick: () => void
   onValidationError: (message: string) => void
   fileInputId: string
 }) {
@@ -376,7 +382,19 @@ function BlockCard({
       </div>
       <div className="flex flex-col gap-5 p-4">
         <div className="flex flex-col gap-2">
-          <label className="text-lg font-medium text-gray-700">資料模板</label>
+          <div className="flex items-center justify-between gap-2">
+            <label className="text-lg font-medium text-gray-700">資料模板</label>
+            <button
+              type="button"
+              onClick={onAddTemplateClick}
+              disabled={!canAddTemplate}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-lg text-gray-600 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-white"
+              aria-label="新增資料模板"
+              title={canAddTemplate ? '新增資料模板' : '需 admin 或 super_admin 權限'}
+            >
+              ＋
+            </button>
+          </div>
           <select
             className="w-full rounded-lg border border-gray-300 px-3 py-2 text-lg focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
             value={block.selectedTemplateName}
@@ -537,6 +555,8 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
   const [activeTab, setActiveTab] = useState<'csv' | 'data-adapter'>('csv')
   const [csvAdapterToast, setCsvAdapterToast] = useState<string | null>(null)
   const [duckdbRowCount, setDuckdbRowCount] = useState<number | null>(null)
+  const [user, setUser] = useState<User | null>(null)
+  const [addTemplateModalOpen, setAddTemplateModalOpen] = useState(false)
 
   const loadTemplates = useCallback(() => {
     listMappingTemplates()
@@ -602,6 +622,14 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
   useEffect(() => {
     loadTemplates()
   }, [loadTemplates])
+
+  useEffect(() => {
+    getMe()
+      .then(setUser)
+      .catch(() => setUser(null))
+  }, [])
+
+  const canAddTemplate = user?.role === 'admin' || user?.role === 'super_admin'
 
   const fetchDuckdbStatus = useCallback(() => {
     if (!selectedProject) {
@@ -1068,6 +1096,38 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
           </div>
         )}
       </InputModal>
+      {addTemplateModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          onClick={() => setAddTemplateModalOpen(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="add-template-modal-title"
+        >
+          <div className="absolute inset-0 bg-black/30" />
+          <div
+            className="relative z-10 flex h-[85vh] min-h-[400px] w-full max-w-[95vw] flex-col overflow-hidden rounded-2xl border-2 border-gray-200 bg-white shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex flex-shrink-0 items-center justify-between border-b border-gray-200 px-6 py-4">
+              <h2 id="add-template-modal-title" className="text-xl font-semibold text-gray-800">
+                資料模板-Data Mapping
+              </h2>
+              <button
+                type="button"
+                onClick={() => setAddTemplateModalOpen(false)}
+                className="rounded-lg p-2 text-gray-600 transition-colors hover:bg-gray-200"
+                aria-label="關閉"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-4">
+              <MappingTemplateEditor onTemplateSaved={loadTemplates} />
+            </div>
+          </div>
+        </div>
+      )}
       <InputModal
         open={newProjectOpen}
         title="新增專案"
@@ -1278,11 +1338,13 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
                       block={block}
                       templates={templates}
                       canDelete={blocks.length > 1}
+                      canAddTemplate={canAddTemplate}
                       onTemplateChange={updateBlockTemplate}
                       onFilesChange={updateBlockFiles}
                       onRemoveFile={removeFileFromBlock}
                       onClearFiles={clearBlockFiles}
                       onDelete={removeBlock}
+                      onAddTemplateClick={() => setAddTemplateModalOpen(true)}
                       onValidationError={(msg) => setCsvAdapterToast(msg)}
                       fileInputId={`file-input-${block.id}`}
                     />
@@ -1319,8 +1381,56 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
                 </>
               )}
               {activeTab === 'data-adapter' && (
-                <div className="flex flex-1 items-center justify-center text-gray-500">
-                  Data Adapter 開發中
+                <div className="flex flex-1 flex-col gap-4">
+                  <div className="flex flex-col gap-2 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+                    <label className="text-base font-medium text-gray-700">資料來源</label>
+                    <select
+                      className="rounded-lg border border-gray-300 px-3 py-2 text-base focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
+                      disabled
+                    >
+                      <option value="google-drive">Google Drive</option>
+                      <option value="sftp">SFTP（規劃中）</option>
+                    </select>
+                  </div>
+                  <div className="flex flex-col gap-2 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+                    <label className="text-base font-medium text-gray-700">連接 Google Drive</label>
+                    <button
+                      type="button"
+                      disabled
+                      className="w-fit rounded-lg border border-gray-300 bg-white px-4 py-2 text-base text-gray-600 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      授權並連接
+                    </button>
+                    <p className="text-sm text-gray-500">OAuth 連線後可選取資料夾與檔案</p>
+                  </div>
+                  <div className="flex flex-col gap-2 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+                    <label className="text-base font-medium text-gray-700">已選資料夾</label>
+                    <div className="rounded-lg border border-dashed border-gray-300 bg-white px-3 py-2 text-gray-400">
+                      尚未選擇
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-2 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+                    <label className="text-base font-medium text-gray-700">選取檔案</label>
+                    <div className="rounded-lg border border-dashed border-gray-300 bg-white px-3 py-2 text-gray-400">
+                      連接後可選取
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-2 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+                    <label className="text-base font-medium text-gray-700">資料模板</label>
+                    <select
+                      className="rounded-lg border border-gray-300 px-3 py-2 text-base focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
+                      disabled
+                    >
+                      <option value="">— 請先連接並選取檔案 —</option>
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    disabled
+                    className="flex shrink-0 items-center justify-center rounded-lg bg-blue-600 py-3 text-base text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    匯入資料
+                  </button>
                 </div>
               )}
             </div>

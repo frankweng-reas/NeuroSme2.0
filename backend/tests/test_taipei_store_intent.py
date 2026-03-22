@@ -9,6 +9,22 @@ spec = importlib.util.spec_from_file_location("ac", "app/services/analysis_compu
 ac = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ac)
 
+try:
+    schema_spec = importlib.util.spec_from_file_location("sl", "app/services/schema_loader.py")
+    sl = importlib.util.module_from_spec(schema_spec)
+    schema_spec.loader.exec_module(sl)
+    SCHEMA_DEF = sl.load_schema("fact_business_operations")
+except Exception:
+    SCHEMA_DEF = {
+        "columns": {
+            "store_name": {"type": "str", "attr": "dim", "aliases": ["通路", "平台"]},
+            "timestamp": {"type": "time", "attr": "dim_time", "aliases": ["日期", "時間"]},
+            "sales_amount": {"type": "num", "attr": "val", "aliases": ["營收", "銷售金額"]},
+            "gross_profit": {"type": "num", "attr": "val", "aliases": ["毛利"]},
+        },
+        "indicators": {},
+    }
+
 # 模擬 Sales Analytics schema：有信義店、板橋店，無台北店
 CSV = """store_name,timestamp,sales_amount,gross_profit
 信義店,2025-03-15,50000,12000
@@ -23,8 +39,8 @@ def test_intent_passes_then_compute_no_data():
 
     # 模擬 LLM 回傳的 intent（台北店、3/15 營業狀況）
     intent = {
-        "group_by_column": "store_name",
-        "value_columns": ["sales_amount"],
+        "group_by_column": ["store_name"],
+        "value_columns": [{"column": "sales_amount", "aggregation": "sum"}],
         "filters": [
             {"column": "store_name", "op": "==", "value": "台北店"},
             {"column": "timestamp", "op": "==", "value": "2025-03-15"},
@@ -49,7 +65,7 @@ def test_intent_passes_then_compute_no_data():
         if out:
             parsed_filters = out
 
-    has_aggregate = intent.get("value_column") or intent.get("value_columns") or intent.get("indicator")
+    has_aggregate = intent.get("value_columns") or intent.get("indicator")
     has_group = bool(intent.get("group_by_column"))
     has_filters = bool(parsed_filters)
 
@@ -57,14 +73,16 @@ def test_intent_passes_then_compute_no_data():
 
     # 執行 compute
     error_list = []
+    value_cols = intent.get("value_columns")
+    if not value_cols:
+        value_cols = [{"column": "sales_amount", "aggregation": "sum"}]
     chart_result = ac.compute_aggregate(
         rows,
         intent.get("group_by_column") or "",
-        intent.get("value_column"),
-        "sum",
+        value_cols,
         "bar",
         filters=parsed_filters,
-        value_columns=intent.get("value_columns"),
+        schema_def=SCHEMA_DEF,
         error_out=error_list,
     )
 
@@ -85,7 +103,7 @@ def test_intent_passes_then_compute_no_data():
 def test_intent_with_col_alias():
     """LLM 用 col 而非 column 時，仍應解析成功"""
     intent = {
-        "group_by_column": None,
+        "group_by_column": [],
         "value_columns": [],
         "filters": [
             {"col": "store_name", "value": "台北店"},

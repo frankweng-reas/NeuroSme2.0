@@ -7,6 +7,17 @@ spec = importlib.util.spec_from_file_location("ac", "app/services/analysis_compu
 ac = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ac)
 
+SCHEMA_E2E = {
+    "columns": {
+        "平台": {"type": "str", "attr": "dim", "aliases": ["平台", "通路", "店"]},
+        "月份": {"type": "str", "attr": "dim", "aliases": ["月份", "月"]},
+        "產品名稱": {"type": "str", "attr": "dim", "aliases": ["產品名稱", "產品", "品名"]},
+        "銷售數量": {"type": "num", "attr": "val", "aliases": ["銷售數量", "數量"]},
+        "銷售金額": {"type": "num", "attr": "val", "aliases": ["銷售金額", "銷售額", "金額"]},
+    },
+    "indicators": {},
+}
+
 CSV = """平台,月份,產品名稱,銷售數量,銷售金額
 momo,1月,momo深度保濕精華液,10,1000
 momo,2月,momo 深度保濕精華液,5,500
@@ -21,10 +32,10 @@ def test_single_product():
     r = ac.compute_aggregate(
         rows,
         "產品名稱",
-        "銷售金額",
-        "sum",
+        [{"column": "銷售金額", "aggregation": "sum"}],
         "bar",
         filters=[{"column": "產品名稱", "value": "momo深度保濕精華液"}],
+        schema_def=SCHEMA_E2E,
     )
     assert r, "compute 失敗"
     assert "labels" in r and "data" in r

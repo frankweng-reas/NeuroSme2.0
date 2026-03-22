@@ -1,18 +1,73 @@
 ---
 id: fact_business_operations
+name: Sales Analytics
 
-# 分組欄位別名：用戶說「平台」時對應的實際欄位
-group_aliases:
-  平台: [平台, 各平台, 通路, store_name, channel_id, channel, platform, 店]
-  月份: [月份, 月, 日期, 時間, timestamp, event_date, month, date]
-  品類: [品類, 類別, category_l1, category_l2, 大類, 中類]
-  產品名稱: [產品名稱, 產品, 品名, item_name, item]
+# ---------------------------------------------------------------------------
+# Data Schema
+# 格式: field: { type, attr, aliases }
+#   type: str | num | time
+#   attr: dim | dim_time | val | val_num | val_denom
+#     dim: 維度, dim_time: 時間維度, val: 數值, val_num: 指標分子, val_denom: 指標分母
+#   group_aliases / value_aliases 由 columns 依 attr 推導，不需重複定義
+# ---------------------------------------------------------------------------
+columns:
+  order_id:     { type: str,  attr: dim,      aliases: [訂單編號] }
+  timestamp:    { type: time, attr: dim_time, aliases: [日期, 時間, 月份, 月] }
+  store_name:   { type: str,  attr: dim,      aliases: [通路, 平台, 各平台, 店] }
+  item_name:    { type: str,  attr: dim,      aliases: [品名, 產品, 商品, 產品名稱] }
+  category_l1:  { type: str,  attr: dim,      aliases: [大類, 主分類, 品類, 類別] }
+  category_l2:  { type: str,  attr: dim,      aliases: [中類, 子分類, 品類, 類別] }
+  quantity:     { type: num,  attr: val,      aliases: [數量, 銷售數量] }
+  sales_amount: { type: num,  attr: val_denom, aliases: [營收, 售價總額, revenue, 銷售金額, 銷售額, 金額, 摳摳] }
+  gross_profit: { type: num,  attr: val_num,  aliases: [毛利, 獲利] }
+  cost_amount:  { type: num,  attr: val_denom, aliases: [成本, 預估成本] }
+  guest_count:  { type: num,  attr: val_denom, aliases: [來客數, 人數] }
+  discount_amount: { type: num, attr: val,    aliases: [折扣金額, 讓利金額] }
+  is_member:    { type: str,  attr: dim,      aliases: [是否會員, 會員身份] }
 
-# 數值欄位別名：用戶說「銷售金額」時對應的實際欄位
-value_aliases:
-  銷售金額: [銷售金額, 銷售額, 金額, sales_amount, net_amount, gross_amount, 營收, 售價總額, revenue]
-  銷售數量: [銷售數量, 數量, quantity]
-  毛利: [毛利, gross_profit]
-  營收: [營收, sales_amount, net_amount, revenue, 售價總額]
-  成本: [成本, cost_amount, 預估成本]
-  來客數: [來客數, 人數, guest_count]
+# ---------------------------------------------------------------------------
+# 維度層級 (由大到小)，用於多層 group_by 與語意解析
+# key: 層級顯示名稱，value: 欄位順序 (由大到小)
+# ---------------------------------------------------------------------------
+dimension_hierarchy:
+  通路層級: [channel, store_name]
+  產品層級: [category_l1, category_l2, item_name]
+
+# ---------------------------------------------------------------------------
+# Business Logic
+# ---------------------------------------------------------------------------
+aggregation:
+  default: sum   # 數值預設 sum，除非指定 avg
+
+# 指標血緣 (Value Components)：定義每個指標所需欄位
+# ratio 型: [numerator, denominator]，計算 num/denom
+# compare_period 型: [value_column]，用於 YoY 等雙期間比較
+indicators:
+  margin_rate:
+    type: ratio
+    display_label: 毛利率
+    value_components: [gross_profit, sales_amount]
+    as_percent: true
+
+  roi:
+    type: ratio
+    display_label: ROI
+    value_components: [gross_profit, cost_amount]
+    as_percent: false
+
+  arpu:
+    type: ratio
+    display_label: 客單價
+    value_components: [sales_amount, guest_count]
+    as_percent: false
+
+  sales_yoy_growth:
+    type: compare_period
+    display_label: YoY成長率
+    value_components: [sales_amount]
+
+  discount_rate:
+    type: ratio
+    display_label: 折扣率
+    value_components: [discount_amount, sales_amount]
+    as_percent: true

@@ -43,30 +43,132 @@ _INDICATOR_DEFAULT_VALUE_COLUMNS: dict[str, list[str]] = {
 }
 
 
-def _parse_indicator_from_intent(intent: dict[str, Any]) -> str | list[str] | None:
-    """解析 indicator：可為 string 或 array。"""
-    v = intent.get("indicator")
-    if isinstance(v, list):
-        return [str(x).strip().lower() for x in v if x]
-    if isinstance(v, str) and v.strip():
-        return v.strip().lower()
+def _parse_compare_periods_from_intent(intent: dict[str, Any]) -> dict[str, Any] | None:
+    """解析 compare_periods。格式 { current: {column, value}, compare: {column, value} }。"""
+    cp = intent.get("compare_periods")
+    if not isinstance(cp, dict):
+        return None
+    cur = cp.get("current")
+    cmp_spec = cp.get("compare")
+    if not isinstance(cur, dict) or not isinstance(cmp_spec, dict):
+        return None
+    col = (cur.get("column") or "").strip()
+    cur_val = cur.get("value")
+    cmp_val = cmp_spec.get("value")
+    if not col or cur_val is None or cmp_val is None:
+        return None
+    return {"current": {"column": col, "value": cur_val}, "compare": {"column": col, "value": cmp_val}}
+
+
+def _get_top_n_from_intent(intent: dict[str, Any]) -> int | None:
+    """top_n 可為 number 或 { count, based_on }。回傳 count 或 None。"""
+    v = intent.get("top_n")
+    if isinstance(v, int) and v > 0:
+        return v
+    if isinstance(v, dict) and v.get("count") is not None:
+        try:
+            n = int(v.get("count"))
+            return n if n > 0 else None
+        except (ValueError, TypeError):
+            pass
+    if v is not None:
+        try:
+            n = int(v)
+            return n if n > 0 else None
+        except (ValueError, TypeError):
+            pass
     return None
 
 
-def _indicator_default_value_columns(indic: str | list[str] | None) -> list[str] | None:
-    """多 indicator 時回傳所需欄位聯集；單一則回傳該 indicator 預設。"""
+def _get_sort_order_from_intent(intent: dict[str, Any]) -> str | list[dict[str, str]]:
+    """sort_order 可為 "desc"|"asc" 或 [{ column, order }, ...]。直接傳給 compute_aggregate 正規化。"""
+    v = intent.get("sort_order")
+    if isinstance(v, list) and v:
+        out: list[dict[str, str]] = []
+        for item in v:
+            if isinstance(item, dict):
+                col = (item.get("column") or "_first_").strip() or "_first_"
+                ord_val = (item.get("order") or "desc").strip().lower()
+                ord_val = "desc" if ord_val == "desc" else "asc"
+                out.append({"column": col, "order": ord_val})
+        return out if out else "desc"
+    if v is None or v == "":
+        return "desc"
+    s = str(v).strip().lower() or "desc"
+    return s
+
+
+def _normalize_group_by(gb_raw: Any) -> list[str]:
+    """group_by_column 一律正規化為 array。intent 新格式為 ["department"]。"""
+    if isinstance(gb_raw, list):
+        return [str(x).strip() for x in gb_raw if x]
+    if gb_raw and str(gb_raw).strip():
+        return [str(gb_raw).strip()]
+    return []
+
+
+def _parse_indicator_from_intent(intent: dict[str, Any]) -> list[str] | None:
+    """解析 indicator：一律為 array 格式。僅接受 list，回傳 [str, ...] 或 None。"""
+    v = intent.get("indicator")
+    if isinstance(v, list):
+        out = [str(x).strip().lower() for x in v if x]
+        return out if out else None
+    return None
+
+
+def _indicator_default_value_columns(indic: list[str] | None) -> list[dict[str, str]] | None:
+    """依 indicator array 回傳所需欄位聯集。"""
     if not indic:
         return None
-    lst = indic if isinstance(indic, list) else [indic]
     cols: list[str] = []
     seen: set[str] = set()
-    for ind in lst:
+    for ind in indic:
         ind_clean = str(ind).strip().lower()
         for c in _INDICATOR_DEFAULT_VALUE_COLUMNS.get(ind_clean, []):
             if c not in seen:
                 seen.add(c)
                 cols.append(c)
-    return cols if cols else None
+    return [{"column": c, "aggregation": "sum"} for c in cols] if cols else None
+
+
+def _parse_value_columns_from_intent(intent: dict[str, Any], indicator: list[str] | None) -> list[dict[str, str]]:
+    """
+    從 intent 解析 value_columns，一律回傳 [{ column, aggregation }, ...]。
+    支援兩種格式：
+      1. ["col1", "col2"]：欄位名陣列，使用頂層 aggregation 或 sum
+      2. [{ column, aggregation }, ...]：每欄位可指定 aggregation
+    若無 value_columns，依 indicator 補預設，否則 [sales_amount, sum]。
+    """
+    vc = intent.get("value_columns")
+    default_agg = (intent.get("aggregation") or "sum")
+    if isinstance(default_agg, str):
+        default_agg = default_agg.strip().lower()
+    if default_agg not in ("sum", "avg", "count"):
+        default_agg = "sum"
+
+    if isinstance(vc, list) and vc:
+        out: list[dict[str, str]] = []
+        for item in vc:
+            if isinstance(item, dict) and item.get("column"):
+                col = str(item.get("column", "")).strip()
+                agg = (item.get("aggregation") or default_agg).strip().lower()
+                if agg not in ("sum", "avg", "count"):
+                    agg = default_agg
+                if col:
+                    out.append({"column": col, "aggregation": agg})
+        if out:
+            return out
+        # 若 list 內皆非 dict，嘗試當作欄位名陣列
+        for item in vc:
+            col = str(item).strip() if item is not None else ""
+            if col:
+                out.append({"column": col, "aggregation": default_agg})
+        if out:
+            return out
+    default = _indicator_default_value_columns(indicator)
+    if default:
+        return default
+    return [{"column": "sales_amount", "aggregation": "sum"}]
 
 def _parse_filters_from_intent(intent: dict[str, Any]) -> list[dict[str, Any]] | None:
     """從 intent 解析 filters。支援 filters 陣列；無則由 filter_column/filter_value 轉換。
@@ -125,6 +227,67 @@ def _load_prompt(prompt_key: str) -> str:
             except (OSError, IOError) as e:
                 logger.debug("讀取 %s 失敗: %s", filename, e)
     return ""
+
+
+def _build_schema_block(schema_def: dict[str, Any] | None) -> str:
+    """從 schema_def.columns 產生 Data Schema 區塊，格式與 prompt 內一致。"""
+    if not schema_def or not schema_def.get("columns"):
+        return "- (無 schema 定義)"
+    lines: list[str] = []
+    for field, meta in (schema_def.get("columns") or {}).items():
+        if not isinstance(meta, dict):
+            continue
+        t = meta.get("type") or "str"
+        a = meta.get("attr") or "dim"
+        aliases = meta.get("aliases") or []
+        alias_str = ", ".join(str(x) for x in aliases) if aliases else ""
+        lines.append(f"- {field}: [{t}, {a}] {alias_str}".strip())
+    return "\n".join(lines) if lines else "- (無欄位)"
+
+
+def _build_indicator_block(schema_def: dict[str, Any] | None) -> str:
+    """從 schema_def.indicators 產生指標血緣區塊，格式與 prompt 內一致。"""
+    if not schema_def or not schema_def.get("indicators"):
+        return "   - (無指標定義)"
+    lines: list[str] = []
+    for code, meta in (schema_def.get("indicators") or {}).items():
+        if not isinstance(meta, dict):
+            continue
+        comp = meta.get("value_components") or []
+        comp_str = ", ".join(str(c) for c in comp) if comp else ""
+        lines.append(f"   - `{code}`: [{comp_str}]")
+    return "\n".join(lines) if lines else "   - (無指標)"
+
+
+def _build_hierarchy_block(schema_def: dict[str, Any] | None) -> str:
+    """從 schema_def.dimension_hierarchy 產生維度層級區塊，格式與 prompt 內一致。"""
+    if not schema_def or not schema_def.get("dimension_hierarchy"):
+        return "- (無層級定義)"
+    lines: list[str] = []
+    for label, cols in (schema_def.get("dimension_hierarchy") or {}).items():
+        if not isinstance(cols, list):
+            continue
+        cols_str = " > ".join(str(c) for c in cols if c)
+        if cols_str:
+            lines.append(f"- {label}：{cols_str}")
+    return "\n".join(lines) if lines else "- (無層級)"
+
+
+def _load_intent_prompt(schema_def: dict[str, Any] | None) -> str:
+    """載入 intent prompt template 並從 schema_def 注入 schema/indicator/階層。"""
+    raw = _load_prompt("intent")
+    if not raw:
+        return ""
+    schema_name = (schema_def or {}).get("name") or "Sales Analytics"
+    schema_block = _build_schema_block(schema_def)
+    indicator_block = _build_indicator_block(schema_def)
+    hierarchy_block = _build_hierarchy_block(schema_def)
+    system_date = datetime.now().strftime("%Y-%m-%d")
+    return raw.replace("{{SCHEMA_NAME}}", schema_name).replace(
+        "{{SCHEMA_DEFINITION}}", schema_block
+    ).replace("{{INDICATOR_DEFINITION}}", indicator_block).replace(
+        "{{DIMENSION_HIERARCHY}}", hierarchy_block
+    ).replace("{{SYSTEM_DATE}}", system_date)
 
 
 def _infer_chart_type(question: str) -> str:
@@ -192,20 +355,18 @@ def _chart_result_to_detail_lines(chart_result: dict[str, Any]) -> list[str]:
                 if isinstance(ds, dict):
                     lbl = ds.get("label", "")
                     data = ds.get("data")
-                    suffix = ds.get("valueSuffix", "")
                     if isinstance(data, list) and i < len(data):
                         v = data[i]
-                        val_str = f"{int(v) if isinstance(v, (int, float)) and v == int(v) else v}{suffix}"
+                        val_str = int(v) if isinstance(v, (int, float)) and v == int(v) else v
                         parts.append(f"{lbl} {val_str}")
             if parts:
                 detail_lines.append(f"  {x_label}: " + ", ".join(parts))
     else:
         data = chart_result.get("data")
-        value_suffix = chart_result.get("valueSuffix", "")
         if isinstance(data, list) and len(data) == len(labels):
             for i, lbl in enumerate(display_labels):
                 v = data[i]
-                val_str = f"{int(v) if isinstance(v, (int, float)) and v == int(v) else v}{value_suffix}"
+                val_str = int(v) if isinstance(v, (int, float)) and v == int(v) else v
                 detail_lines.append(f"  {lbl} = {val_str}")
     return detail_lines
 
@@ -353,7 +514,7 @@ async def chat_completions_compute_tool(
     chart_result: dict[str, Any] | None = None
     usage1: dict | None = None
 
-    intent_prompt = _load_prompt("intent")
+    intent_prompt = _load_intent_prompt(schema_def)
     if not intent_prompt:
         raise HTTPException(status_code=500, detail="Intent prompt 檔案不存在 (system_prompt_analysis_intent_tool.md)")
 
@@ -396,48 +557,28 @@ schema:
 
     debug["intent"] = intent
 
-    gb_raw = intent.get("group_by_column")
-    if isinstance(gb_raw, list):
-        group_by = [str(x).strip() for x in gb_raw if x]
-    else:
-        group_by = (gb_raw or "").strip() or ""
+    group_by = _normalize_group_by(intent.get("group_by_column"))
     having_filters = _parse_having_filters_from_intent(intent)
-    value_col = intent.get("value_column")
-    value_cols = intent.get("value_columns")
-    if isinstance(value_cols, list):
-        value_cols = [str(v).strip() for v in value_cols if v]
-    else:
-        value_cols = None
-    agg = (intent.get("aggregation") or "sum").strip().lower()
+    indicator = _parse_indicator_from_intent(intent)
+    value_cols = _parse_value_columns_from_intent(intent, indicator)
     chart_type = _infer_chart_type(req.content)
     series_by = intent.get("series_by_column")
     if series_by and not isinstance(series_by, str):
         series_by = None
-    top_n = intent.get("top_n")
-    if top_n is not None and not isinstance(top_n, int):
-        try:
-            top_n = int(top_n)
-        except (ValueError, TypeError):
-            top_n = None
-    sort_order = (intent.get("sort_order") or "desc").strip().lower()
+    top_n = _get_top_n_from_intent(intent)
+    sort_order = _get_sort_order_from_intent(intent)
     time_order = bool(intent.get("time_order"))
     time_grain_raw = intent.get("time_grain")
     time_grain = str(time_grain_raw).strip().lower() if time_grain_raw else None
     if time_grain and time_grain not in ("day", "week", "month", "quarter", "year"):
         time_grain = None
-    indicator = _parse_indicator_from_intent(intent)
-    if not value_cols and indicator:
-        value_cols = _indicator_default_value_columns(indicator)
-    if not value_cols and (has_group or has_filters):
-        value_cols = ["sales_amount"]
 
     error_list: list[str] = []
     chart_result = compute_aggregate(
         rows,
         group_by,
-        value_column=value_col,
-        aggregation=agg,
-        chart_type=chart_type,
+        value_cols,
+        chart_type,
         series_by_column=series_by,
         filters=filters,
         having_filters=having_filters,
@@ -445,10 +586,9 @@ schema:
         sort_order=sort_order,
         time_order=time_order,
         time_grain=time_grain,
-        value_columns=value_cols,
         indicator=indicator,
-        group_aliases=schema_def.get("group_aliases") if schema_def else None,
-        value_aliases=schema_def.get("value_aliases") if schema_def else None,
+        schema_def=schema_def,
+        compare_periods=_parse_compare_periods_from_intent(intent),
         error_out=error_list,
     )
 
@@ -468,9 +608,6 @@ schema:
             debug=debug,
         )
 
-    # 僅單一指標時補 valueSuffix/yAxisLabel；多指標時不補，避免 LLM 誤解
-    if "valueSuffix" not in chart_result and "datasets" not in chart_result and chart_result.get("valueLabel"):
-        chart_result["valueSuffix"] = "元"
     if not chart_result.get("yAxisLabel") and chart_result.get("valueLabel"):
         chart_result["yAxisLabel"] = chart_result["valueLabel"]
     debug["chart_result"] = chart_result
@@ -564,7 +701,7 @@ async def _stream_compute_tool(
         schema_def = load_schema("fact_business_operations")
     schema_summary = get_schema_summary(rows, schema_def)
     model = (req.model or "").strip() or "gpt-4o-mini"
-    intent_prompt = _load_prompt("intent")
+    intent_prompt = _load_intent_prompt(schema_def)
     if not intent_prompt:
         yield _sse_event({"stage": "done", "error_stage": "intent", "content": "Intent prompt 檔案不存在", "chart_data": None})
         return
@@ -607,48 +744,28 @@ schema:
 
     yield _sse_event({"stage": "compute"})
 
-    gb_raw = intent.get("group_by_column")
-    if isinstance(gb_raw, list):
-        group_by = [str(x).strip() for x in gb_raw if x]
-    else:
-        group_by = (gb_raw or "").strip() or ""
+    group_by = _normalize_group_by(intent.get("group_by_column"))
     having_filters = _parse_having_filters_from_intent(intent)
-    value_col = intent.get("value_column")
-    value_cols = intent.get("value_columns")
-    if isinstance(value_cols, list):
-        value_cols = [str(v).strip() for v in value_cols if v]
-    else:
-        value_cols = None
-    agg = (intent.get("aggregation") or "sum").strip().lower()
+    indicator = _parse_indicator_from_intent(intent)
+    value_cols = _parse_value_columns_from_intent(intent, indicator)
     chart_type = _infer_chart_type(req.content)
     series_by = intent.get("series_by_column")
     if series_by and not isinstance(series_by, str):
         series_by = None
-    top_n = intent.get("top_n")
-    if top_n is not None and not isinstance(top_n, int):
-        try:
-            top_n = int(top_n)
-        except (ValueError, TypeError):
-            top_n = None
-    sort_order = (intent.get("sort_order") or "desc").strip().lower()
+    top_n = _get_top_n_from_intent(intent)
+    sort_order = _get_sort_order_from_intent(intent)
     time_order = bool(intent.get("time_order"))
     time_grain_raw = intent.get("time_grain")
     time_grain = str(time_grain_raw).strip().lower() if time_grain_raw else None
     if time_grain and time_grain not in ("day", "week", "month", "quarter", "year"):
         time_grain = None
-    indicator = _parse_indicator_from_intent(intent)
-    if not value_cols and indicator:
-        value_cols = _indicator_default_value_columns(indicator)
-    if not value_cols and (has_group or has_filters):
-        value_cols = ["sales_amount"]
 
     error_list: list[str] = []
     chart_result = compute_aggregate(
         rows,
         group_by,
-        value_column=value_col,
-        aggregation=agg,
-        chart_type=chart_type,
+        value_cols,
+        chart_type,
         series_by_column=series_by,
         filters=filters,
         having_filters=having_filters,
@@ -656,10 +773,9 @@ schema:
         sort_order=sort_order,
         time_order=time_order,
         time_grain=time_grain,
-        value_columns=value_cols,
         indicator=indicator,
-        group_aliases=schema_def.get("group_aliases") if schema_def else None,
-        value_aliases=schema_def.get("value_aliases") if schema_def else None,
+        schema_def=schema_def,
+        compare_periods=_parse_compare_periods_from_intent(intent),
         error_out=error_list,
     )
 
@@ -675,9 +791,6 @@ schema:
         yield _sse_event({"stage": "done", "error_stage": "compute", "content": content, "chart_data": None})
         return
 
-    # 僅單一指標時補 valueSuffix/yAxisLabel；多指標時不補，避免 LLM 誤解
-    if "valueSuffix" not in chart_result and "datasets" not in chart_result and chart_result.get("valueLabel"):
-        chart_result["valueSuffix"] = "元"
     if not chart_result.get("yAxisLabel") and chart_result.get("valueLabel"):
         chart_result["yAxisLabel"] = chart_result["valueLabel"]
 
@@ -801,39 +914,22 @@ async def intent_to_compute(
     if not schema_def:
         schema_def = load_schema("fact_business_operations")
 
-    gb_raw = intent.get("group_by_column")
-    if isinstance(gb_raw, list):
-        group_by = [str(x).strip() for x in gb_raw if x]
-    else:
-        group_by = (gb_raw or "").strip() or ""
-    value_col = intent.get("value_column")
-    value_cols = intent.get("value_columns")
-    if isinstance(value_cols, list):
-        value_cols = [str(v).strip() for v in value_cols if v]
-    else:
-        value_cols = None
-    agg = (intent.get("aggregation") or "sum").strip().lower()
+    group_by = _normalize_group_by(intent.get("group_by_column"))
+    indicator = _parse_indicator_from_intent(intent)
+    value_cols = _parse_value_columns_from_intent(intent, indicator)
     chart_type = (intent.get("chart_type") or "bar").strip().lower() or "bar"
     series_by = intent.get("series_by_column")
     if series_by and not isinstance(series_by, str):
         series_by = None
     filters = _parse_filters_from_intent(intent)
     having_filters = _parse_having_filters_from_intent(intent)
-    top_n = intent.get("top_n")
-    if top_n is not None and not isinstance(top_n, int):
-        try:
-            top_n = int(top_n)
-        except (ValueError, TypeError):
-            top_n = None
-    sort_order = (intent.get("sort_order") or "desc").strip().lower()
+    top_n = _get_top_n_from_intent(intent)
+    sort_order = _get_sort_order_from_intent(intent)
     time_order = bool(intent.get("time_order"))
     time_grain_raw = intent.get("time_grain")
     time_grain = str(time_grain_raw).strip().lower() if time_grain_raw else None
     if time_grain and time_grain not in ("day", "week", "month", "quarter", "year"):
         time_grain = None
-    indicator = _parse_indicator_from_intent(intent)
-    if not value_cols and indicator:
-        value_cols = _indicator_default_value_columns(indicator)
     display_fields = intent.get("display_fields")
     if isinstance(display_fields, list):
         display_fields = [str(d).strip() for d in display_fields if d]
@@ -844,9 +940,8 @@ async def intent_to_compute(
     chart_result = compute_aggregate(
         rows,
         group_by,
-        value_column=value_col,
-        aggregation=agg,
-        chart_type=chart_type,
+        value_cols,
+        chart_type,
         series_by_column=series_by,
         filters=filters,
         having_filters=having_filters,
@@ -854,11 +949,10 @@ async def intent_to_compute(
         sort_order=sort_order,
         time_order=time_order,
         time_grain=time_grain,
-        value_columns=value_cols,
         indicator=indicator,
         display_fields=display_fields,
-        group_aliases=schema_def.get("group_aliases") if schema_def else None,
-        value_aliases=schema_def.get("value_aliases") if schema_def else None,
+        schema_def=schema_def,
+        compare_periods=_parse_compare_periods_from_intent(intent),
         error_out=error_list,
     )
     error_detail = "; ".join(error_list) if error_list and not chart_result else None
@@ -913,39 +1007,22 @@ async def intent_to_compute_by_project(
     if not schema_def:
         schema_def = load_schema("fact_business_operations")
 
-    gb_raw = intent.get("group_by_column")
-    if isinstance(gb_raw, list):
-        group_by = [str(x).strip() for x in gb_raw if x]
-    else:
-        group_by = (gb_raw or "").strip() or ""
-    value_col = intent.get("value_column")
-    value_cols = intent.get("value_columns")
-    if isinstance(value_cols, list):
-        value_cols = [str(v).strip() for v in value_cols if v]
-    else:
-        value_cols = None
-    agg = (intent.get("aggregation") or "sum").strip().lower()
+    group_by = _normalize_group_by(intent.get("group_by_column"))
+    indicator = _parse_indicator_from_intent(intent)
+    value_cols = _parse_value_columns_from_intent(intent, indicator)
     chart_type = (intent.get("chart_type") or "bar").strip().lower() or "bar"
     series_by = intent.get("series_by_column")
     if series_by and not isinstance(series_by, str):
         series_by = None
     filters = _parse_filters_from_intent(intent)
     having_filters = _parse_having_filters_from_intent(intent)
-    top_n = intent.get("top_n")
-    if top_n is not None and not isinstance(top_n, int):
-        try:
-            top_n = int(top_n)
-        except (ValueError, TypeError):
-            top_n = None
-    sort_order = (intent.get("sort_order") or "desc").strip().lower()
+    top_n = _get_top_n_from_intent(intent)
+    sort_order = _get_sort_order_from_intent(intent)
     time_order = bool(intent.get("time_order"))
     time_grain_raw = intent.get("time_grain")
     time_grain = str(time_grain_raw).strip().lower() if time_grain_raw else None
     if time_grain and time_grain not in ("day", "week", "month", "quarter", "year"):
         time_grain = None
-    indicator = _parse_indicator_from_intent(intent)
-    if not value_cols and indicator:
-        value_cols = _indicator_default_value_columns(indicator)
     display_fields = intent.get("display_fields")
     if isinstance(display_fields, list):
         display_fields = [str(d).strip() for d in display_fields if d]
@@ -956,9 +1033,8 @@ async def intent_to_compute_by_project(
     chart_result = compute_aggregate(
         rows,
         group_by,
-        value_column=value_col,
-        aggregation=agg,
-        chart_type=chart_type,
+        value_cols,
+        chart_type,
         series_by_column=series_by,
         filters=filters,
         having_filters=having_filters,
@@ -966,11 +1042,10 @@ async def intent_to_compute_by_project(
         sort_order=sort_order,
         time_order=time_order,
         time_grain=time_grain,
-        value_columns=value_cols,
         indicator=indicator,
         display_fields=display_fields,
-        group_aliases=schema_def.get("group_aliases") if schema_def else None,
-        value_aliases=schema_def.get("value_aliases") if schema_def else None,
+        schema_def=schema_def,
+        compare_periods=_parse_compare_periods_from_intent(intent),
         error_out=error_list,
     )
     error_detail = "; ".join(error_list) if error_list and not chart_result else None
@@ -1000,45 +1075,27 @@ async def intent_to_compute_raw(
         display_fields = [str(d).strip() for d in display_fields if d]
     else:
         display_fields = None
-    gb_raw = intent.get("group_by_column")
-    if isinstance(gb_raw, list):
-        group_by = [str(x).strip() for x in gb_raw if x]
-    else:
-        group_by = (gb_raw or "").strip() or ""
-    value_col = intent.get("value_column")
-    value_cols = intent.get("value_columns")
-    if isinstance(value_cols, list):
-        value_cols = [str(v).strip() for v in value_cols if v]
-    else:
-        value_cols = None
-    agg = (intent.get("aggregation") or "sum").strip().lower()
+    group_by = _normalize_group_by(intent.get("group_by_column"))
+    indicator = _parse_indicator_from_intent(intent)
+    value_cols = _parse_value_columns_from_intent(intent, indicator)
     chart_type = (intent.get("chart_type") or "bar").strip().lower() or "bar"
     series_by = intent.get("series_by_column")
     if series_by and not isinstance(series_by, str):
         series_by = None
-    top_n = intent.get("top_n")
-    if top_n is not None and not isinstance(top_n, int):
-        try:
-            top_n = int(top_n)
-        except (ValueError, TypeError):
-            top_n = None
-    sort_order = (intent.get("sort_order") or "desc").strip().lower()
+    top_n = _get_top_n_from_intent(intent)
+    sort_order = _get_sort_order_from_intent(intent)
     time_order = bool(intent.get("time_order"))
     time_grain_raw = intent.get("time_grain")
     time_grain = str(time_grain_raw).strip().lower() if time_grain_raw else None
     if time_grain and time_grain not in ("day", "week", "month", "quarter", "year"):
         time_grain = None
-    indicator = _parse_indicator_from_intent(intent)
-    if not value_cols and indicator:
-        value_cols = _indicator_default_value_columns(indicator)
 
     error_list: list[str] = []
     chart_result = compute_aggregate(
         rows,
         group_by,
-        value_column=value_col,
-        aggregation=agg,
-        chart_type=chart_type,
+        value_cols,
+        chart_type,
         series_by_column=series_by,
         filters=filters,
         having_filters=having_filters,
@@ -1046,11 +1103,10 @@ async def intent_to_compute_raw(
         sort_order=sort_order,
         time_order=time_order,
         time_grain=time_grain,
-        value_columns=value_cols,
         indicator=indicator,
         display_fields=display_fields,
-        group_aliases=schema_def.get("group_aliases") if schema_def else None,
-        value_aliases=schema_def.get("value_aliases") if schema_def else None,
+        schema_def=schema_def,
+        compare_periods=_parse_compare_periods_from_intent(intent),
         error_out=error_list,
     )
     error_detail = "; ".join(error_list) if error_list and not chart_result else None
