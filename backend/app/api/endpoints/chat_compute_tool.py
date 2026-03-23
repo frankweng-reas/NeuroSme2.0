@@ -34,13 +34,30 @@ from app.services.schema_loader import load_schema
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-# 複合指標預設 value_columns（LLM 未輸出時補強）。支援 sales_amount / net_amount。
-_INDICATOR_DEFAULT_VALUE_COLUMNS: dict[str, list[str]] = {
-    "margin_rate": ["gross_profit", "sales_amount"],
-    "roi": ["gross_profit", "cost_amount"],
-    "arpu": ["sales_amount", "guest_count"],
-    "discount_rate": ["discount_amount", "sales_amount"],
-}
+def _build_indicator_default_value_columns(schema_def: dict[str, Any] | None) -> dict[str, list[str]]:
+    """從 schema 動態產生 indicator -> value_columns 對應（無硬編碼欄位名）。"""
+    if not schema_def:
+        return {}
+    columns = schema_def.get("columns") or {}
+    indicators = schema_def.get("indicators") or {}
+    value_cols = [
+        c for c, m in columns.items()
+        if isinstance(m, dict) and (m.get("attr") or "").strip().lower() in ("val", "val_num", "val_denom")
+    ]
+    out: dict[str, list[str]] = {}
+    for code, meta in indicators.items():
+        if not isinstance(meta, dict):
+            continue
+        comp = meta.get("value_components") or []
+        if comp:
+            out[code] = [str(c) for c in comp if c]
+    for col in value_cols:
+        out[f"{col}_ratio"] = [col]
+        if "_" in col:
+            base = col.split("_")[0]
+            if base and f"{base}_ratio" not in out:
+                out[f"{base}_ratio"] = [col]
+    return out
 
 
 def _parse_compare_periods_from_intent(intent: dict[str, Any]) -> dict[str, Any] | None:
@@ -116,22 +133,30 @@ def _parse_indicator_from_intent(intent: dict[str, Any]) -> list[str] | None:
     return None
 
 
-def _indicator_default_value_columns(indic: list[str] | None) -> list[dict[str, str]] | None:
-    """依 indicator array 回傳所需欄位聯集。"""
+def _indicator_default_value_columns(
+    indic: list[str] | None,
+    schema_def: dict[str, Any] | None = None,
+) -> list[dict[str, str]] | None:
+    """依 indicator array 與 schema 回傳所需欄位聯集。"""
     if not indic:
         return None
+    mapping = _build_indicator_default_value_columns(schema_def)
     cols: list[str] = []
     seen: set[str] = set()
     for ind in indic:
         ind_clean = str(ind).strip().lower()
-        for c in _INDICATOR_DEFAULT_VALUE_COLUMNS.get(ind_clean, []):
+        for c in mapping.get(ind_clean, []):
             if c not in seen:
                 seen.add(c)
                 cols.append(c)
     return [{"column": c, "aggregation": "sum"} for c in cols] if cols else None
 
 
-def _parse_value_columns_from_intent(intent: dict[str, Any], indicator: list[str] | None) -> list[dict[str, str]]:
+def _parse_value_columns_from_intent(
+    intent: dict[str, Any],
+    indicator: list[str] | None,
+    schema_def: dict[str, Any] | None = None,
+) -> list[dict[str, str]]:
     """
     從 intent 解析 value_columns，一律回傳 [{ column, aggregation }, ...]。
     支援兩種格式：
@@ -165,10 +190,17 @@ def _parse_value_columns_from_intent(intent: dict[str, Any], indicator: list[str
                 out.append({"column": col, "aggregation": default_agg})
         if out:
             return out
-    default = _indicator_default_value_columns(indicator)
+    default = _indicator_default_value_columns(indicator, schema_def)
     if default:
         return default
-    return [{"column": "sales_amount", "aggregation": "sum"}]
+    fallback_col = None
+    if schema_def:
+        columns = schema_def.get("columns") or {}
+        for c, m in columns.items():
+            if isinstance(m, dict) and (m.get("attr") or "").strip().lower() in ("val", "val_num", "val_denom"):
+                fallback_col = c
+                break
+    return [{"column": fallback_col or "sales_amount", "aggregation": "sum"}]
 
 def _parse_filters_from_intent(intent: dict[str, Any]) -> list[dict[str, Any]] | None:
     """從 intent 解析 filters。支援 filters 陣列；無則由 filter_column/filter_value 轉換。
@@ -182,7 +214,7 @@ def _parse_filters_from_intent(intent: dict[str, Any]) -> list[dict[str, Any]] |
                 val = f.get("value") if "value" in f else f.get("val")
                 op = f.get("op")
                 if col is not None and str(col).strip():
-                    op_str = str(op).strip().lower() if op is not None else "=="
+                    op_str = (str(op).strip().lower().replace(" ", "") or "==") if op is not None else "=="
                     out.append({"column": str(col).strip(), "op": op_str or "==", "value": val})
         if out:
             return out
@@ -203,7 +235,7 @@ def _parse_having_filters_from_intent(intent: dict[str, Any]) -> list[dict[str, 
                 val = f.get("value")
                 op = f.get("op")
                 if col is not None:
-                    op_str = str(op).strip().lower() if op is not None else "=="
+                    op_str = (str(op).strip().lower().replace(" ", "") or "==") if op is not None else "=="
                     out.append({"column": str(col).strip(), "op": op_str or "==", "value": val})
         if out:
             return out
@@ -247,10 +279,16 @@ def _build_schema_block(schema_def: dict[str, Any] | None) -> str:
 
 def _build_indicator_block(schema_def: dict[str, Any] | None) -> str:
     """從 schema_def.indicators 產生指標血緣區塊，格式與 prompt 內一致。"""
-    if not schema_def or not schema_def.get("indicators"):
-        return "   - (無指標定義)"
     lines: list[str] = []
-    for code, meta in (schema_def.get("indicators") or {}).items():
+    columns = schema_def.get("columns") or {} if schema_def else {}
+    value_cols = [
+        c for c, m in columns.items()
+        if isinstance(m, dict) and (m.get("attr") or "").strip().lower() in ("val", "val_num", "val_denom")
+    ]
+    if value_cols:
+        vc_examples = ", ".join(f"{c}_ratio" for c in value_cols[:5])
+        lines.append(f"   - `{{column}}_ratio`（動態佔比，無需預定義）: 任一數值欄位可加 _ratio。例: {vc_examples}")
+    for code, meta in (schema_def.get("indicators") or {}).items() if schema_def else {}:
         if not isinstance(meta, dict):
             continue
         comp = meta.get("value_components") or []
@@ -288,16 +326,6 @@ def _load_intent_prompt(schema_def: dict[str, Any] | None) -> str:
     ).replace("{{INDICATOR_DEFINITION}}", indicator_block).replace(
         "{{DIMENSION_HIERARCHY}}", hierarchy_block
     ).replace("{{SYSTEM_DATE}}", system_date)
-
-
-def _infer_chart_type(question: str) -> str:
-    """依問題內容推斷 chart_type（pie/line/bar）。意圖層不處理 chart，由後端推斷。"""
-    q = (question or "").strip().lower()
-    if any(kw in q for kw in ("佔比", "比例", "份額")):
-        return "pie"
-    if any(kw in q for kw in ("趨勢", "變化", "月", "季", "年")):
-        return "line"
-    return "bar"
 
 
 def _extract_json_from_llm(raw: str) -> dict | None:
@@ -403,6 +431,24 @@ class IntentToComputeResponse(BaseModel):
     error_detail: str | None = None  # chart_result 為 null 時的詳細原因
 
 
+class ExtractIntentResponse(BaseModel):
+    """僅意圖萃取：dev-test-compute-tool 兩步驟流程用"""
+    intent: dict[str, Any] | None = None
+    usage: dict[str, int] | None = None
+    model: str = ""
+    error_message: str | None = None  # 意圖無效時的訊息
+    system_prompt: str = ""  # 組合好的 system prompt（含 schema/indicator 注入）
+
+
+class ComputeFromIntentRequest(BaseModel):
+    """依已取得的 intent 執行計算 + 文字生成"""
+    agent_id: str = ""
+    project_id: str = ""
+    content: str  # 使用者問題（用於文字生成）
+    intent: dict[str, Any]
+    model: str = "gpt-4o-mini"
+
+
 async def _call_llm(
     model: str,
     system_prompt: str,
@@ -477,6 +523,76 @@ async def _call_llm(
     return content, usage
 
 
+@router.post("/extract-intent-only", response_model=ExtractIntentResponse)
+async def extract_intent_only(
+    req: ChatRequest,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    """dev-test-compute-tool 兩步驟：僅做意圖萃取，回傳 intent + usage。"""
+    if not (req.agent_id or "").strip():
+        raise HTTPException(status_code=400, detail="agent_id is required")
+    pid = (req.project_id or "").strip()
+    if not pid:
+        raise HTTPException(status_code=400, detail="project_id is required")
+
+    try:
+        _check_agent_access(db, current, req.agent_id.strip())
+    except HTTPException:
+        raise
+
+    try:
+        uuid_pid = UUID(pid)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="project_id 格式錯誤")
+
+    user_id = getattr(current, "id", 0) or 0
+    rows, proj = _load_rows_from_duckdb_only(pid, db, int(user_id))
+    schema_id = (proj.schema_id or "").strip() or "fact_business_operations"
+    schema_def = load_schema(schema_id)
+    if not schema_def:
+        schema_def = load_schema("fact_business_operations")
+    model = (req.model or "").strip() or "gpt-4o-mini"
+
+    intent_prompt = _load_intent_prompt(schema_def)
+    if not intent_prompt:
+        raise HTTPException(status_code=500, detail="Intent prompt 檔案不存在")
+
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    user_content_intent = f"""當前時間：{now_str}
+
+問題: {req.content}"""
+    try:
+        intent_raw, usage1 = await _call_llm(model, intent_prompt, user_content_intent)
+    except Exception as e:
+        logger.exception("意圖萃取 LLM 呼叫失敗")
+        raise HTTPException(status_code=500, detail=f"意圖萃取失敗：{e}")
+
+    intent = _extract_json_from_llm(intent_raw)
+    if not intent or not isinstance(intent, dict):
+        return ExtractIntentResponse(
+            intent=None,
+            usage=usage1,
+            model=model,
+            error_message="無法解析您的分析意圖，請換個方式詢問。",
+            system_prompt=intent_prompt,
+        )
+    filters = _parse_filters_from_intent(intent)
+    has_aggregate = intent.get("value_column") or intent.get("value_columns") or intent.get("indicator")
+    has_group = bool(intent.get("group_by_column"))
+    has_filters = bool(filters)
+    if not has_group and not has_aggregate and not has_filters:
+        return ExtractIntentResponse(
+            intent=None,
+            usage=usage1,
+            model=model,
+            error_message="無法解析您的分析意圖，請換個方式詢問。",
+            system_prompt=intent_prompt,
+        )
+
+    return ExtractIntentResponse(intent=intent, usage=usage1, model=model, system_prompt=intent_prompt)
+
+
 @router.post("/completions-compute-tool", response_model=ChatResponseComputeTool)
 async def chat_completions_compute_tool(
     req: ChatRequest,
@@ -521,9 +637,6 @@ async def chat_completions_compute_tool(
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
     user_content_intent = f"""當前時間：{now_str}
 
-schema:
-{schema_summary}
-
 問題: {req.content}"""
     try:
         intent_raw, usage1 = await _call_llm(model, intent_prompt, user_content_intent)
@@ -560,8 +673,7 @@ schema:
     group_by = _normalize_group_by(intent.get("group_by_column"))
     having_filters = _parse_having_filters_from_intent(intent)
     indicator = _parse_indicator_from_intent(intent)
-    value_cols = _parse_value_columns_from_intent(intent, indicator)
-    chart_type = _infer_chart_type(req.content)
+    value_cols = _parse_value_columns_from_intent(intent, indicator, schema_def)
     series_by = intent.get("series_by_column")
     if series_by and not isinstance(series_by, str):
         series_by = None
@@ -578,7 +690,6 @@ schema:
         rows,
         group_by,
         value_cols,
-        chart_type,
         series_by_column=series_by,
         filters=filters,
         having_filters=having_filters,
@@ -669,6 +780,141 @@ schema:
     )
 
 
+@router.post("/compute-from-intent", response_model=ChatResponseComputeTool)
+async def compute_from_intent(
+    req: ComputeFromIntentRequest,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    """dev-test-compute-tool 兩步驟：依已取得的 intent 執行計算 + 文字生成。"""
+    if (req.agent_id or "").strip():
+        try:
+            _check_agent_access(db, current, req.agent_id.strip())
+        except HTTPException:
+            raise
+    pid = (req.project_id or "").strip()
+    if not pid:
+        raise HTTPException(status_code=400, detail="project_id is required")
+
+    try:
+        uuid_pid = UUID(pid)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="project_id 格式錯誤")
+
+    user_id = getattr(current, "id", 0) or 0
+    rows, proj = _load_rows_from_duckdb_only(pid, db, int(user_id))
+    schema_id = (proj.schema_id or "").strip() or "fact_business_operations"
+    schema_def = load_schema(schema_id)
+    if not schema_def:
+        schema_def = load_schema("fact_business_operations")
+    model = (req.model or "").strip() or "gpt-4o-mini"
+    intent = req.intent or {}
+    if not isinstance(intent, dict):
+        raise HTTPException(status_code=400, detail="intent 必須為 JSON 物件")
+
+    debug: dict[str, Any] = {"intent": intent, "flow": "compute-from-intent"}
+    filters = _parse_filters_from_intent(intent)
+    group_by = _normalize_group_by(intent.get("group_by_column"))
+    having_filters = _parse_having_filters_from_intent(intent)
+    indicator = _parse_indicator_from_intent(intent)
+    value_cols = _parse_value_columns_from_intent(intent, indicator, schema_def)
+    series_by = intent.get("series_by_column")
+    if series_by and not isinstance(series_by, str):
+        series_by = None
+    top_n = _get_top_n_from_intent(intent)
+    sort_order = _get_sort_order_from_intent(intent)
+    time_order = bool(intent.get("time_order"))
+    time_grain_raw = intent.get("time_grain")
+    time_grain = str(time_grain_raw).strip().lower() if time_grain_raw else None
+    if time_grain and time_grain not in ("day", "week", "month", "quarter", "year"):
+        time_grain = None
+
+    error_list: list[str] = []
+    chart_result = compute_aggregate(
+        rows,
+        group_by,
+        value_cols,
+        series_by_column=series_by,
+        filters=filters,
+        having_filters=having_filters,
+        top_n=top_n,
+        sort_order=sort_order,
+        time_order=time_order,
+        time_grain=time_grain,
+        indicator=indicator,
+        schema_def=schema_def,
+        compare_periods=_parse_compare_periods_from_intent(intent),
+        error_out=error_list,
+    )
+
+    if not chart_result:
+        err_msg = "; ".join(error_list) if error_list else ""
+        if "篩選後無資料" in err_msg or "無資料" in err_msg:
+            content = "查無符合條件的資料，請調整篩選條件或時間範圍。"
+        elif "_resolve_columns" in err_msg or "rows 為空" in err_msg:
+            content = "無法解析欄位對應，請確認問題描述與資料 schema。"
+        else:
+            content = "後端計算失敗，請稍後再試或調整問題描述。"
+        return ChatResponseComputeTool(
+            content=content,
+            model=model,
+            usage=None,
+            chart_data=None,
+            debug=debug,
+        )
+
+    if not chart_result.get("yAxisLabel") and chart_result.get("valueLabel"):
+        chart_result["yAxisLabel"] = chart_result["valueLabel"]
+    debug["chart_result"] = chart_result
+
+    detail_lines = _chart_result_to_detail_lines(chart_result)
+    if not detail_lines:
+        return ChatResponseComputeTool(
+            content="無法格式化計算結果。請調整問題或檢查 schema。",
+            model=model,
+            usage=None,
+            chart_data=None,
+            debug=debug,
+        )
+
+    text_prompt = _load_prompt("text")
+    if not text_prompt:
+        text_prompt = "根據計算結果撰寫分析文字，使用 Markdown 格式。圖表由後端負責，只輸出文字。"
+
+    detail_block = "計算結果：\n" + "\n".join(detail_lines)
+    user_content_text = f"""使用者問題：{req.content}
+
+{detail_block}
+
+請撰寫分析文字，金額與數字必須與上述完全一致。"""
+
+    try:
+        text_content, usage2 = await _call_llm(model, text_prompt, user_content_text)
+    except Exception as e:
+        logger.exception("文字生成 LLM 呼叫失敗")
+        return ChatResponseComputeTool(
+            content=f"文字生成失敗：{e}",
+            model=model,
+            usage=None,
+            chart_data=chart_result,
+            debug=debug,
+        )
+
+    debug["text_usage"] = usage2
+    final_content = text_content.strip()
+    parsed = _extract_json_from_llm(text_content)
+    if parsed and isinstance(parsed.get("text"), str):
+        final_content = parsed["text"].strip()
+
+    return ChatResponseComputeTool(
+        content=final_content,
+        model=model,
+        usage=usage2,
+        chart_data=chart_result,
+        debug=debug,
+    )
+
+
 def _sse_event(data: dict[str, Any]) -> str:
     """產生 SSE 格式字串：data: {json}\\n\\n"""
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
@@ -699,7 +945,6 @@ async def _stream_compute_tool(
     schema_def = load_schema(schema_id)
     if not schema_def:
         schema_def = load_schema("fact_business_operations")
-    schema_summary = get_schema_summary(rows, schema_def)
     model = (req.model or "").strip() or "gpt-4o-mini"
     intent_prompt = _load_intent_prompt(schema_def)
     if not intent_prompt:
@@ -708,9 +953,6 @@ async def _stream_compute_tool(
 
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
     user_content_intent = f"""當前時間：{now_str}
-
-schema:
-{schema_summary}
 
 問題: {req.content}"""
     try:
@@ -747,8 +989,7 @@ schema:
     group_by = _normalize_group_by(intent.get("group_by_column"))
     having_filters = _parse_having_filters_from_intent(intent)
     indicator = _parse_indicator_from_intent(intent)
-    value_cols = _parse_value_columns_from_intent(intent, indicator)
-    chart_type = _infer_chart_type(req.content)
+    value_cols = _parse_value_columns_from_intent(intent, indicator, schema_def)
     series_by = intent.get("series_by_column")
     if series_by and not isinstance(series_by, str):
         series_by = None
@@ -765,7 +1006,6 @@ schema:
         rows,
         group_by,
         value_cols,
-        chart_type,
         series_by_column=series_by,
         filters=filters,
         having_filters=having_filters,
@@ -916,8 +1156,7 @@ async def intent_to_compute(
 
     group_by = _normalize_group_by(intent.get("group_by_column"))
     indicator = _parse_indicator_from_intent(intent)
-    value_cols = _parse_value_columns_from_intent(intent, indicator)
-    chart_type = (intent.get("chart_type") or "bar").strip().lower() or "bar"
+    value_cols = _parse_value_columns_from_intent(intent, indicator, schema_def)
     series_by = intent.get("series_by_column")
     if series_by and not isinstance(series_by, str):
         series_by = None
@@ -941,7 +1180,6 @@ async def intent_to_compute(
         rows,
         group_by,
         value_cols,
-        chart_type,
         series_by_column=series_by,
         filters=filters,
         having_filters=having_filters,
@@ -1009,8 +1247,7 @@ async def intent_to_compute_by_project(
 
     group_by = _normalize_group_by(intent.get("group_by_column"))
     indicator = _parse_indicator_from_intent(intent)
-    value_cols = _parse_value_columns_from_intent(intent, indicator)
-    chart_type = (intent.get("chart_type") or "bar").strip().lower() or "bar"
+    value_cols = _parse_value_columns_from_intent(intent, indicator, schema_def)
     series_by = intent.get("series_by_column")
     if series_by and not isinstance(series_by, str):
         series_by = None
@@ -1034,7 +1271,6 @@ async def intent_to_compute_by_project(
         rows,
         group_by,
         value_cols,
-        chart_type,
         series_by_column=series_by,
         filters=filters,
         having_filters=having_filters,
@@ -1077,8 +1313,7 @@ async def intent_to_compute_raw(
         display_fields = None
     group_by = _normalize_group_by(intent.get("group_by_column"))
     indicator = _parse_indicator_from_intent(intent)
-    value_cols = _parse_value_columns_from_intent(intent, indicator)
-    chart_type = (intent.get("chart_type") or "bar").strip().lower() or "bar"
+    value_cols = _parse_value_columns_from_intent(intent, indicator, schema_def)
     series_by = intent.get("series_by_column")
     if series_by and not isinstance(series_by, str):
         series_by = None
@@ -1095,7 +1330,6 @@ async def intent_to_compute_raw(
         rows,
         group_by,
         value_cols,
-        chart_type,
         series_by_column=series_by,
         filters=filters,
         having_filters=having_filters,

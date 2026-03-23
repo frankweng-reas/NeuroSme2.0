@@ -4,12 +4,12 @@ const SHOW_ANALYSIS = true
 const SHOW_CHART = true
 const SHOW_DEBUG = false
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowLeft, Loader2 } from 'lucide-react'
+import { ArrowLeft, Copy, Loader2 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { chatCompletionsComputeTool } from '@/api/chat'
+import { extractIntentOnly, computeFromIntent } from '@/api/chat'
 import { ApiError } from '@/api/client'
 import { listBiProjects } from '@/api/biProjects'
 import type { Agent } from '@/types'
@@ -20,6 +20,7 @@ import ChartModal from '@/components/ChartModal'
 import type { ChartData } from '@/components/ChartModal'
 
 const STORAGE_KEY_PROJECT = 'bi_compute_project_id'
+const STORAGE_KEY_PROMPT_WIDTH = 'bi_compute_prompt_width'
 
 /** 固定使用 Business insight agent（不讀 DB）。id 須與 agent_catalog.id 一致 */
 const BUSINESS_INSIGHT_AGENT: Agent = {
@@ -45,9 +46,48 @@ export default function TestComputeFlowTool() {
   const [input, setInput] = useState('')
   const [model, setModel] = useState('gpt-4o-mini')
   const [isLoading, setIsLoading] = useState(false)
-  const [result, setResult] = useState<ComputeResult | null>(null)
+  const [intentResult, setIntentResult] = useState<{
+    intent: Record<string, unknown>
+    usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null
+  } | null>(null)
+  const [systemPrompt, setSystemPrompt] = useState<string>('')
+  const [isComputing, setIsComputing] = useState(false)
+  const [computeResult, setComputeResult] = useState<ComputeResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [chartModalOpen, setChartModalOpen] = useState(false)
+  const [rightWidth, setRightWidth] = useState(() => {
+    const saved = localStorage.getItem(STORAGE_KEY_PROMPT_WIDTH)
+    return saved ? Math.max(200, Math.min(800, parseInt(saved, 10) || 320)) : 320
+  })
+  const isDraggingRef = useRef(false)
+  const startXRef = useRef(0)
+  const startWidthRef = useRef(320)
+
+  const handleResizeStart = (e: React.MouseEvent) => {
+    e.preventDefault()
+    isDraggingRef.current = true
+    startXRef.current = e.clientX
+    startWidthRef.current = rightWidth
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    let lastWidth = rightWidth
+    const onMove = (ev: MouseEvent) => {
+      const delta = startXRef.current - ev.clientX
+      const newWidth = Math.max(200, Math.min(800, startWidthRef.current + delta))
+      lastWidth = newWidth
+      setRightWidth(newWidth)
+    }
+    const onUp = () => {
+      isDraggingRef.current = false
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+      localStorage.setItem(STORAGE_KEY_PROMPT_WIDTH, String(lastWidth))
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }
 
   useEffect(() => {
     setProjectsLoading(true)
@@ -105,11 +145,13 @@ export default function TestComputeFlowTool() {
     if (!input.trim() || !selectedProject || isLoading) return
 
     setError(null)
-    setResult(null)
+    setIntentResult(null)
+    setComputeResult(null)
+    setSystemPrompt('')
     setIsLoading(true)
 
     try {
-      const res = await chatCompletionsComputeTool({
+      const res = await extractIntentOnly({
         agent_id: BUSINESS_INSIGHT_AGENT.id,
         project_id: selectedProject.project_id,
         prompt_type: 'analysis',
@@ -121,12 +163,47 @@ export default function TestComputeFlowTool() {
         content: input.trim(),
       })
 
+      setSystemPrompt(res.system_prompt ?? '')
+      if (res.error_message) {
+        setError(res.error_message)
+        return
+      }
+      if (!res.intent) {
+        setError('意圖萃取失敗')
+        return
+      }
+      setIntentResult({ intent: res.intent, usage: res.usage ?? null })
+    } catch (err) {
+      const msg =
+        err instanceof ApiError ? err.detail ?? err.message : err instanceof Error ? err.message : '未知錯誤'
+      setError(msg)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  async function handleCompute() {
+    if (!input.trim() || !selectedProject || !intentResult || isComputing) return
+
+    setError(null)
+    setComputeResult(null)
+    setIsComputing(true)
+
+    try {
+      const res = await computeFromIntent({
+        agent_id: BUSINESS_INSIGHT_AGENT.id,
+        project_id: selectedProject.project_id,
+        content: input.trim(),
+        intent: intentResult.intent,
+        model,
+      })
+
       const chartData: ChartData | null =
         res.chart_data && res.chart_data.labels && (res.chart_data.data || res.chart_data.datasets)
           ? toChartData(res.chart_data as Parameters<typeof toChartData>[0])
           : null
 
-      setResult({
+      setComputeResult({
         content: res.content,
         chartData,
         debug: res.debug,
@@ -137,7 +214,7 @@ export default function TestComputeFlowTool() {
         err instanceof ApiError ? err.detail ?? err.message : err instanceof Error ? err.message : '未知錯誤'
       setError(msg)
     } finally {
-      setIsLoading(false)
+      setIsComputing(false)
     }
   }
 
@@ -247,26 +324,69 @@ export default function TestComputeFlowTool() {
           </button>
         </div>
 
-        {/* 右側：結果 */}
-        <div className="min-w-0 flex-1 overflow-y-auto rounded-xl border border-gray-300 bg-white p-6 shadow">
+        {/* 中間：結果 */}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto rounded-xl border border-gray-300 bg-white p-6 shadow">
           {error && (
             <div className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-red-700">{error}</div>
           )}
 
-          {result && (
+          {intentResult && (
             <div className="space-y-6">
               <section>
-                <h2 className="mb-2 text-lg font-semibold text-gray-800">意圖 JSON</h2>
+                <div className="mb-2 flex items-center justify-between">
+                  <h2 className="text-lg font-semibold text-gray-800">意圖 JSON</h2>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(JSON.stringify(intentResult.intent, null, 2))
+                    }}
+                    className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-gray-600 hover:bg-gray-100 hover:text-gray-800"
+                    title="複製 JSON"
+                  >
+                    <Copy className="h-4 w-4" />
+                    複製
+                  </button>
+                </div>
                 <pre className="overflow-x-auto rounded-lg border border-gray-200 bg-slate-50 p-4 text-sm text-slate-800 font-mono whitespace-pre-wrap">
-                  {JSON.stringify(result.debug?.intent ?? {}, null, 2)}
+                  {JSON.stringify(intentResult.intent, null, 2)}
                 </pre>
               </section>
 
-              {result.debug?.chart_result && (
+              {intentResult.usage && (
+                <section>
+                  <h2 className="mb-2 text-lg font-semibold text-gray-800">Token 用量（意圖萃取）</h2>
+                  <p className="text-sm text-gray-600">
+                    input: {intentResult.usage.prompt_tokens} / output: {intentResult.usage.completion_tokens} / total:{' '}
+                    {intentResult.usage.total_tokens}
+                  </p>
+                </section>
+              )}
+
+              <button
+                type="button"
+                onClick={handleCompute}
+                disabled={isComputing}
+                className="flex items-center justify-center gap-2 rounded-lg bg-[#1C3939] px-4 py-3 font-medium text-white transition-opacity hover:bg-[#2a4d4d] disabled:opacity-50"
+              >
+                {isComputing ? (
+                  <>
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                    計算中…
+                  </>
+                ) : (
+                  '計算結果'
+                )}
+              </button>
+            </div>
+          )}
+
+          {computeResult && (
+            <div className="mt-6 space-y-6 border-t border-gray-200 pt-6">
+              {computeResult.debug?.chart_result && (
                 <section>
                   <h2 className="mb-2 text-lg font-semibold text-gray-800">compute_aggregate 結果</h2>
                   <pre className="overflow-x-auto rounded-lg border border-gray-200 bg-slate-50 p-4 text-sm text-slate-800 font-mono whitespace-pre-wrap">
-                    {JSON.stringify(result.debug.chart_result, null, 2)}
+                    {JSON.stringify(computeResult.debug.chart_result, null, 2)}
                   </pre>
                 </section>
               )}
@@ -275,12 +395,12 @@ export default function TestComputeFlowTool() {
                 <section>
                   <h2 className="mb-2 text-lg font-semibold text-gray-800">分析結果</h2>
                   <div className="prose max-w-none rounded-lg border border-gray-200 bg-gray-50/50 p-4">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{result.content}</ReactMarkdown>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{computeResult.content}</ReactMarkdown>
                   </div>
                 </section>
               )}
 
-              {SHOW_CHART && result.chartData && (
+              {SHOW_CHART && computeResult.chartData && (
                 <section>
                   <h2 className="mb-2 text-lg font-semibold text-gray-800">圖表</h2>
                   <button
@@ -292,45 +412,37 @@ export default function TestComputeFlowTool() {
                   </button>
                   <ChartModal
                     open={chartModalOpen}
-                    data={result.chartData}
+                    data={computeResult.chartData}
                     onClose={() => setChartModalOpen(false)}
                   />
                 </section>
               )}
 
-              {SHOW_DEBUG && result.debug && (
+              {SHOW_DEBUG && computeResult.debug && (
                 <section>
                   <h2 className="mb-2 text-lg font-semibold text-gray-800">Debug 資訊</h2>
                   <pre className="max-h-96 overflow-auto rounded-lg border border-gray-200 bg-gray-900 p-4 text-sm text-gray-100">
-                    {JSON.stringify(result.debug, null, 2)}
+                    {JSON.stringify(computeResult.debug, null, 2)}
                   </pre>
                 </section>
               )}
 
-              {(result.usage || result.debug?.intent_usage || result.debug?.text_usage) && (
+              {(computeResult.usage || computeResult.debug?.text_usage) && (
                 <section>
-                  <h2 className="mb-2 text-lg font-semibold text-gray-800">Token 用量</h2>
+                  <h2 className="mb-2 text-lg font-semibold text-gray-800">Token 用量（計算階段）</h2>
                   <div className="space-y-2 text-sm text-gray-600">
-                    {result.debug?.intent_usage && (
-                      <p>
-                        <span className="font-medium text-gray-700">第 1 次 LLM（意圖萃取）</span> · input:{' '}
-                        {result.debug.intent_usage.prompt_tokens} / output:{' '}
-                        {result.debug.intent_usage.completion_tokens} / total:{' '}
-                        {result.debug.intent_usage.total_tokens}
-                      </p>
-                    )}
-                    {result.debug?.text_usage && (
+                    {computeResult.debug?.text_usage && (
                       <p>
                         <span className="font-medium text-gray-700">第 2 次 LLM（文字生成）</span> · input:{' '}
-                        {result.debug.text_usage.prompt_tokens} / output:{' '}
-                        {result.debug.text_usage.completion_tokens} / total:{' '}
-                        {result.debug.text_usage.total_tokens}
+                        {computeResult.debug.text_usage.prompt_tokens} / output:{' '}
+                        {computeResult.debug.text_usage.completion_tokens} / total:{' '}
+                        {computeResult.debug.text_usage.total_tokens}
                       </p>
                     )}
-                    {result.usage && (
-                      <p className="border-t border-gray-200 pt-2 font-medium text-gray-800">
-                        總計 · input: {result.usage.prompt_tokens} / output: {result.usage.completion_tokens} / total:{' '}
-                        {result.usage.total_tokens}
+                    {computeResult.usage && (
+                      <p className="font-medium text-gray-800">
+                        input: {computeResult.usage.prompt_tokens} / output: {computeResult.usage.completion_tokens}{' '}
+                        / total: {computeResult.usage.total_tokens}
                       </p>
                     )}
                   </div>
@@ -339,12 +451,48 @@ export default function TestComputeFlowTool() {
             </div>
           )}
 
-          {!result && !error && (
+          {!intentResult && !error && (
             <div className="flex flex-col items-center justify-center py-16 text-gray-500">
               <p className="mb-2">選擇 Agent、專案並輸入問題後送出</p>
-              <p className="text-sm">此流程會：1) LLM 意圖萃取 2) Backend 計算 3) 生成分析文字</p>
+              <p className="text-sm">送出後先產生意圖與 Token 用量，再按「計算結果」執行計算</p>
             </div>
           )}
+        </div>
+
+        {/* 把手 + 右側：可拖曳調整 System Prompt 寬度 */}
+        <div className="flex shrink-0 items-stretch">
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-valuenow={rightWidth}
+            tabIndex={0}
+            onMouseDown={handleResizeStart}
+            className="flex w-3 shrink-0 cursor-col-resize flex-col items-center justify-center bg-gray-200 hover:bg-gray-300 active:bg-gray-400"
+            title="拖動調整寬度"
+          >
+            <div className="flex flex-col gap-1">
+              <div className="h-1 w-0.5 rounded-full bg-gray-500" aria-hidden />
+              <div className="h-1 w-0.5 rounded-full bg-gray-500" aria-hidden />
+              <div className="h-1 w-0.5 rounded-full bg-gray-500" aria-hidden />
+            </div>
+          </div>
+
+          {/* 右側：System Prompt */}
+          <div
+            className="flex shrink-0 flex-col overflow-hidden rounded-xl border border-gray-300 bg-white shadow"
+            style={{ width: rightWidth, minWidth: 200, maxWidth: 800 }}
+          >
+          <div className="flex h-full min-h-0 flex-col overflow-y-auto p-6">
+            <h2 className="mb-2 shrink-0 text-lg font-semibold text-gray-800">System Prompt</h2>
+            {systemPrompt ? (
+              <pre className="min-h-0 flex-1 whitespace-pre-wrap rounded-lg border border-gray-200 bg-slate-50 p-3 text-xs font-mono text-slate-800">
+                {systemPrompt}
+              </pre>
+            ) : (
+              <p className="text-sm text-gray-500">送出後顯示意圖萃取的 system prompt</p>
+            )}
+          </div>
+          </div>
         </div>
       </div>
     </div>

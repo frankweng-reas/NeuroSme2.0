@@ -51,20 +51,58 @@ interface ChartModalProps {
   onClose: () => void
 }
 
-/** 依資料結構回傳可選的圖表類型。labels+data 可支援 pie/bar/line；labels+datasets 可支援 bar/line */
-function getAvailableTypes(data: ChartData): ('bar' | 'pie' | 'line')[] {
-  const hasDatasets = data.datasets && data.datasets.length > 0
-  const hasPieData = data.data && data.data.length > 0
-  if (hasDatasets) return ['bar', 'line']
-  if (hasPieData) return ['pie', 'bar', 'line']
-  return ['bar']
+type ChartType = 'bar' | 'pie' | 'line'
+
+/** 判斷 labels 是否為時間序列（如 2026-01、2025-Q2） */
+function isTimeSeriesLabels(labels: string[]): boolean {
+  if (!labels.length) return false
+  const sample = labels[0]
+  return /^\d{4}[-/]?\d{1,2}/.test(sample) || /^\d{4}[-/]?Q\d/.test(sample)
 }
 
-/** 取得預設顯示類型 */
-function getDefaultType(data: ChartData): 'bar' | 'pie' | 'line' {
+/** labels 是否像「指標名」（如 來客數、客單價、營收）→ 不適合 pie */
+function looksLikeMetricLabels(labels: string[]): boolean {
+  const metricSuffix = /[數價率收額]$/
+  return labels.some((l) => metricSuffix.test(String(l).trim()))
+}
+
+/** 判斷此資料分別適合哪些圖表類型（三 flag） */
+function getSuitableChartTypes(data: ChartData): { pie: boolean; bar: boolean; line: boolean } {
+  const labels = data.labels ?? []
+  const count = labels.length
+  const hasDatasets = !!(data.datasets && data.datasets.length > 0)
+  const hasPieData = !!(data.data && data.data.length > 0)
+  const isTime = isTimeSeriesLabels(labels)
+
+  const pie =
+    hasPieData &&
+    !hasDatasets &&
+    !isTime &&
+    count >= 2 &&
+    !looksLikeMetricLabels(labels)
+
+  const line = isTime && count >= 3
+
+  const bar = true
+
+  return { pie, bar, line }
+}
+
+/** 依 suitable flags 回傳可選的圖表類型 */
+function getAvailableTypes(data: ChartData): ChartType[] {
+  const flags = getSuitableChartTypes(data)
+  return (['pie', 'bar', 'line'] as const).filter((t) => flags[t])
+}
+
+/** 取得預設顯示類型：若有 chartType 且可用則採用，否則依 suitable 優先順序（line > pie > bar） */
+export function getDefaultChartType(data: ChartData): ChartType {
   const available = getAvailableTypes(data)
-  const suggested = data.chartType ?? (data.data ? 'pie' : 'bar')
-  return available.includes(suggested) ? suggested : available[0]
+  const suggested = data.chartType
+  const fallback =
+    available.includes('line') ? 'line'
+    : available.includes('pie') ? 'pie'
+    : available[0] ?? 'bar'
+  return (suggested && available.includes(suggested)) ? suggested : fallback
 }
 
 /** 將 ChartData 轉成 Recharts Bar/Line 格式 */
@@ -98,7 +136,7 @@ function transformToPieData(data: ChartData): { name: string; value: number }[] 
 }
 
 export default function ChartModal({ open, data, onClose }: ChartModalProps) {
-  const [viewType, setViewType] = useState<'bar' | 'pie' | 'line'>(() => getDefaultType(data))
+  const [viewType, setViewType] = useState<'bar' | 'pie' | 'line'>(() => getDefaultChartType(data))
   const [isFullscreen, setIsFullscreen] = useState(false)
   const availableTypes = getAvailableTypes(data)
   const colors = CHART_COLORS
@@ -115,7 +153,7 @@ export default function ChartModal({ open, data, onClose }: ChartModalProps) {
 
   useEffect(() => {
     if (open) {
-      setViewType(getDefaultType(data))
+      setViewType(getDefaultChartType(data))
       setIsFullscreen(false)
     }
   }, [open, data])

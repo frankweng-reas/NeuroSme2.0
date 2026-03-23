@@ -5,7 +5,7 @@
   Layer 1 資料輸入：parse_csv, infer_schema, get_schema_summary
   Layer 2 欄位解析：_resolve_columns, _apply_filter
   Layer 3 彙總計算：_aggregate_single_series, _aggregate_multi_series
-  Layer 4 後處理：_apply_sort_top_n, _to_pie_percent
+  Layer 4 後處理：_apply_sort_top_n
 """
 import csv
 import io
@@ -104,6 +104,8 @@ class _SchemaConfig:
 
     group_aliases: dict[str, list[str]]
     value_aliases: dict[str, list[str]]
+    value_key_to_column: dict[str, str]  # alias -> col_name，供動態 {col}_ratio 解析
+    value_column_names: set[str]  # 數值欄位名，供動態佔比比對
     indicator_column_names: dict[str, tuple[str, str]]  # code -> (num_col, denom_col)
     indicator_as_percent: dict[str, bool]  # code -> as_percent
     compare_indicator_value_col: dict[str, str]  # code -> value_col
@@ -123,9 +125,11 @@ def _derive_schema_config(schema_def: dict[str, Any]) -> _SchemaConfig:
     columns = schema_def.get("columns") or {}
     indicators = schema_def.get("indicators") or {}
 
-    # group_aliases, value_aliases：依 attr 推導 (dim/dim_time -> group, val/val_num/val_denom -> value)
+    # group_aliases, value_aliases, value_key_to_column, value_column_names
     group_aliases: dict[str, list[str]] = {}
     value_aliases: dict[str, list[str]] = {}
+    value_key_to_column: dict[str, str] = {}
+    value_column_names: set[str] = set()
     for col_name, meta in columns.items():
         if not isinstance(meta, dict):
             continue
@@ -137,9 +141,11 @@ def _derive_schema_config(schema_def: dict[str, Any]) -> _SchemaConfig:
                 if kw and kw not in group_aliases:
                     group_aliases[kw] = keywords
         elif attr in ("val", "val_num", "val_denom"):
+            value_column_names.add(col_name)
             for kw in keywords:
                 if kw and kw not in value_aliases:
                     value_aliases[kw] = keywords
+                value_key_to_column[kw] = col_name
 
     # indicator config
     indicator_column_names: dict[str, tuple[str, str]] = {}
@@ -161,6 +167,9 @@ def _derive_schema_config(schema_def: dict[str, Any]) -> _SchemaConfig:
                 compare_indicator_value_col[f"{comp[0]}_yoy_growth"] = str(comp[0])
         elif ind_type == "ratio" and len(comp) >= 2:
             indicator_column_names[code] = (str(comp[0]), str(comp[1]))
+        elif ind_type == "ratio" and len(comp) == 1:
+            # 佔比型：同一欄位，分母為全體總和 (sum(group)/sum(all))
+            indicator_column_names[code] = (str(comp[0]), "__total__")
         if meta.get("decimal_places") is not None:
             indicator_decimal_places[code] = int(meta.get("decimal_places"))
 
@@ -186,6 +195,19 @@ def _derive_schema_config(schema_def: dict[str, Any]) -> _SchemaConfig:
             is_count_col = nm.endswith("_count") or nm == "count" or "人數" in str(display)
             value_suffix[col_name] = "人" if is_count_col else "元"
             value_suffix[str(display)] = value_suffix[col_name]
+
+    # 動態佔比 {col}_ratio：從 value_column_names 動態產生（無硬編碼欄位名）
+    for col in value_column_names:
+        code = f"{col}_ratio"
+        indicator_column_names[code] = (col, "__total__")
+        indicator_labels[code] = value_display_names.get(col, col) + "佔比"
+        indicator_as_percent[code] = True
+        if "_" in col:
+            base = col.split("_")[0]
+            if base and f"{base}_ratio" not in indicator_column_names:
+                indicator_column_names[f"{base}_ratio"] = (col, "__total__")
+                indicator_labels[f"{base}_ratio"] = value_display_names.get(col, col) + "佔比"
+                indicator_as_percent[f"{base}_ratio"] = True
 
     # dataset_label_suffix：indicator 與 value 的 % 或 元
     dataset_label_suffix: dict[str, str] = dict(value_suffix)
@@ -218,6 +240,8 @@ def _derive_schema_config(schema_def: dict[str, Any]) -> _SchemaConfig:
     return _SchemaConfig(
         group_aliases=group_aliases,
         value_aliases=value_aliases,
+        value_key_to_column=value_key_to_column,
+        value_column_names=value_column_names,
         indicator_column_names=indicator_column_names,
         indicator_as_percent=indicator_as_percent,
         compare_indicator_value_col=compare_indicator_value_col,
@@ -416,7 +440,7 @@ def _apply_filter(
     """依 filter_value 與 op 篩選 rows。op: ==, !=, >, <, >=, <=, like。日期區間維持現有邏輯，op 不影響。"""
     if not rows or not filter_key or filter_value is None:
         return rows
-    op = (op or "==").strip().lower()
+    op = (op or "==").strip().lower().replace(" ", "") or "=="
 
     if isinstance(filter_value, list):
         if is_date_column:
@@ -489,6 +513,21 @@ def _apply_filter(
         else:
             single_d = _parse_date_safe(val_str)
             if single_d:
+                if op in (">", "<", ">=", "<="):
+                    result = []
+                    for r in rows:
+                        cell = r.get(filter_key)
+                        d = _parse_date_safe(str(cell) if cell is not None else "")
+                        if d:
+                            if op == ">" and d > single_d:
+                                result.append(r)
+                            elif op == "<" and d < single_d:
+                                result.append(r)
+                            elif op == ">=" and d >= single_d:
+                                result.append(r)
+                            elif op == "<=" and d <= single_d:
+                                result.append(r)
+                    return result
                 result = [r for r in rows if _parse_date_safe(str(r.get(filter_key, "") or "")) == single_d]
                 if result:
                     return result
@@ -690,14 +729,49 @@ def _is_compare_indicator(indicator: list[str] | None, cfg: _SchemaConfig) -> tu
     return (False, None)
 
 
+def _resolve_dynamic_ratio_column(base: str, cfg: _SchemaConfig) -> str | None:
+    """動態佔比 {col}_ratio：base 對應到數值欄位。例: sales->sales_amount, quantity->quantity"""
+    base_lower = base.strip().lower()
+    if not base_lower:
+        return None
+    for col in cfg.value_column_names:
+        if base_lower == col.lower():
+            return col
+        if len(base_lower) >= 2 and base_lower in col.lower():
+            return col
+    return None
+
+
 def _get_indicator_keys(ind: str, value_keys: list[str], cfg: _SchemaConfig) -> tuple[str, str, bool] | None:
-    """依欄位名稱解析 indicator 的 num_key, denom_key, as_percent。支援 config 與運算式 (A/B)。"""
+    """依欄位名稱解析 indicator 的 num_key, denom_key, as_percent。支援 config、運算式 (A/B)、動態 {col}_ratio。"""
     if ind in cfg.indicator_column_names:
         num_col, denom_col = cfg.indicator_column_names[ind]
         as_pct = cfg.indicator_as_percent.get(ind, False)
-        num_key = next((k for k in value_keys if k.strip().lower() == num_col.lower() or num_col.lower() in k.strip().lower()), None)
+        num_key = next(
+            (k for k in value_keys if
+             k.strip().lower() == num_col.lower() or num_col.lower() in k.strip().lower() or
+             cfg.value_key_to_column.get(k) == num_col or
+             (num_col and k in (cfg.value_aliases.get(num_col) or []))),
+            None,
+        )
+        if not num_key:
+            return None
+        if denom_col == "__total__":
+            return (num_key, "__total__", as_pct)
         denom_key = next((k for k in value_keys if k.strip().lower() == denom_col.lower() or denom_col.lower() in k.strip().lower()), None)
-        return (num_key, denom_key, as_pct) if num_key and denom_key else None
+        return (num_key, denom_key, as_pct) if denom_key else None
+    if ind and ind.endswith("_ratio") and len(ind) > 5:
+        base = ind[:-5]
+        col = _resolve_dynamic_ratio_column(base, cfg)
+        if col:
+            num_key = next(
+                (k for k in value_keys if
+                 cfg.value_key_to_column.get(k) == col or k.strip().lower() == col.lower() or
+                 (col and k in (cfg.value_aliases.get(col) or []))),
+                None,
+            )
+            if num_key:
+                return (num_key, "__total__", True)
     if ind and "/" in ind:
         parts = ind.strip().split("/")
         if len(parts) == 2:
@@ -829,6 +903,58 @@ def _aggregate_indicator_plus_values_by_group(
         data = [round(pivots[vk].get(gv, 0), 2) for gv in group_vals]
         datasets.append((label, data))
     return group_vals, datasets
+
+
+def _aggregate_indicator_share(
+    rows: list[dict[str, Any]],
+    group_key: str,
+    value_key: str,
+    as_percent: bool,
+    group_keys: list[str] | None = None,
+    indicator: str | None = None,
+    cfg: _SchemaConfig | None = None,
+) -> list[tuple[str, float]]:
+    """佔比型指標：依 group 分組，每組 sum(value)/sum(all)。as_percent 時 ×100"""
+    groups_val: dict[str, float] = {}
+    total = 0.0
+    for r in rows:
+        gv = _get_group_value(r, group_key, group_keys)
+        v = _parse_num(r.get(value_key))
+        groups_val[gv] = groups_val.get(gv, 0) + v
+        total += v
+    decimals = (cfg.indicator_decimal_places.get((indicator or "").strip().lower(), 4) if cfg else 4)
+    result: list[tuple[str, float]] = []
+    for gv in groups_val:
+        if total <= 0:
+            result.append((gv, 0.0))
+        else:
+            val = groups_val[gv] / total
+            if as_percent:
+                val = round(val * 100, 2)
+            else:
+                val = round(val, decimals)
+            result.append((gv, val))
+    return result
+
+
+def _aggregate_indicator_ratio_or_share(
+    rows: list[dict[str, Any]],
+    group_key: str,
+    num_key: str,
+    denom_key: str,
+    as_percent: bool,
+    group_keys: list[str] | None = None,
+    indicator: str | None = None,
+    cfg: _SchemaConfig | None = None,
+) -> list[tuple[str, float]]:
+    """依 denom_key 分派：__total__ 用 share，否則用 ratio"""
+    if denom_key == "__total__":
+        return _aggregate_indicator_share(
+            rows, group_key, num_key, as_percent, group_keys=group_keys, indicator=indicator, cfg=cfg,
+        )
+    return _aggregate_indicator_ratio(
+        rows, group_key, num_key, denom_key, as_percent, group_keys=group_keys, indicator=indicator, cfg=cfg,
+    )
 
 
 def _aggregate_indicator_ratio(
@@ -1150,7 +1276,7 @@ def _apply_having_filters(
         if not isinstance(hf, dict):
             continue
         col = (hf.get("column") or "").strip()
-        op = (hf.get("op") or "==").strip().lower() or "=="
+        op = (hf.get("op") or "==").strip().lower().replace(" ", "") or "=="
         val = hf.get("value")
         if not col:
             continue
@@ -1316,7 +1442,7 @@ def _run_compare_periods_flow(
                 continue
             col = f.get("column")
             val = f.get("value")
-            op = (f.get("op") or "==").strip().lower()
+            op = (f.get("op") or "==").strip().lower().replace(" ", "") or "=="
             if col is None or val is None:
                 continue
             col_str = str(col).strip()
@@ -1466,7 +1592,7 @@ def _run_compare_periods_ratio_flow(
                 continue
             col = f.get("column")
             val = f.get("value")
-            op = (f.get("op") or "==").strip().lower()
+            op = (f.get("op") or "==").strip().lower().replace(" ", "") or "=="
             if col is None or val is None:
                 continue
             col_str = str(col).strip()
@@ -1502,12 +1628,12 @@ def _run_compare_periods_ratio_flow(
     gk = resolved.group_keys
     group_key = resolved.group_key
 
-    # 3. 兩期間分別計算 ratio
-    cur_pairs = _aggregate_indicator_ratio(
+    # 3. 兩期間分別計算 ratio（含佔比型 denom_key==__total__）
+    cur_pairs = _aggregate_indicator_ratio_or_share(
         current_rows, group_key, num_key, denom_key, as_pct,
         group_keys=gk, indicator=indicator, cfg=cfg,
     )
-    cmp_pairs = _aggregate_indicator_ratio(
+    cmp_pairs = _aggregate_indicator_ratio_or_share(
         compare_rows, group_key, num_key, denom_key, as_pct,
         group_keys=gk, indicator=indicator, cfg=cfg,
     )
@@ -1590,7 +1716,6 @@ def compute_aggregate(
     rows: list[dict[str, Any]],
     group_by_column: str | list[str],
     value_columns: list[dict[str, Any]],
-    chart_type: str,
     *,
     series_by_column: str | None = None,
     filters: list[dict[str, Any]] | None = None,
@@ -1670,7 +1795,10 @@ def compute_aggregate(
     cp = _parse_compare_periods(compare_periods)
     is_compare, value_col_yoy = _is_compare_indicator(indicator, cfg)
     ind_str = _indicator_str(indicator)
-    is_ratio_indicator = ind_str in cfg.indicator_column_names and ind_str not in cfg.compare_indicator_value_col
+    is_ratio_indicator = (
+        (ind_str in cfg.indicator_column_names and ind_str not in cfg.compare_indicator_value_col)
+        or (ind_str.endswith("_ratio") and len(ind_str) > 5 and _resolve_dynamic_ratio_column(ind_str[:-5], cfg))
+    )
 
     if cp and is_compare and value_col_yoy and gb_list_norm:
         return _run_compare_periods_flow(
@@ -1716,7 +1844,7 @@ def compute_aggregate(
         if col is None or val is None:
             continue
         col_str = str(col).strip()
-        op_str = str(op).strip().lower() or "=="
+        op_str = str(op).strip().lower().replace(" ", "") or "=="
         key = (col_str, op_str)
         if key not in merged:
             merged[key] = []
@@ -1750,8 +1878,6 @@ def compute_aggregate(
                 if error_out is not None:
                     error_out.append(msg)
                 return None
-    chart_type_lower = (chart_type or "bar").lower()
-    is_pie = chart_type_lower == "pie"
     gk = resolved.group_keys if len(resolved.group_keys) > 1 else None
     # 多層 group 時建立 hierarchy：composite_key -> {k: v for k in group_keys}
     hierarchy: dict[str, dict[str, Any]] = {}
@@ -1818,18 +1944,29 @@ def compute_aggregate(
         return out
 
     def _normalize_indicator(indic: list[str] | None) -> list[str]:
-        def _valid(ind_s: str) -> bool:
-            s = ind_s.strip().lower()
-            return s in cfg.indicator_column_names or ("/" in s and len(s.split("/")) == 2)
+        label_to_code = {str(v).strip().lower(): k for k, v in cfg.indicator_labels.items() if v}
+        def _to_code(ind_s: str) -> str | None:
+            s = str(ind_s).strip().lower()
+            if not s:
+                return None
+            if s in cfg.indicator_column_names:
+                return s
+            if s in label_to_code:
+                return label_to_code[s]
+            if "/" in s and len(s.split("/")) == 2:
+                return s
+            if s.endswith("_ratio") and len(s) > 5 and _resolve_dynamic_ratio_column(s[:-5], cfg):
+                return s
+            return None
         if isinstance(indic, list):
-            return [str(x).strip().lower() for x in indic if x and _valid(str(x).strip())]
+            return [c for x in indic if x and (c := _to_code(str(x).strip()))]
         return []
 
     ind_list = _normalize_indicator(indicator)
     ind = ind_list[0] if len(ind_list) == 1 else ""
 
     # 統一：indicator(s) + 有 group → 全 value 彙總 + 各 indicator，再依 display_fields 過濾
-    if len(ind_list) >= 1 and resolved.group_key != "__total__" and len(resolved.value_keys) >= 2:
+    if len(ind_list) >= 1 and resolved.group_key != "__total__" and len(resolved.value_keys) >= 1:
         all_group_vals: set[str] = set()
         indicator_results: list[tuple[str, dict[str, float]]] = []
         for ind_name in ind_list:
@@ -1837,7 +1974,7 @@ def compute_aggregate(
             if not keys:
                 continue
             nk, dk, ap = keys
-            pairs = _aggregate_indicator_ratio(
+            pairs = _aggregate_indicator_ratio_or_share(
                 work, resolved.group_key, nk, dk, ap, group_keys=gk, indicator=ind_name, cfg=cfg,
             )
             gv_to_val = {gv: v for gv, v in pairs}
@@ -1892,7 +2029,7 @@ def compute_aggregate(
             keys = _get_indicator_keys(ind_name, resolved.value_keys, cfg)
             if keys:
                 nk, dk, ap = keys
-                ipairs = _aggregate_indicator_ratio(
+                ipairs = _aggregate_indicator_ratio_or_share(
                     work, resolved.group_key, nk, dk, ap, group_keys=gk, indicator=ind_name, cfg=cfg,
                 )
                 lbl = cfg.indicator_labels.get(ind_name, ind_name)
@@ -1900,9 +2037,9 @@ def compute_aggregate(
         pairs = raw_pairs
     else:
         keys_result = _get_indicator_keys(ind, resolved.value_keys, cfg) if ind else None
-        if len(resolved.value_keys) >= 2 and ind and keys_result:
+        if len(resolved.value_keys) >= 1 and ind and keys_result:
             num_key, denom_key, as_pct = keys_result
-            ind_pairs = _aggregate_indicator_ratio(
+            ind_pairs = _aggregate_indicator_ratio_or_share(
                 work, resolved.group_key, num_key, denom_key, as_pct, group_keys=gk, indicator=ind, cfg=cfg,
             )
             if resolved.group_key == "__total__":
@@ -1970,8 +2107,6 @@ def compute_aggregate(
             else:
                 pairs = []
     pairs = _apply_sort_top_n(pairs, sort_order, top_n, time_order, datasets=None, cfg=cfg)
-    if is_pie and not ind:
-        pairs = _to_pie_percent(pairs)
     pairs = _apply_display_fields(pairs, display_fields or [], cfg)
     if ind in cfg.indicator_column_names:
         as_pct = cfg.indicator_as_percent.get(ind, False)

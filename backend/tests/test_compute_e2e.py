@@ -140,7 +140,6 @@ def run_flow(intent: dict) -> dict | None:
         rows,
         group_by,
         value_cols,
-        intent.get("chart_type") or "bar",
         series_by_column=intent.get("series_by_column"),
         filters=filters,
         top_n=safe_int(intent.get("top_n")),
@@ -220,7 +219,6 @@ pchome,1月,其他產品,20,2000"""
     r = ac.compute_aggregate(
         rows, group_by,
         [{"column": intent.get("value_column") or "銷售額", "aggregation": "sum"}],
-        "bar",
         filters=filters,
         schema_def=SCHEMA_E2E,
     )
@@ -248,7 +246,6 @@ def test_product_with_comma():
     r = ac.compute_aggregate(
         rows, group_by,
         [{"column": "銷售金額", "aggregation": "sum"}],
-        "bar",
         filters=[{"column": filter_col, "value": filter_val}],
         schema_def=SCHEMA_E2E,
     )
@@ -265,7 +262,6 @@ pchome,1月,深度保濕精華液,20,2000"""
     r = ac.compute_aggregate(
         rows, "產品名稱",
         [{"column": "銷售金額", "aggregation": "sum"}],
-        "bar",
         filters=[{"column": "平台", "value": "momo"}, {"column": "產品名稱", "value": "深度保濕精華液"}],
         schema_def=SCHEMA_E2E,
     )
@@ -284,7 +280,6 @@ def test_arpu_with_guest_count():
         rows,
         "timestamp",
         [{"column": "sales_amount", "aggregation": "sum"}, {"column": "guest_count", "aggregation": "sum"}],
-        "bar",
         indicator=["arpu"],
         series_by_column="store_name",
         display_fields=["sales_amount", "arpu"],
@@ -308,7 +303,6 @@ pchome,2000,20"""
         rows,
         "store_name",
         [{"column": "sales_amount", "aggregation": "sum"}, {"column": "guest_count", "aggregation": "sum"}],
-        "bar",
         indicator=["arpu"],
         schema_def=SCHEMA_FACT,
     )
@@ -330,7 +324,6 @@ shopee,500,100"""
         rows,
         "channel_id",
         [{"column": "gross_profit", "aggregation": "sum"}, {"column": "net_amount", "aggregation": "sum"}],
-        "bar",
         indicator=["margin_rate"],
         schema_def=SCHEMA_CHANNEL_NET,
     )
@@ -359,7 +352,6 @@ B,200,400,100,momo"""
             {"column": "net_amount", "aggregation": "sum"},
             {"column": "cost_amount", "aggregation": "sum"},
         ],
-        "bar",
         indicator=["margin_rate", "roi"],
         display_fields=["item_name", "margin_rate", "roi"],
         filters=[{"column": "channel_id", "op": "==", "value": "momo"}],
@@ -386,7 +378,6 @@ momo,500,150"""
         rows,
         " ",  # 空 group_by
         [{"column": "gross_profit", "aggregation": "sum"}, {"column": "net_amount", "aggregation": "sum"}],
-        "bar",
         indicator=["margin_rate"],
         filters=[{"column": "channel_id", "value": "momo"}],
         schema_def=SCHEMA_CHANNEL_NET,
@@ -409,7 +400,6 @@ shopee,500,100"""
         rows,
         "store_name",
         [{"column": "gross_profit", "aggregation": "sum"}, {"column": "sales_amount", "aggregation": "sum"}],
-        "bar",
         indicator=["margin_rate"],
         schema_def=SCHEMA_FACT,
     )
@@ -449,7 +439,6 @@ shopee,50,500,450"""
             {"column": "discount_amount", "aggregation": "sum"},
             {"column": "gross_amount", "aggregation": "sum"},
         ],
-        "bar",
         indicator=["discount_amount/gross_amount"],
         schema_def=SCHEMA_DISC,
     )
@@ -479,7 +468,6 @@ def test_per_column_aggregation():
         rows,
         "doctor_name",
         value_cols,
-        "bar",
         filters=[{"column": "department", "op": "==", "value": "內科"}],
         schema_def=SCHEMA_DOCTOR,
     )

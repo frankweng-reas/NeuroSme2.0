@@ -15,20 +15,13 @@ import {
   DefaultLegendContent,
   Label,
 } from 'recharts'
+import { getDefaultChartType } from './ChartModal'
 import type { ChartData } from './ChartModal'
 
 const CHART_COLORS = ['#4b5563', '#3b82f6', '#10b981', '#f59e0b', '#ef4444']
 const FONT_SIZE = 14
 const CHART_WIDTH = 520
 const CHART_HEIGHT = 280
-
-function getDefaultType(data: ChartData): 'bar' | 'pie' | 'line' {
-  const hasDatasets = data.datasets && data.datasets.length > 0
-  const hasPieData = data.data && data.data.length > 0
-  if (hasDatasets) return data.chartType === 'line' ? 'line' : 'bar'
-  if (hasPieData) return data.chartType ?? 'pie'
-  return 'bar'
-}
 
 function transformToBarLineData(data: ChartData): Record<string, string | number>[] {
   const { labels } = data
@@ -61,7 +54,7 @@ interface ChartForPdfProps {
 }
 
 export default function ChartForPdf({ data }: ChartForPdfProps) {
-  const viewType = getDefaultType(data)
+  const viewType = getDefaultChartType(data)
   const colors = CHART_COLORS
   const isFromPieData = !data.datasets?.length && !!data.data?.length
   const singleDataLabel = data.yAxisLabel || '數值'

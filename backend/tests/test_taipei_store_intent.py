@@ -80,7 +80,6 @@ def test_intent_passes_then_compute_no_data():
         rows,
         intent.get("group_by_column") or "",
         value_cols,
-        "bar",
         filters=parsed_filters,
         schema_def=SCHEMA_DEF,
         error_out=error_list,

@@ -42,6 +42,8 @@ aggregation:
 # 指標血緣 (Value Components)：定義每個指標所需欄位
 # ratio 型: [numerator, denominator]，計算 num/denom
 # compare_period 型: [value_column]，用於 YoY 等雙期間比較
+# 動態佔比: {column}_ratio 自動支援（如 sales_amount_ratio, quantity_ratio），
+#   計算 sum(group)/sum(all)，無需在此逐一定義
 indicators:
   margin_rate:
     type: ratio

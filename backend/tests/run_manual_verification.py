@@ -69,7 +69,6 @@ run_case("案例 1：各店銷售額、毛利率、ROI",
         {"column": "sales_amount", "aggregation": "sum"},
         {"column": "cost_amount", "aggregation": "sum"},
     ],
-    chart_type="bar",
     indicator=["margin_rate", "roi"],
     display_fields=["store_name", "sales_amount", "margin_rate", "roi"],
 )
@@ -82,7 +81,6 @@ run_case("案例 2：各店毛利率",
         {"column": "gross_profit", "aggregation": "sum"},
         {"column": "sales_amount", "aggregation": "sum"},
     ],
-    chart_type="bar",
     indicator=["margin_rate"],
     display_fields=["store_name", "margin_rate"],
 )
@@ -96,7 +94,6 @@ run_case("案例 3：總計毛利率與 ROI",
         {"column": "sales_amount", "aggregation": "sum"},
         {"column": "cost_amount", "aggregation": "sum"},
     ],
-    chart_type="bar",
     indicator=["margin_rate", "roi"],
 )
 print("\n預期：銷售金額=1120, 毛利=500, 成本=270, 毛利率≈44.64, ROI≈1.85")
@@ -106,7 +103,6 @@ run_case("案例 4：各店各通路銷售額",
     group_by_column=["store_name"],
     series_by_column="channel",
     value_columns=[{"column": "sales_amount", "aggregation": "sum"}],
-    chart_type="bar",
     display_fields=["sales_amount"],
 )
 print("\n預期：銷售金額-momo=[300,400,200], 銷售金額-shopee=[160,60,0]")
@@ -118,7 +114,6 @@ run_case("案例 5：各店銷售額與成本",
         {"column": "sales_amount", "aggregation": "sum"},
         {"column": "cost_amount", "aggregation": "sum"},
     ],
-    chart_type="bar",
     display_fields=["sales_amount", "cost_amount"],
 )
 print("\n預期：銷售金額=[460,460,200], 成本=[115,115,40]")
@@ -131,7 +126,6 @@ run_case("案例 6：總計多欄位",
         {"column": "cost_amount", "aggregation": "sum"},
         {"column": "gross_profit", "aggregation": "sum"},
     ],
-    chart_type="bar",
 )
 print("\n預期：銷售金額=1120, 成本=270, 毛利=500")
 
@@ -142,7 +136,6 @@ r7 = run_case("案例 7：依毛利率排序、top_n=2",
         {"column": "gross_profit", "aggregation": "sum"},
         {"column": "sales_amount", "aggregation": "sum"},
     ],
-    chart_type="bar",
     indicator=["margin_rate"],
     sort_order=[{"column": "毛利率", "order": "desc"}],
     top_n=2,
@@ -179,7 +172,6 @@ r8 = ac.compute_aggregate(
         {"column": "sales_amount", "aggregation": "sum"},
         {"column": "guest_count", "aggregation": "sum"},
     ],
-    chart_type="bar",
     indicator=["arpu"],
     display_fields=["store_name", "arpu", "previous_arpu", "客單價成長率"],
     compare_periods={

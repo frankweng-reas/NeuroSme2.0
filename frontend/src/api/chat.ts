@@ -70,6 +70,38 @@ export async function chatCompletionsComputeTool(req: ChatRequest): Promise<Chat
   })
 }
 
+/** dev-test-compute-tool 兩步驟：僅意圖萃取 */
+export interface ExtractIntentResponse {
+  intent: Record<string, unknown> | null
+  usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null
+  model: string
+  error_message?: string | null
+  system_prompt?: string  // 組合好的 system prompt（含 schema/indicator 注入）
+}
+
+export async function extractIntentOnly(req: ChatRequest): Promise<ExtractIntentResponse> {
+  return apiFetch<ExtractIntentResponse>('/chat/extract-intent-only', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  })
+}
+
+/** dev-test-compute-tool 兩步驟：依 intent 執行計算 + 文字生成 */
+export interface ComputeFromIntentRequest {
+  agent_id?: string
+  project_id: string
+  content: string
+  intent: Record<string, unknown>
+  model?: string
+}
+
+export async function computeFromIntent(req: ComputeFromIntentRequest): Promise<ChatResponseCompute> {
+  return apiFetch<ChatResponseCompute>('/chat/compute-from-intent', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  })
+}
+
 /** SSE 串流階段 */
 export type ComputeStage = 'intent' | 'compute' | 'text'
 

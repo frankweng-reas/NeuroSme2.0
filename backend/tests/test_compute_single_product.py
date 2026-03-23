@@ -33,7 +33,6 @@ def test_single_product():
         rows,
         "產品名稱",
         [{"column": "銷售金額", "aggregation": "sum"}],
-        "bar",
         filters=[{"column": "產品名稱", "value": "momo深度保濕精華液"}],
         schema_def=SCHEMA_E2E,
     )
