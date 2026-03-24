@@ -10,6 +10,7 @@ export interface ChatRequest {
   agent_id?: string // chat.py 必填；chat_dev 不填
   project_id?: string // quotation_parse 時可填，改從 qtn_sources 取參考資料
   prompt_type?: string // 空或 analysis → system_prompt_analysis.md；quotation_parse → system_prompt_quotation_1_parse.md
+  schema_id?: string // dev-test-compute-tool：覆寫專案 schema
   system_prompt: string
   user_prompt: string
   data: string
@@ -90,6 +91,7 @@ export async function extractIntentOnly(req: ChatRequest): Promise<ExtractIntent
 export interface ComputeFromIntentRequest {
   agent_id?: string
   project_id: string
+  schema_id?: string // dev-test-compute-tool：覆寫專案 schema
   content: string
   intent: Record<string, unknown>
   model?: string
@@ -184,6 +186,8 @@ export async function chatCompletionsComputeToolStream(
 export interface IntentToComputeByProjectRequest {
   project_id: string
   intent: Record<string, unknown>
+  /** 可覆寫專案 schema；省略則使用專案於匯入後寫入的 schema_id */
+  schema_id?: string
 }
 
 export interface IntentToComputeResponse {
@@ -204,6 +208,8 @@ export async function intentToComputeByProject(
 export interface IntentToComputeRawRequest {
   intent: Record<string, unknown>
   rows: Record<string, unknown>[]
+  /** bi_schemas.id */
+  schema_id: string
 }
 
 export async function intentToComputeRaw(req: IntentToComputeRawRequest): Promise<IntentToComputeResponse> {

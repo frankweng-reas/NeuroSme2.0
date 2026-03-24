@@ -6,6 +6,8 @@ export interface BiProjectItem {
   project_desc: string | null
   created_at: string
   conversation_data?: MessageStored[] | null
+  /** 與匯入模板／分析意圖對齊的 bi_schemas id */
+  schema_id?: string | null
 }
 
 /** 儲存於 DB 的訊息格式（與 Message 相容） */
@@ -79,13 +81,13 @@ export async function getDuckdbStatus(
   )
 }
 
-/** 依 mapping template 將 CSV 匯入 DuckDB */
+/** 依 bi_schema 或 mapping template 將 CSV 匯入 DuckDB */
 export async function importCsvToDuckdb(
   agentId: string,
   projectId: string,
-  blocks: { template_name: string; files: { file_name: string; content: string }[] }[]
-): Promise<{ ok: boolean; message: string; row_count?: number }> {
-  return apiFetch(
+  blocks: { schema_id?: string; template_name?: string; files: { file_name: string; content: string }[] }[]
+): Promise<{ ok: boolean; message: string; row_count?: number; schema_id?: string }> {
+  return apiFetch<{ ok: boolean; message: string; row_count?: number; schema_id?: string }>(
     `/bi-projects/${encodeURIComponent(projectId)}/import-csv?agent_id=${encodeURIComponent(agentId)}`,
     {
       method: 'POST',

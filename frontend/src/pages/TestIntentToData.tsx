@@ -72,7 +72,12 @@ export default function TestIntentToData() {
     setIsLoading(true)
 
     try {
-      const res = await intentToComputeByProject({ project_id: selectedProjectId, intent })
+      const proj = projects.find((p) => p.project_id === selectedProjectId)
+      const res = await intentToComputeByProject({
+        project_id: selectedProjectId,
+        intent,
+        ...(proj?.schema_id ? { schema_id: proj.schema_id } : {}),
+      })
       setResult(
         res.chart_result
           ? JSON.stringify(res.chart_result, null, 2)

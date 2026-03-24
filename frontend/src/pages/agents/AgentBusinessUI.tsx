@@ -1,6 +1,9 @@
-/** agent_id 含 business 時使用：商務型 agent 專用 UI */
+/**
+ * agent_id 含 business 時使用：商務型 agent 專用 UI。
+ * 資料匯入僅使用 biProjects.importCsvToDuckdb（bi_schemas → DuckDB），不使用 bi_sources API。
+ */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ChevronRight, ChevronsRight, Database, HelpCircle, Loader2, MoreVertical, Plus, RefreshCw, X } from 'lucide-react'
+import { ChevronRight, ChevronsRight, Database, HelpCircle, Loader2, MoreVertical, Plus, RefreshCw } from 'lucide-react'
 import { Group, Panel, PanelImperativeHandle, Separator } from 'react-resizable-panels'
 import { chatCompletionsComputeToolStream, type ComputeStage } from '@/api/chat'
 import { ApiError } from '@/api/client'
@@ -9,15 +12,13 @@ import AISettingsPanelAdvanced from '@/components/AISettingsPanelAdvanced'
 import AgentChat, { type Message, type ResponseMeta } from '@/components/AgentChat'
 import { type ChartData } from '@/components/ChartModal'
 import HelpModal from '@/components/HelpModal'
-import MappingTemplateEditor from '@/components/MappingTemplateEditor'
 import AgentHeader from '@/components/AgentHeader'
 import ConfirmModal from '@/components/ConfirmModal'
 import InputModal from '@/components/InputModal'
 import { createBiProject, deleteBiProject, getDuckdbStatus, importCsvToDuckdb, listBiProjects, updateBiProject, type BiProjectItem, type MessageStored } from '@/api/biProjects'
-import { listMappingTemplates, type MappingTemplateItem } from '@/api/test01'
-import { getMe } from '@/api/users'
+import { getBiSchema, listBiSchemas, type BiSchemaItem } from '@/api/biSchemas'
 import { DETAIL_OPTIONS, LANGUAGE_OPTIONS, ROLE_OPTIONS } from '@/constants/aiOptions'
-import type { Agent, User } from '@/types'
+import type { Agent } from '@/types'
 
 interface AgentBusinessUIProps {
   agent: Agent
@@ -25,7 +26,7 @@ interface AgentBusinessUIProps {
 
 interface BlockItem {
   id: string
-  selectedTemplateName: string
+  selectedSchemaId: string
   selectedFiles: File[]
 }
 
@@ -49,14 +50,33 @@ function isSameFile(a: File, b: File): boolean {
   return a.name === b.name && a.size === b.size && a.lastModified === b.lastModified
 }
 
-/** 檢查 CSV headers 是否與模板格式相同（順序可不同） */
-function headersMatch(templateHeaders: string[] | null, csvHeaders: string[]): boolean {
-  if (!templateHeaders || templateHeaders.length === 0) return false
-  const setA = new Set(templateHeaders.map((h) => h.trim()))
-  const setB = new Set(csvHeaders.map((h) => h.trim()))
-  if (setA.size !== setB.size) return false
-  for (const h of setA) {
-    if (!setB.has(h)) return false
+/** 從 bi_schema 的 columns 取得允許的 CSV headers（field 名稱 + 所有 aliases） */
+function getAllowedHeadersFromSchema(columns: Record<string, unknown> | null | undefined): Set<string> {
+  const allowed = new Set<string>()
+  if (!columns || typeof columns !== 'object') return allowed
+  for (const [field, col] of Object.entries(columns)) {
+    if (!col || typeof col !== 'object') continue
+    const c = col as Record<string, unknown>
+    allowed.add(field.trim())
+    const aliases = c.aliases
+    if (Array.isArray(aliases)) {
+      for (const a of aliases) {
+        if (typeof a === 'string' && a.trim()) allowed.add(a.trim())
+      }
+    } else if (typeof aliases === 'string' && aliases.trim()) {
+      allowed.add(aliases.trim())
+    }
+  }
+  return allowed
+}
+
+/** 檢查 CSV headers 是否都符合 schema（每個 header 需對應到 schema 的 field 或 alias，無欄序 fallback） */
+function csvHeadersMatchSchema(csvHeaders: string[], allowedHeaders: Set<string>): boolean {
+  if (allowedHeaders.size === 0) return false
+  for (const h of csvHeaders) {
+    const trimmed = h.trim()
+    if (!trimmed) continue
+    if (!allowedHeaders.has(trimmed)) return false
   }
   return true
 }
@@ -118,82 +138,6 @@ function parseConversationData(data: unknown): Message[] {
   return data.filter((m): m is Message => m && typeof m === 'object' && (m as Message).role && typeof (m as Message).content === 'string')
 }
 
-function pickStr(obj: Record<string, unknown> | null, ...keys: string[]): string | undefined {
-  if (!obj) return undefined
-  for (const k of keys) {
-    const v = obj[k]
-    if (typeof v === 'string' && v.trim()) return v.trim()
-  }
-  return undefined
-}
-
-function normalizeChartData(v: unknown): ChartData | undefined {
-  if (!v || typeof v !== 'object') return undefined
-  const o = v as Record<string, unknown>
-  const chartType = (['bar', 'pie', 'line'] as const).includes((o.type ?? o.chartType) as never)
-    ? ((o.type ?? o.chartType) as 'bar' | 'pie' | 'line')
-    : 'bar'
-
-  const inner = o.data && typeof o.data === 'object' && !Array.isArray(o.data) ? (o.data as Record<string, unknown>) : null
-  const title = pickStr(o, 'title') ?? pickStr(inner ?? {}, 'title')
-  const yAxisLabel = pickStr(o, 'yAxisLabel') ?? pickStr(inner ?? {}, 'yAxisLabel')
-  const valueSuffix = pickStr(o, 'valueSuffix') ?? pickStr(inner ?? {}, 'valueSuffix')
-
-  const meta = { title, yAxisLabel, valueSuffix }
-
-  // 新格式：{ type, data: { labels, values } } 或 { type, data: { labels, datasets } }
-  if (inner && Array.isArray(inner.labels) && inner.labels.length > 0) {
-    const labels = (inner.labels as unknown[]).map((x) => (typeof x === 'string' ? x : String(x)))
-    if (chartType === 'pie' && Array.isArray(inner.values)) {
-      if (inner.values.length === 0 || inner.values.length !== labels.length) return undefined
-      const data = (inner.values as unknown[]).map((n) => (typeof n === 'number' ? n : Number(n) || 0))
-      return { chartType: 'pie', labels, data, ...meta }
-    }
-    if ((chartType === 'bar' || chartType === 'line') && Array.isArray(inner.datasets) && inner.datasets.length > 0) {
-      const datasets: { label: string; data: number[] }[] = []
-      for (const d of inner.datasets as unknown[]) {
-        if (!d || typeof d !== 'object') return undefined
-        const item = d as Record<string, unknown>
-        const label = typeof item.label === 'string' ? item.label : String(item.label ?? '')
-        const arr = item.values ?? item.data
-        if (!Array.isArray(arr)) return undefined
-        const data = arr.map((n: unknown) => (typeof n === 'number' ? n : Number(n) || 0))
-        datasets.push({ label, data })
-      }
-      return { chartType, labels, datasets, ...meta }
-    }
-  }
-
-  // 舊格式：{ chartType, labels, data } 或 { chartType, labels, datasets }
-  if (!Array.isArray(o.labels) || o.labels.length === 0) return undefined
-  const labels = (o.labels as unknown[]).map((x) => (typeof x === 'string' ? x : String(x)))
-
-  if (chartType === 'pie' || Array.isArray(o.data)) {
-    const arr = (Array.isArray(o.data) ? o.data : inner?.values ?? o.values) as unknown[] | undefined
-    if (!Array.isArray(arr) || arr.length === 0 || arr.length !== labels.length) return undefined
-    const data = (arr as unknown[]).map((n) => (typeof n === 'number' ? n : Number(n) || 0))
-    return { chartType: 'pie', labels, data, ...meta }
-  }
-
-  const dsArr = o.datasets ?? (inner?.datasets as unknown[])
-  if (!Array.isArray(dsArr) || dsArr.length === 0) return undefined
-  const datasets: { label: string; data: number[] }[] = []
-  for (const d of dsArr as unknown[]) {
-    if (!d || typeof d !== 'object') return undefined
-    const item = d as Record<string, unknown>
-    const label = typeof item.label === 'string' ? item.label : String(item.label ?? '')
-    const arr = item.values ?? item.data
-    if (!Array.isArray(arr)) return undefined
-    const data = arr.map((n: unknown) => (typeof n === 'number' ? n : Number(n) || 0))
-    datasets.push({ label, data })
-  }
-  return { chartType: chartType === 'line' ? 'line' : 'bar', labels, datasets, ...meta }
-}
-
-/**
- * 從 LLM 回覆中解析 JSON，回傳 { text, chartData }。
- * 支援：純 JSON、```json ... ``` 區塊、或前有說明文字後接 JSON 的混和格式。
- */
 /** 將 chatCompletionsComputeTool 回傳的 chart_data 轉為 ChartModal 格式 */
 function toChartData(cd: unknown): ChartData | undefined {
   if (!cd || typeof cd !== 'object' || !('labels' in (cd as object))) return undefined
@@ -222,38 +166,6 @@ function toChartData(cd: unknown): ChartData | undefined {
   return undefined
 }
 
-function parseJsonResponse(raw: string): { displayText: string; chartData?: ChartData } {
-  try {
-    let jsonStr = raw.trim()
-    const codeBlockMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)\s*```/)
-    if (codeBlockMatch) jsonStr = codeBlockMatch[1].trim()
-    else {
-      const braceStart = jsonStr.indexOf('{')
-      if (braceStart >= 0) {
-        let depth = 0
-        let end = -1
-        for (let i = braceStart; i < jsonStr.length; i++) {
-          if (jsonStr[i] === '{') depth++
-          else if (jsonStr[i] === '}') {
-            depth--
-            if (depth === 0) {
-              end = i
-              break
-            }
-          }
-        }
-        if (end >= 0) jsonStr = jsonStr.slice(braceStart, end + 1)
-      }
-    }
-    const parsed = JSON.parse(jsonStr) as { text?: string; data?: unknown }
-    const displayText = typeof parsed.text === 'string' ? parsed.text : raw
-    const chartData = normalizeChartData(parsed.data)
-    return { displayText, chartData }
-  } catch {
-    return { displayText: raw }
-  }
-}
-
 function ResizeHandle({ className = '' }: { className?: string }) {
   return (
     <Separator
@@ -269,30 +181,31 @@ function ResizeHandle({ className = '' }: { className?: string }) {
 
 function BlockCard({
   block,
-  templates,
+  schemas,
   canDelete,
-  canAddTemplate,
-  onTemplateChange,
+  onSchemaChange,
   onFilesChange,
   onRemoveFile,
   onClearFiles,
   onDelete,
-  onAddTemplateClick,
   onValidationError,
   fileInputId,
+  getSchemaValidationContext,
 }: {
   block: BlockItem
-  templates: MappingTemplateItem[]
+  schemas: BiSchemaItem[]
   canDelete: boolean
-  canAddTemplate: boolean
-  onTemplateChange: (id: string, value: string) => void
+  onSchemaChange: (id: string, value: string) => void
   onFilesChange: (id: string, files: File[]) => void
   onRemoveFile: (id: string, index: number) => void
   onClearFiles: (id: string) => void
   onDelete: (id: string) => void
-  onAddTemplateClick: () => void
   onValidationError: (message: string) => void
   fileInputId: string
+  getSchemaValidationContext: (schemaId: string) => Promise<{
+    allowedHeaders: Set<string>
+    columnFieldNames: string[]
+  }>
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -301,42 +214,62 @@ function BlockCard({
       const files = e.target.files
       if (!files?.length) return
       const fileList = Array.from(files)
-      const template = templates.find((t) => t.template_name === block.selectedTemplateName)
-      const templateHeaders = template?.csv_headers ?? null
 
       const validFiles: File[] = []
       const invalidFiles: { file: File; reason: string }[] = []
       const duplicateFiles: File[] = []
 
-      for (const file of fileList) {
-        if (block.selectedFiles.some((f) => isSameFile(file, f))) {
-          duplicateFiles.push(file)
-          continue
+      if (!block.selectedSchemaId.trim()) {
+        for (const file of fileList) {
+          invalidFiles.push({ file, reason: '請先選擇資料模板' })
         }
+      } else {
+        let validationCtx: { allowedHeaders: Set<string>; columnFieldNames: string[] } | null = null
         try {
-          if (!templateHeaders || templateHeaders.length === 0) {
-            invalidFiles.push({ file, reason: '該模板未定義格式，無法驗證' })
-            continue
-          }
-          const csvHeaders = await parseCsvHeadersFromFile(file)
-          if (csvHeaders.length === 0) {
-            invalidFiles.push({ file, reason: '無法讀取 CSV 欄位' })
-            continue
-          }
-          if (!headersMatch(templateHeaders, csvHeaders)) {
-            invalidFiles.push({
-              file,
-              reason: `格式不符：模板需 ${templateHeaders.join(', ')}，但檔案為 ${csvHeaders.join(', ')}`,
-            })
-            continue
-          }
-          if (validFiles.some((f) => isSameFile(file, f))) {
-            duplicateFiles.push(file)
-            continue
-          }
-          validFiles.push(file)
+          validationCtx = await getSchemaValidationContext(block.selectedSchemaId)
         } catch {
-          invalidFiles.push({ file, reason: '無法讀取檔案' })
+          for (const file of fileList) {
+            invalidFiles.push({ file, reason: '無法取得 Schema 定義，請稍後再試' })
+          }
+        }
+
+        if (validationCtx && validationCtx.columnFieldNames.length > 0) {
+          const { allowedHeaders, columnFieldNames } = validationCtx
+          for (const file of fileList) {
+            if (block.selectedFiles.some((f) => isSameFile(file, f))) {
+              duplicateFiles.push(file)
+              continue
+            }
+            try {
+              const csvHeaders = await parseCsvHeadersFromFile(file)
+              if (csvHeaders.length === 0) {
+                invalidFiles.push({ file, reason: '無法讀取 CSV 欄位' })
+                continue
+              }
+              if (!csvHeadersMatchSchema(csvHeaders, allowedHeaders)) {
+                const extra = csvHeaders.filter((h) => h.trim() && !allowedHeaders.has(h.trim()))
+                invalidFiles.push({
+                  file,
+                  reason:
+                    extra.length > 0
+                      ? `格式不符：以下表頭須與 Schema 欄位名或 aliases 完全一致 — ${extra.join(', ')}`
+                      : `格式不符：CSV 表頭與 Schema 不一致（共 ${csvHeaders.length} 欄，Schema 需 ${columnFieldNames.length} 個可辨識表頭）`,
+                })
+                continue
+              }
+              if (validFiles.some((f) => isSameFile(file, f))) {
+                duplicateFiles.push(file)
+                continue
+              }
+              validFiles.push(file)
+            } catch {
+              invalidFiles.push({ file, reason: '無法讀取檔案' })
+            }
+          }
+        } else if (validationCtx?.columnFieldNames.length === 0) {
+          for (const file of fileList) {
+            invalidFiles.push({ file, reason: 'Schema 未定義 columns，無法驗證' })
+          }
         }
       }
 
@@ -351,7 +284,7 @@ function BlockCard({
       if (invalidFiles.length > 0) {
         const names = invalidFiles.map(({ file }) => file.name).join('、')
         messages.push(
-          invalidFiles.length > 1 ? `${names} 等 ${invalidFiles.length} 個檔案格式與模板不符` : `${names}：${invalidFiles[0].reason}`
+          invalidFiles.length > 1 ? `${names} 等 ${invalidFiles.length} 個檔案無法加入` : `${names}：${invalidFiles[0].reason}`
         )
       }
       if (messages.length > 0) {
@@ -362,7 +295,7 @@ function BlockCard({
         if (e.target) e.target.value = ''
       }, 0)
     },
-    [block.id, block.selectedTemplateName, block.selectedFiles, templates, onFilesChange, onValidationError]
+    [block.id, block.selectedSchemaId, block.selectedFiles, getSchemaValidationContext, onFilesChange, onValidationError]
   )
 
   return (
@@ -382,28 +315,16 @@ function BlockCard({
       </div>
       <div className="flex flex-col gap-5 p-4">
         <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between gap-2">
-            <label className="text-lg font-medium text-gray-700">資料模板</label>
-            <button
-              type="button"
-              onClick={onAddTemplateClick}
-              disabled={!canAddTemplate}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-lg text-gray-600 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-white"
-              aria-label="新增資料模板"
-              title={canAddTemplate ? '新增資料模板' : '需 admin 或 super_admin 權限'}
-            >
-              ＋
-            </button>
-          </div>
+          <label className="text-lg font-medium text-gray-700">資料模板</label>
           <select
             className="w-full rounded-lg border border-gray-300 px-3 py-2 text-lg focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
-            value={block.selectedTemplateName}
-            onChange={(e) => onTemplateChange(block.id, e.target.value)}
+            value={block.selectedSchemaId}
+            onChange={(e) => onSchemaChange(block.id, e.target.value)}
           >
             <option value="">— 未選擇 —</option>
-            {templates.map((t) => (
-              <option key={t.template_name} value={t.template_name}>
-                {t.template_name}
+            {schemas.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
               </option>
             ))}
           </select>
@@ -421,16 +342,16 @@ function BlockCard({
           <div
             role="button"
             tabIndex={0}
-            onClick={() => block.selectedTemplateName && inputRef.current?.click()}
+            onClick={() => block.selectedSchemaId && inputRef.current?.click()}
             onKeyDown={(e) => {
-              if ((e.key === 'Enter' || e.key === ' ') && block.selectedTemplateName) {
+              if ((e.key === 'Enter' || e.key === ' ') && block.selectedSchemaId) {
                 e.preventDefault()
                 inputRef.current?.click()
               }
             }}
             onDragOver={(e) => {
               e.preventDefault()
-              if (block.selectedTemplateName) e.currentTarget.classList.add('border-blue-400', 'bg-blue-50/50')
+              if (block.selectedSchemaId) e.currentTarget.classList.add('border-blue-400', 'bg-blue-50/50')
             }}
             onDragLeave={(e) => {
               e.preventDefault()
@@ -439,7 +360,7 @@ function BlockCard({
             onDrop={(e) => {
               e.preventDefault()
               e.currentTarget.classList.remove('border-blue-400', 'bg-blue-50/50')
-              if (!block.selectedTemplateName || !e.dataTransfer.files?.length) return
+              if (!block.selectedSchemaId || !e.dataTransfer.files?.length) return
               const input = inputRef.current
               if (input) {
                 const dt = new DataTransfer()
@@ -449,11 +370,11 @@ function BlockCard({
               }
             }}
             className={`flex cursor-pointer flex-col gap-2 rounded-lg border-2 border-dashed border-gray-200 bg-gray-50 py-3 transition-colors ${
-              block.selectedTemplateName
+              block.selectedSchemaId
                 ? 'hover:border-gray-300 hover:bg-gray-100'
                 : 'cursor-not-allowed opacity-60'
             }`}
-            title={!block.selectedTemplateName ? '請先選擇資料模板' : '點擊或拖曳檔案至此'}
+            title={!block.selectedSchemaId ? '請先選擇資料模板' : '點擊或拖曳檔案至此'}
           >
             <div className="flex items-center justify-between px-3">
               <span className="text-lg text-gray-600">
@@ -549,20 +470,31 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
   )
   const nextBlockIdRef = useRef(0)
   const [blocks, setBlocks] = useState<BlockItem[]>(() => [
-    { id: '0', selectedTemplateName: '', selectedFiles: [] },
+    { id: '0', selectedSchemaId: '', selectedFiles: [] },
   ])
-  const [templates, setTemplates] = useState<MappingTemplateItem[]>([])
-  const [activeTab, setActiveTab] = useState<'csv' | 'data-adapter'>('csv')
+  const [schemas, setSchemas] = useState<BiSchemaItem[]>([])
   const [csvAdapterToast, setCsvAdapterToast] = useState<string | null>(null)
   const [duckdbRowCount, setDuckdbRowCount] = useState<number | null>(null)
-  const [user, setUser] = useState<User | null>(null)
-  const [addTemplateModalOpen, setAddTemplateModalOpen] = useState(false)
 
-  const loadTemplates = useCallback(() => {
-    listMappingTemplates()
-      .then(setTemplates)
-      .catch(() => setTemplates([]))
+  const loadSchemas = useCallback(() => {
+    listBiSchemas()
+      .then(setSchemas)
+      .catch(() => setSchemas([]))
   }, [])
+
+  const getSchemaValidationContext = useCallback(
+    async (schemaId: string): Promise<{ allowedHeaders: Set<string>; columnFieldNames: string[] }> => {
+      const detail = await getBiSchema(schemaId)
+      const columns = detail?.schema_json?.columns as Record<string, unknown> | undefined
+      const columnFieldNames =
+        columns && typeof columns === 'object' ? Object.keys(columns) : []
+      return {
+        allowedHeaders: getAllowedHeadersFromSchema(columns),
+        columnFieldNames,
+      }
+    },
+    []
+  )
 
   /** 送出時必讀最新值，避免 stale closure */
   const latestRef = useRef({
@@ -620,16 +552,8 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
   }, [csvAdapterToast])
 
   useEffect(() => {
-    loadTemplates()
-  }, [loadTemplates])
-
-  useEffect(() => {
-    getMe()
-      .then(setUser)
-      .catch(() => setUser(null))
-  }, [])
-
-  const canAddTemplate = user?.role === 'admin' || user?.role === 'super_admin'
+    loadSchemas()
+  }, [loadSchemas])
 
   const fetchDuckdbStatus = useCallback(() => {
     if (!selectedProject) {
@@ -649,13 +573,13 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
     nextBlockIdRef.current += 1
     setBlocks((prev) => [
       ...prev,
-      { id: String(nextBlockIdRef.current), selectedTemplateName: '', selectedFiles: [] },
+      { id: String(nextBlockIdRef.current), selectedSchemaId: '', selectedFiles: [] },
     ])
   }
-  const updateBlockTemplate = (id: string, value: string) => {
+  const updateBlockSchema = (id: string, value: string) => {
     setBlocks((prev) =>
       prev.map((b) =>
-        b.id === id ? { ...b, selectedTemplateName: value, selectedFiles: [] } : b
+        b.id === id ? { ...b, selectedSchemaId: value, selectedFiles: [] } : b
       )
     )
   }
@@ -737,7 +661,10 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
           } catch {
             // 忽略
           }
-          if (prev && list.some((p) => p.project_id === prev.project_id)) return prev
+          if (prev) {
+            const match = list.find((p) => p.project_id === prev.project_id)
+            if (match) return match
+          }
           return list[0]
         })
       })
@@ -775,7 +702,24 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
       updateBiProject(agent.id, selectedProject.project_id, { conversation_data: payload })
         .then((updated) => {
           setProjects((prev) =>
-            prev.map((p) => (p.project_id === selectedProject.project_id ? { ...p, conversation_data: updated.conversation_data } : p))
+            prev.map((p) =>
+              p.project_id === selectedProject.project_id
+                ? {
+                    ...p,
+                    conversation_data: updated.conversation_data,
+                    schema_id: updated.schema_id ?? p.schema_id,
+                  }
+                : p
+            )
+          )
+          setSelectedProject((prev) =>
+            prev && prev.project_id === selectedProject.project_id
+              ? {
+                  ...prev,
+                  conversation_data: updated.conversation_data,
+                  schema_id: updated.schema_id ?? prev.schema_id,
+                }
+              : prev
           )
         })
         .catch(() => {})
@@ -837,7 +781,7 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
   async function handleImportCsv() {
     if (!selectedProject || importCsvLoading) return
     const blocksWithFiles = blocks.filter(
-      (b) => b.selectedTemplateName.trim() && b.selectedFiles.length > 0
+      (b) => b.selectedSchemaId.trim() && b.selectedFiles.length > 0
     )
     if (blocksWithFiles.length === 0) {
       setCsvAdapterToast('請先選擇資料模板並上傳至少一個 CSV 檔案')
@@ -853,13 +797,25 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
               content: await file.text(),
             }))
           )
-          return { template_name: block.selectedTemplateName, files }
+          return { schema_id: block.selectedSchemaId, files }
         })
       )
       const res = await importCsvToDuckdb(agent.id, selectedProject.project_id, payload)
       setToastMessage(res.message)
       if (res.ok && res.row_count != null) {
         setDuckdbRowCount(res.row_count)
+      }
+      if (res.ok && res.schema_id) {
+        setProjects((prev) =>
+          prev.map((p) =>
+            p.project_id === selectedProject.project_id ? { ...p, schema_id: res.schema_id } : p
+          )
+        )
+        setSelectedProject((prev) =>
+          prev && prev.project_id === selectedProject.project_id
+            ? { ...prev, schema_id: res.schema_id }
+            : prev
+        )
       }
     } catch (err) {
       const msg =
@@ -941,10 +897,28 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
         project_desc: editProjectDesc.trim() || null,
       })
       setProjects((prev) =>
-        prev.map((p) => (p.project_id === editProject.project_id ? { ...p, project_name: updated.project_name, project_desc: updated.project_desc } : p))
+        prev.map((p) =>
+          p.project_id === editProject.project_id
+            ? {
+                ...p,
+                project_name: updated.project_name,
+                project_desc: updated.project_desc,
+                schema_id: updated.schema_id ?? p.schema_id,
+              }
+            : p
+        )
       )
       if (selectedProject?.project_id === editProject.project_id) {
-        setSelectedProject((prev) => (prev?.project_id === editProject.project_id ? { ...prev, project_name: updated.project_name, project_desc: updated.project_desc } : prev))
+        setSelectedProject((prev) =>
+          prev?.project_id === editProject.project_id
+            ? {
+                ...prev,
+                project_name: updated.project_name,
+                project_desc: updated.project_desc,
+                schema_id: updated.schema_id ?? prev.schema_id,
+              }
+            : prev
+        )
       }
       handleCloseEditProject()
     } catch (err) {
@@ -968,6 +942,20 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
       return
     }
 
+    const sid = selectedProject.schema_id?.trim()
+    if (!sid) {
+      setMessages((prev) => [
+        ...prev,
+        { role: 'user', content: text },
+        {
+          role: 'assistant',
+          content:
+            '此專案尚未設定資料 schema。請在「匯入資料」區選擇資料模板並上傳 CSV 完成匯入後，再進行分析對話。',
+        },
+      ])
+      return
+    }
+
     const latest = latestRef.current
     setMessages((prev) => [...prev, { role: 'user', content: text }])
     setIsLoading(true)
@@ -979,6 +967,7 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
         {
           agent_id: agent.id,
           project_id: selectedProject.project_id,
+          schema_id: sid,
           system_prompt: '',
           user_prompt: userPrompt || '',
           data: '',
@@ -1096,38 +1085,6 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
           </div>
         )}
       </InputModal>
-      {addTemplateModalOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          onClick={() => setAddTemplateModalOpen(false)}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="add-template-modal-title"
-        >
-          <div className="absolute inset-0 bg-black/30" />
-          <div
-            className="relative z-10 flex h-[85vh] min-h-[400px] w-full max-w-[95vw] flex-col overflow-hidden rounded-2xl border-2 border-gray-200 bg-white shadow-lg"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex flex-shrink-0 items-center justify-between border-b border-gray-200 px-6 py-4">
-              <h2 id="add-template-modal-title" className="text-xl font-semibold text-gray-800">
-                資料模板-Data Mapping
-              </h2>
-              <button
-                type="button"
-                onClick={() => setAddTemplateModalOpen(false)}
-                className="rounded-lg p-2 text-gray-600 transition-colors hover:bg-gray-200"
-                aria-label="關閉"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-4">
-              <MappingTemplateEditor onTemplateSaved={loadTemplates} />
-            </div>
-          </div>
-        </div>
-      )}
       <InputModal
         open={newProjectOpen}
         title="新增專案"
@@ -1285,9 +1242,8 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
           )}
         </div>
 
-        {/* 右側：CSV/Data Adapter + 對話 + AI 設定 */}
+        {/* 右側：CSV 匯入（bi_projects import-csv + DuckDB；不使用 bi_sources）+ 對話 + AI 設定 */}
         <Group orientation="horizontal" className="flex min-h-0 min-w-0 flex-1 gap-1">
-          {/* CSV / Data Adapter */}
           <Panel
             defaultSize={20}
             minSize="80px"
@@ -1305,48 +1261,21 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
                   : '請選擇專案'}
               </span>
             </div>
-            <div className="flex shrink-0 gap-1 border-b-2 border-gray-200 bg-gray-100 px-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setActiveTab('csv')}
-                className={`rounded-t-2xl px-5 py-3 text-lg font-medium transition-colors ${
-                  activeTab === 'csv'
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : 'text-gray-600 hover:bg-gray-200/60 hover:text-gray-800'
-                }`}
-              >
-                CSV
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab('data-adapter')}
-                className={`rounded-t-2xl px-5 py-3 text-lg font-medium transition-colors ${
-                  activeTab === 'data-adapter'
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : 'text-gray-600 hover:bg-gray-200/60 hover:text-gray-800'
-                }`}
-              >
-                Data Adapter
-              </button>
-            </div>
             <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-4 text-lg">
-              {activeTab === 'csv' && (
-                <>
                   {blocks.map((block) => (
                     <BlockCard
                       key={block.id}
                       block={block}
-                      templates={templates}
+                      schemas={schemas}
                       canDelete={blocks.length > 1}
-                      canAddTemplate={canAddTemplate}
-                      onTemplateChange={updateBlockTemplate}
+                      onSchemaChange={updateBlockSchema}
                       onFilesChange={updateBlockFiles}
                       onRemoveFile={removeFileFromBlock}
                       onClearFiles={clearBlockFiles}
                       onDelete={removeBlock}
-                      onAddTemplateClick={() => setAddTemplateModalOpen(true)}
                       onValidationError={(msg) => setCsvAdapterToast(msg)}
                       fileInputId={`file-input-${block.id}`}
+                      getSchemaValidationContext={getSchemaValidationContext}
                     />
                   ))}
                   <button
@@ -1364,7 +1293,7 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
                       importCsvLoading ||
                       !selectedProject ||
                       blocks.every(
-                        (b) => !b.selectedTemplateName.trim() || b.selectedFiles.length === 0
+                        (b) => !b.selectedSchemaId.trim() || b.selectedFiles.length === 0
                       )
                     }
                     className="flex shrink-0 items-center justify-center rounded-lg bg-blue-600 py-4 text-lg text-white transition-colors hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -1378,61 +1307,6 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
                       '匯入資料'
                     )}
                   </button>
-                </>
-              )}
-              {activeTab === 'data-adapter' && (
-                <div className="flex flex-1 flex-col gap-4">
-                  <div className="flex flex-col gap-2 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
-                    <label className="text-base font-medium text-gray-700">資料來源</label>
-                    <select
-                      className="rounded-lg border border-gray-300 px-3 py-2 text-base focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
-                      disabled
-                    >
-                      <option value="google-drive">Google Drive</option>
-                      <option value="sftp">SFTP（規劃中）</option>
-                    </select>
-                  </div>
-                  <div className="flex flex-col gap-2 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
-                    <label className="text-base font-medium text-gray-700">連接 Google Drive</label>
-                    <button
-                      type="button"
-                      disabled
-                      className="w-fit rounded-lg border border-gray-300 bg-white px-4 py-2 text-base text-gray-600 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      授權並連接
-                    </button>
-                    <p className="text-sm text-gray-500">OAuth 連線後可選取資料夾與檔案</p>
-                  </div>
-                  <div className="flex flex-col gap-2 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
-                    <label className="text-base font-medium text-gray-700">已選資料夾</label>
-                    <div className="rounded-lg border border-dashed border-gray-300 bg-white px-3 py-2 text-gray-400">
-                      尚未選擇
-                    </div>
-                  </div>
-                  <div className="flex flex-col gap-2 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
-                    <label className="text-base font-medium text-gray-700">選取檔案</label>
-                    <div className="rounded-lg border border-dashed border-gray-300 bg-white px-3 py-2 text-gray-400">
-                      連接後可選取
-                    </div>
-                  </div>
-                  <div className="flex flex-col gap-2 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
-                    <label className="text-base font-medium text-gray-700">資料模板</label>
-                    <select
-                      className="rounded-lg border border-gray-300 px-3 py-2 text-base focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
-                      disabled
-                    >
-                      <option value="">— 請先連接並選取檔案 —</option>
-                    </select>
-                  </div>
-                  <button
-                    type="button"
-                    disabled
-                    className="flex shrink-0 items-center justify-center rounded-lg bg-blue-600 py-3 text-base text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    匯入資料
-                  </button>
-                </div>
-              )}
             </div>
           </Panel>
           <ResizeHandle />

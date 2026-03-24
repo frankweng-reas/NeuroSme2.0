@@ -1,4 +1,9 @@
-"""載入 Schema：load_schema(schema_id) 用於 chat compute；load_bi_sales_schema() 用於 Test01"""
+"""
+Schema 載入：
+
+- **正式來源（唯一）**：`load_schema_from_db()` → PostgreSQL `bi_schemas.schema_json`（chat / compute / 產品路徑皆然）。
+- **檔案 YAML**：`load_schema()`、`load_bi_sales_table()` 等僅剩測試、舊 Test01／遷移過渡；**規劃刪除 repo 內 YAML 後改由測試改為寫入／查詢 DB 或 fixture**，勿在新功能依賴檔案。
+"""
 import logging
 from pathlib import Path
 from typing import Any
@@ -31,10 +36,30 @@ def _get_schemas_dir() -> Path | None:
     return None
 
 
+def load_schema_from_db(schema_id: str, db: Any) -> dict[str, Any] | None:
+    """
+    從 bi_schemas 表載入 schema（**唯一正式來源**）。
+    回傳 dict（含 id, columns, indicators 等）或 None。
+    """
+    if not schema_id or not str(schema_id).strip():
+        return None
+    try:
+        from app.models import BiSchema
+
+        row = db.query(BiSchema).filter(BiSchema.id == schema_id.strip()).first()
+        if not row or not row.schema_json:
+            return None
+        data = dict(row.schema_json)
+        data.setdefault("id", schema_id.strip())
+        return data
+    except Exception:
+        return None
+
+
 def load_schema(schema_id: str) -> dict[str, Any] | None:
     """
-    載入 config/schemas/{schema_id}.yaml，供 chat compute 使用。
-    回傳 dict（含 id, group_aliases, value_aliases, columns 等）或 None。
+    [過渡] 從 config/schemas/{schema_id}.yaml 讀取。僅測試／尚未遷移之程式使用。
+    產品與 chat compute **必須**使用 load_schema_from_db()；YAML 檔將移除。
     """
     if not schema_id or not str(schema_id).strip():
         return None
@@ -140,6 +165,73 @@ def _normalize_bi_sales_item(item: Any) -> dict[str, Any] | None:
             out["aliases"] = [a.strip() for a in out["aliases"].split(",") if a.strip()]
         return out
     return None
+
+
+def bi_schema_columns_to_fields(columns: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """
+    將 bi_schema 的 columns（dict 格式）轉為 transform_csv_to_schema 所需的 schema_fields 列表。
+    格式：{ field_name: { type, attr, aliases } } -> [ { field, type, attr, aliases, default } ]
+    """
+    if not columns or not isinstance(columns, dict):
+        return []
+    result: list[dict[str, Any]] = []
+    for field_name, col in columns.items():
+        if not isinstance(col, dict):
+            continue
+        aliases = col.get("aliases")
+        if isinstance(aliases, str):
+            aliases = [a.strip() for a in aliases.split(",") if a.strip()]
+        elif isinstance(aliases, list):
+            aliases = [str(a).strip() for a in aliases if str(a).strip()]
+        else:
+            aliases = []
+        type_str = str(col.get("type", "str"))
+        if type_str == "time":
+            type_str = "timestamp"
+        default: Any = None
+        if type_str == "num":
+            default = 0
+        elif type_str == "timestamp":
+            default = ""
+        elif field_name == "quantity":
+            default = 1
+        result.append({
+            "field": field_name,
+            "type": type_str if type_str in ("str", "num", "timestamp") else "str",
+            "attr": str(col.get("attr", "dim")),
+            "aliases": aliases,
+            "default": default,
+        })
+    return result
+
+
+def build_csv_mapping_from_schema(
+    csv_headers: list[str],
+    schema_fields: list[dict[str, Any]],
+) -> dict[str, str]:
+    """
+    依 schema 的 field 與 aliases，將 CSV headers 對應到 schema field。
+    回傳 { "csv_header": "schema_field" }。
+    無欄序 fallback：表頭須與欄位名或 aliases 完全一致。
+    """
+    mapping: dict[str, str] = {}
+    header_set = {h.strip(): h for h in csv_headers if h and str(h).strip()}
+    for f in schema_fields:
+        field = f.get("field")
+        if not field:
+            continue
+        aliases = f.get("aliases") or []
+        if isinstance(aliases, str):
+            aliases = [a.strip() for a in aliases.split(",") if a.strip()]
+        candidates = [field] + list(aliases)
+        for c in candidates:
+            c_trim = str(c).strip()
+            if not c_trim:
+                continue
+            if c_trim in header_set:
+                mapping[header_set[c_trim]] = field
+                break
+    return mapping
 
 
 def load_bi_sales_schema() -> list[dict[str, Any]]:

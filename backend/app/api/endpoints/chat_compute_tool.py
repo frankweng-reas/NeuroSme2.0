@@ -29,10 +29,31 @@ from app.core.security import get_current_user
 from app.models.user import User
 from app.services.analysis_compute import compute_aggregate, get_schema_summary
 from app.services.duckdb_store import execute_sql_on_duckdb_file, get_project_duckdb_path
-from app.services.schema_loader import load_schema
+from app.services.schema_loader import load_schema_from_db
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+_MISSING_SCHEMA_MSG = "未設定資料 schema：請先以 CSV 匯入並選定模板，或於請求帶入 schema_id"
+
+
+def _resolve_schema_def(
+    db: Session,
+    *,
+    req_schema_id: str | None,
+    proj_schema_id: str | None,
+) -> tuple[str, dict[str, Any]]:
+    """依請求覆寫或專案欄位解析 bi_schemas，無預設 id。"""
+    schema_id = (req_schema_id or "").strip() or (proj_schema_id or "").strip()
+    if not schema_id:
+        raise HTTPException(status_code=400, detail=_MISSING_SCHEMA_MSG)
+    schema_def = load_schema_from_db(schema_id, db)
+    if not schema_def:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Schema 不存在：{schema_id}，請確認 bi_schemas 表已匯入範本",
+        )
+    return schema_id, schema_def
 
 def _build_indicator_default_value_columns(schema_def: dict[str, Any] | None) -> dict[str, list[str]]:
     """從 schema 動態產生 indicator -> value_columns 對應（無硬編碼欄位名）。"""
@@ -51,7 +72,11 @@ def _build_indicator_default_value_columns(schema_def: dict[str, Any] | None) ->
         comp = meta.get("value_components") or []
         if comp:
             out[code] = [str(c) for c in comp if c]
+    # 每個數值欄 col_n：對應自身、compare 前期／YoY 別名（須能從 indicator 反查 value_columns）
     for col in value_cols:
+        out[col] = [col]
+        out[f"previous_{col}"] = [col]
+        out[f"{col}_yoy_growth"] = [col]
         out[f"{col}_ratio"] = [col]
         if "_" in col:
             base = col.split("_")[0]
@@ -145,7 +170,12 @@ def _indicator_default_value_columns(
     seen: set[str] = set()
     for ind in indic:
         ind_clean = str(ind).strip().lower()
-        for c in mapping.get(ind_clean, []):
+        comp_list: list[str] = []
+        for mk, mcols in mapping.items():
+            if str(mk).lower() == ind_clean:
+                comp_list = mcols
+                break
+        for c in comp_list:
             if c not in seen:
                 seen.add(c)
                 cols.append(c)
@@ -162,7 +192,7 @@ def _parse_value_columns_from_intent(
     支援兩種格式：
       1. ["col1", "col2"]：欄位名陣列，使用頂層 aggregation 或 sum
       2. [{ column, aggregation }, ...]：每欄位可指定 aggregation
-    若無 value_columns，依 indicator 補預設，否則 [sales_amount, sum]。
+    若無 value_columns，依 indicator 與 schema 對應表補齊；對應不到則回傳 []（不使用 schema 第一個 val 或 sales_amount 等 fallback）。
     """
     vc = intent.get("value_columns")
     default_agg = (intent.get("aggregation") or "sum")
@@ -193,14 +223,7 @@ def _parse_value_columns_from_intent(
     default = _indicator_default_value_columns(indicator, schema_def)
     if default:
         return default
-    fallback_col = None
-    if schema_def:
-        columns = schema_def.get("columns") or {}
-        for c, m in columns.items():
-            if isinstance(m, dict) and (m.get("attr") or "").strip().lower() in ("val", "val_num", "val_denom"):
-                fallback_col = c
-                break
-    return [{"column": fallback_col or "sales_amount", "aggregation": "sum"}]
+    return []
 
 def _parse_filters_from_intent(intent: dict[str, Any]) -> list[dict[str, Any]] | None:
     """從 intent 解析 filters。支援 filters 陣列；無則由 filter_column/filter_value 轉換。
@@ -221,6 +244,15 @@ def _parse_filters_from_intent(intent: dict[str, Any]) -> list[dict[str, Any]] |
     fc, fv = intent.get("filter_column"), intent.get("filter_value")
     if fc and isinstance(fc, str) and fv is not None:
         return [{"column": fc.strip(), "op": "==", "value": fv}]
+    return None
+
+
+def _parse_display_fields_from_intent(intent: dict[str, Any]) -> list[str] | None:
+    """display_fields：字串陣列，供 compute_aggregate 過濾輸出欄位。"""
+    df = intent.get("display_fields")
+    if isinstance(df, list):
+        out = [str(d).strip() for d in df if d]
+        return out if out else None
     return None
 
 
@@ -286,14 +318,19 @@ def _build_indicator_block(schema_def: dict[str, Any] | None) -> str:
         if isinstance(m, dict) and (m.get("attr") or "").strip().lower() in ("val", "val_num", "val_denom")
     ]
     if value_cols:
-        vc_examples = ", ".join(f"{c}_ratio" for c in value_cols[:5])
-        lines.append(f"   - `{{column}}_ratio`（動態佔比，無需預定義）: 任一數值欄位可加 _ratio。例: {vc_examples}")
+        lines.append(
+            "   - `{column}_ratio`（動態佔比，無需預定義）: 任一數值欄位可加 _ratio。例: col_7_ratio"
+        )
     for code, meta in (schema_def.get("indicators") or {}).items() if schema_def else {}:
         if not isinstance(meta, dict):
             continue
         comp = meta.get("value_components") or []
         comp_str = ", ".join(str(c) for c in comp) if comp else ""
-        lines.append(f"   - `{code}`: [{comp_str}]")
+        label = (meta.get("display_label") or "").strip()
+        if label:
+            lines.append(f"   - `{code}`（{label}）: [{comp_str}]")
+        else:
+            lines.append(f"   - `{code}`: [{comp_str}]")
     return "\n".join(lines) if lines else "   - (無指標)"
 
 
@@ -412,18 +449,21 @@ class IntentToComputeRequest(BaseModel):
     agent_id: str
     project_id: str
     intent: dict[str, Any]
+    schema_id: str = ""  # 可覆寫專案 schema；皆空則 400
 
 
 class IntentToComputeRawRequest(BaseModel):
     """dev-test-intent-to-data 專用：傳入 intent + rows，無需 agent/project"""
     intent: dict[str, Any]
     rows: list[dict[str, Any]]
+    schema_id: str  # bi_schemas.id，必填
 
 
 class IntentToComputeByProjectRequest(BaseModel):
     """dev-test-intent-to-data 專用：僅需 project_id，從 DuckDB 載入資料"""
     project_id: str
     intent: dict[str, Any]
+    schema_id: str = ""  # 可覆寫專案 schema；與專案皆空則 400
 
 
 class IntentToComputeResponse(BaseModel):
@@ -444,6 +484,7 @@ class ComputeFromIntentRequest(BaseModel):
     """依已取得的 intent 執行計算 + 文字生成"""
     agent_id: str = ""
     project_id: str = ""
+    schema_id: str = ""  # dev-test-compute-tool：覆寫專案 schema
     content: str  # 使用者問題（用於文字生成）
     intent: dict[str, Any]
     model: str = "gpt-4o-mini"
@@ -548,10 +589,9 @@ async def extract_intent_only(
 
     user_id = getattr(current, "id", 0) or 0
     rows, proj = _load_rows_from_duckdb_only(pid, db, int(user_id))
-    schema_id = (proj.schema_id or "").strip() or "fact_business_operations"
-    schema_def = load_schema(schema_id)
-    if not schema_def:
-        schema_def = load_schema("fact_business_operations")
+    _, schema_def = _resolve_schema_def(
+        db, req_schema_id=req.schema_id, proj_schema_id=getattr(proj, "schema_id", None)
+    )
     model = (req.model or "").strip() or "gpt-4o-mini"
 
     intent_prompt = _load_intent_prompt(schema_def)
@@ -620,10 +660,9 @@ async def chat_completions_compute_tool(
     rows, proj = _load_rows_from_duckdb_only(pid, db, int(user_id))
     logger.info("Tool flow 載入 %d 列，欄位: %s", len(rows), list(rows[0].keys()) if rows else [])
 
-    schema_id = (proj.schema_id or "").strip() or "fact_business_operations"
-    schema_def = load_schema(schema_id)
-    if not schema_def:
-        schema_def = load_schema("fact_business_operations")
+    _, schema_def = _resolve_schema_def(
+        db, req_schema_id=req.schema_id, proj_schema_id=getattr(proj, "schema_id", None)
+    )
     schema_summary = get_schema_summary(rows, schema_def)
     model = (req.model or "").strip() or "gpt-4o-mini"
     debug: dict[str, Any] = {"schema_summary": schema_summary, "row_count": len(rows)}
@@ -698,6 +737,7 @@ async def chat_completions_compute_tool(
         time_order=time_order,
         time_grain=time_grain,
         indicator=indicator,
+        display_fields=_parse_display_fields_from_intent(intent),
         schema_def=schema_def,
         compare_periods=_parse_compare_periods_from_intent(intent),
         error_out=error_list,
@@ -707,6 +747,8 @@ async def chat_completions_compute_tool(
         err_msg = "; ".join(error_list) if error_list else ""
         if "篩選後無資料" in err_msg or "無資料" in err_msg:
             content = "查無符合條件的資料，請調整篩選條件或時間範圍。"
+        elif "value_columns 為空" in err_msg:
+            content = "無法解析數值欄位：請在 intent 提供 value_columns，或提供可對應 schema 的 indicator。"
         elif "_resolve_columns" in err_msg or "rows 為空" in err_msg:
             content = "無法解析欄位對應，請確認問題描述與資料 schema。"
         else:
@@ -803,16 +845,29 @@ async def compute_from_intent(
 
     user_id = getattr(current, "id", 0) or 0
     rows, proj = _load_rows_from_duckdb_only(pid, db, int(user_id))
-    schema_id = (proj.schema_id or "").strip() or "fact_business_operations"
-    schema_def = load_schema(schema_id)
-    if not schema_def:
-        schema_def = load_schema("fact_business_operations")
+    duckdb_path = get_project_duckdb_path(pid)
+    duckdb_path_str = str(duckdb_path.resolve()) if duckdb_path else None
+    logger.info(
+        "compute_from_intent: project_id=%s duckdb=%s rows=%d",
+        pid,
+        duckdb_path_str,
+        len(rows),
+    )
+    _, schema_def = _resolve_schema_def(
+        db, req_schema_id=req.schema_id, proj_schema_id=getattr(proj, "schema_id", None)
+    )
     model = (req.model or "").strip() or "gpt-4o-mini"
     intent = req.intent or {}
     if not isinstance(intent, dict):
         raise HTTPException(status_code=400, detail="intent 必須為 JSON 物件")
 
-    debug: dict[str, Any] = {"intent": intent, "flow": "compute-from-intent"}
+    debug: dict[str, Any] = {
+        "intent": intent,
+        "flow": "compute-from-intent",
+        "project_id": pid,
+        "duckdb_path": duckdb_path_str,
+        "row_count": len(rows),
+    }
     filters = _parse_filters_from_intent(intent)
     group_by = _normalize_group_by(intent.get("group_by_column"))
     having_filters = _parse_having_filters_from_intent(intent)
@@ -842,6 +897,7 @@ async def compute_from_intent(
         time_order=time_order,
         time_grain=time_grain,
         indicator=indicator,
+        display_fields=_parse_display_fields_from_intent(intent),
         schema_def=schema_def,
         compare_periods=_parse_compare_periods_from_intent(intent),
         error_out=error_list,
@@ -849,12 +905,19 @@ async def compute_from_intent(
 
     if not chart_result:
         err_msg = "; ".join(error_list) if error_list else ""
+        debug["compute_aggregate_errors"] = error_list
         if "篩選後無資料" in err_msg or "無資料" in err_msg:
             content = "查無符合條件的資料，請調整篩選條件或時間範圍。"
+        elif "value_columns 為空" in err_msg:
+            content = "無法解析數值欄位：請在 intent 提供 value_columns，或提供可對應 schema 的 indicator。"
         elif "_resolve_columns" in err_msg or "rows 為空" in err_msg:
             content = "無法解析欄位對應，請確認問題描述與資料 schema。"
         else:
-            content = "後端計算失敗，請稍後再試或調整問題描述。"
+            content = (
+                f"後端計算失敗：{err_msg}"
+                if err_msg
+                else "後端計算失敗，請稍後再試或調整問題描述。"
+            )
         return ChatResponseComputeTool(
             content=content,
             model=model,
@@ -941,10 +1004,21 @@ async def _stream_compute_tool(
         yield _sse_event({"stage": "done", "error_stage": "setup", "content": e.detail, "chart_data": None})
         return
 
-    schema_id = (proj.schema_id or "").strip() or "fact_business_operations"
-    schema_def = load_schema(schema_id)
+    schema_id = (req.schema_id or "").strip() or (getattr(proj, "schema_id", None) or "").strip()
+    if not schema_id:
+        yield _sse_event({"stage": "done", "error_stage": "setup", "content": _MISSING_SCHEMA_MSG, "chart_data": None})
+        return
+    schema_def = load_schema_from_db(schema_id, db)
     if not schema_def:
-        schema_def = load_schema("fact_business_operations")
+        yield _sse_event(
+            {
+                "stage": "done",
+                "error_stage": "setup",
+                "content": f"Schema 不存在：{schema_id}，請確認 bi_schemas 表已匯入範本",
+                "chart_data": None,
+            }
+        )
+        return
     model = (req.model or "").strip() or "gpt-4o-mini"
     intent_prompt = _load_intent_prompt(schema_def)
     if not intent_prompt:
@@ -1014,6 +1088,7 @@ async def _stream_compute_tool(
         time_order=time_order,
         time_grain=time_grain,
         indicator=indicator,
+        display_fields=_parse_display_fields_from_intent(intent),
         schema_def=schema_def,
         compare_periods=_parse_compare_periods_from_intent(intent),
         error_out=error_list,
@@ -1023,6 +1098,8 @@ async def _stream_compute_tool(
         err_msg = "; ".join(error_list) if error_list else ""
         if "篩選後無資料" in err_msg or "無資料" in err_msg:
             content = "查無符合條件的資料，請調整篩選條件或時間範圍。"
+        elif "value_columns 為空" in err_msg:
+            content = "無法解析數值欄位：請在 intent 提供 value_columns，或提供可對應 schema 的 indicator。"
         elif "_resolve_columns" in err_msg or "rows 為空" in err_msg:
             content = "無法解析欄位對應，請確認問題描述與資料 schema。"
         else:
@@ -1149,10 +1226,9 @@ async def intent_to_compute(
     user_id = int(getattr(current, "id", 0) or 0)
     rows, proj = _load_rows_from_duckdb_only(pid, db, user_id)
 
-    schema_id = (proj.schema_id or "").strip() or "fact_business_operations"
-    schema_def = load_schema(schema_id)
-    if not schema_def:
-        schema_def = load_schema("fact_business_operations")
+    _, schema_def = _resolve_schema_def(
+        db, req_schema_id=req.schema_id, proj_schema_id=getattr(proj, "schema_id", None)
+    )
 
     group_by = _normalize_group_by(intent.get("group_by_column"))
     indicator = _parse_indicator_from_intent(intent)
@@ -1169,11 +1245,7 @@ async def intent_to_compute(
     time_grain = str(time_grain_raw).strip().lower() if time_grain_raw else None
     if time_grain and time_grain not in ("day", "week", "month", "quarter", "year"):
         time_grain = None
-    display_fields = intent.get("display_fields")
-    if isinstance(display_fields, list):
-        display_fields = [str(d).strip() for d in display_fields if d]
-    else:
-        display_fields = None
+    display_fields = _parse_display_fields_from_intent(intent)
 
     error_list: list[str] = []
     chart_result = compute_aggregate(
@@ -1240,10 +1312,9 @@ async def intent_to_compute_by_project(
     user_id = int(getattr(current, "id", 0) or 0)
     rows, proj = _load_rows_from_duckdb_only(pid, db, user_id)
 
-    schema_id = (proj.schema_id or "").strip() or "fact_business_operations"
-    schema_def = load_schema(schema_id)
-    if not schema_def:
-        schema_def = load_schema("fact_business_operations")
+    _, schema_def = _resolve_schema_def(
+        db, req_schema_id=req.schema_id, proj_schema_id=getattr(proj, "schema_id", None)
+    )
 
     group_by = _normalize_group_by(intent.get("group_by_column"))
     indicator = _parse_indicator_from_intent(intent)
@@ -1260,11 +1331,7 @@ async def intent_to_compute_by_project(
     time_grain = str(time_grain_raw).strip().lower() if time_grain_raw else None
     if time_grain and time_grain not in ("day", "week", "month", "quarter", "year"):
         time_grain = None
-    display_fields = intent.get("display_fields")
-    if isinstance(display_fields, list):
-        display_fields = [str(d).strip() for d in display_fields if d]
-    else:
-        display_fields = None
+    display_fields = _parse_display_fields_from_intent(intent)
 
     error_list: list[str] = []
     chart_result = compute_aggregate(
@@ -1291,9 +1358,10 @@ async def intent_to_compute_by_project(
 @router.post("/intent-to-compute-raw", response_model=IntentToComputeResponse)
 async def intent_to_compute_raw(
     req: IntentToComputeRawRequest,
+    db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
 ):
-    """dev-test-intent-to-data 專用：接受 intent + rows，無需 agent/project。"""
+    """dev-test-intent-to-data 專用：接受 intent + rows，無需 agent/project。schema 從 bi_schemas 載入。"""
     intent = req.intent or {}
     rows = req.rows or []
     if not isinstance(intent, dict):
@@ -1303,14 +1371,10 @@ async def intent_to_compute_raw(
     if not isinstance(rows[0], dict):
         raise HTTPException(status_code=400, detail="rows 每筆必須為物件")
 
-    schema_def = load_schema("fact_business_operations")
+    _, schema_def = _resolve_schema_def(db, req_schema_id=req.schema_id, proj_schema_id=None)
     filters = _parse_filters_from_intent(intent)
     having_filters = _parse_having_filters_from_intent(intent)
-    display_fields = intent.get("display_fields")
-    if isinstance(display_fields, list):
-        display_fields = [str(d).strip() for d in display_fields if d]
-    else:
-        display_fields = None
+    display_fields = _parse_display_fields_from_intent(intent)
     group_by = _normalize_group_by(intent.get("group_by_column"))
     indicator = _parse_indicator_from_intent(intent)
     value_cols = _parse_value_columns_from_intent(intent, indicator, schema_def)

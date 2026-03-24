@@ -1,4 +1,6 @@
 """BiProjects API：建立、列表、更新、刪除商務分析專案"""
+import csv
+import io
 import json
 from typing import Annotated, Any
 
@@ -17,7 +19,12 @@ from app.services.bi_sources_utils import get_merged_csv_for_project
 from app.services.csv_transform import transform_csv_to_schema
 from app.services.duckdb_store import delete_project_duckdb, get_project_duckdb_path, get_project_duckdb_row_count, sync_project_csv_to_duckdb, sync_transformed_rows_to_duckdb
 from app.services.permission import get_agent_ids_for_user
-from app.services.schema_loader import load_bi_sales_schema
+from app.services.schema_loader import (
+    bi_schema_columns_to_fields,
+    build_csv_mapping_from_schema,
+    load_bi_sales_schema,
+    load_schema_from_db,
+)
 
 SCHEMA_ID = "bi_sales_table"
 
@@ -28,7 +35,9 @@ class ImportCsvFileItem(BaseModel):
 
 
 class ImportCsvBlockItem(BaseModel):
-    template_name: str
+    """schema_id：使用 bi_schemas（優先）。template_name：舊版 mapping 範本（與 UserSchemaMapping 對應）"""
+    schema_id: str | None = None
+    template_name: str | None = None
     files: list[ImportCsvFileItem]
 
 
@@ -89,6 +98,7 @@ def create_bi_project(
         project_desc=proj.project_desc,
         created_at=proj.created_at,
         conversation_data=proj.conversation_data,
+        schema_id=getattr(proj, "schema_id", None),
     )
 
 
@@ -118,6 +128,7 @@ def list_bi_projects(
             project_desc=p.project_desc,
             created_at=p.created_at,
             conversation_data=p.conversation_data,
+            schema_id=getattr(p, "schema_id", None),
         )
         for p in projects
     ]
@@ -165,6 +176,7 @@ def update_bi_project(
         project_desc=proj.project_desc,
         created_at=proj.created_at,
         conversation_data=proj.conversation_data,
+        schema_id=getattr(proj, "schema_id", None),
     )
 
 
@@ -257,42 +269,103 @@ def import_csv_to_duckdb(
     if not proj:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    schema = load_bi_sales_schema()
-    if not schema:
-        raise HTTPException(status_code=500, detail="Schema 載入失敗")
-
     all_rows: list[dict[str, Any]] = []
     for block in body.blocks:
-        if not block.template_name or not block.files:
+        if not block.files:
             continue
-        row = (
-            db.query(UserSchemaMapping)
-            .filter(
-                UserSchemaMapping.user_id == current.id,
-                UserSchemaMapping.schema_id == SCHEMA_ID,
-                UserSchemaMapping.template_name == block.template_name,
+        if block.schema_id and block.schema_id.strip():
+            # 新版：從 bi_schemas 載入，依 aliases 自動 mapping
+            schema_def = load_schema_from_db(block.schema_id.strip(), db)
+            if not schema_def:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Schema「{block.schema_id}」不存在，請確認 bi_schemas 表已匯入",
+                )
+            columns = schema_def.get("columns")
+            schema_fields = bi_schema_columns_to_fields(columns)
+            if not schema_fields:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Schema「{block.schema_id}」未定義 columns",
+                )
+            for f in block.files:
+                if not f.content or not f.content.strip():
+                    continue
+                try:
+                    reader = csv.reader(io.StringIO(f.content.strip().split("\n")[0]))
+                    csv_headers = [h.strip().strip('"') for row in reader for h in (row or [])]
+                except Exception as e:
+                    raise HTTPException(status_code=400, detail=f"無法讀取 CSV 表頭：{e}") from e
+                if not csv_headers:
+                    raise HTTPException(status_code=400, detail="CSV 表頭為空")
+                mapping = build_csv_mapping_from_schema(csv_headers, schema_fields)
+                try:
+                    rows = transform_csv_to_schema(f.content, mapping, schema_fields)
+                except ValueError as e:
+                    raise HTTPException(status_code=400, detail=str(e)) from e
+                all_rows.extend(rows)
+        elif block.template_name and block.template_name.strip():
+            # 舊版：依 UserSchemaMapping
+            schema = load_bi_sales_schema()
+            if not schema:
+                raise HTTPException(status_code=500, detail="Schema 載入失敗")
+            row = (
+                db.query(UserSchemaMapping)
+                .filter(
+                    UserSchemaMapping.user_id == current.id,
+                    UserSchemaMapping.schema_id == SCHEMA_ID,
+                    UserSchemaMapping.template_name == block.template_name.strip(),
+                )
+                .first()
             )
-            .first()
-        )
-        if not row:
+            if not row:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Mapping 範本「{block.template_name}」不存在",
+                )
+            mapping_schema_to_csv = json.loads(row.mapping)
+            mapping_csv_to_schema = _reverse_mapping(mapping_schema_to_csv)
+            for f in block.files:
+                if not f.content or not f.content.strip():
+                    continue
+                try:
+                    rows = transform_csv_to_schema(f.content, mapping_csv_to_schema, schema)
+                except ValueError as e:
+                    raise HTTPException(status_code=400, detail=str(e)) from e
+                all_rows.extend(rows)
+        else:
             raise HTTPException(
-                status_code=404,
-                detail=f"Mapping 範本「{block.template_name}」不存在",
+                status_code=400,
+                detail="每個區塊需指定 schema_id 或 template_name",
             )
-        mapping_schema_to_csv = json.loads(row.mapping)
-        mapping_csv_to_schema = _reverse_mapping(mapping_schema_to_csv)
-        for f in block.files:
-            if not f.content or not f.content.strip():
-                continue
-            rows = transform_csv_to_schema(f.content, mapping_csv_to_schema, schema)
-            all_rows.extend(rows)
 
     if not all_rows:
         return {"ok": True, "message": "無有效資料可匯入", "row_count": 0}
 
     ok, row_count, err_detail = sync_transformed_rows_to_duckdb(project_id, all_rows)
     msg = f"DuckDB 已匯入 ({row_count} 筆)" if ok else f"DuckDB 匯入失敗：{err_detail}" if err_detail else "DuckDB 匯入失敗"
-    return {"ok": ok, "message": msg, "row_count": row_count}
+    out: dict[str, Any] = {"ok": ok, "message": msg, "row_count": row_count}
+    if ok:
+        # 與 chat compute 對齊：分析從 bi_projects.schema_id 載入 bi_schemas，須與匯入所用模板一致
+        schema_ids_used: list[str] = []
+        for block in body.blocks:
+            if not block.files:
+                continue
+            sid = (block.schema_id or "").strip()
+            if sid:
+                schema_ids_used.append(sid)
+        unique = list(dict.fromkeys(schema_ids_used))
+        if unique:
+            chosen = unique[0]
+            if len(unique) > 1:
+                msg = f"{msg}（多區塊使用不同 schema，分析以「{chosen}」為準）"
+                out["message"] = msg
+            proj.schema_id = chosen
+            db.add(proj)
+            db.commit()
+            db.refresh(proj)
+            out["schema_id"] = chosen
+    return out
 
 
 @router.get("/{project_id}/duckdb-status", status_code=status.HTTP_200_OK)

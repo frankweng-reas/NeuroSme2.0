@@ -11,16 +11,12 @@ from app.models.bi_project import BiProject
 from app.models.bi_source import BiSource
 from app.models.user import User
 from app.schemas.bi_source import BiSourceCreate, BiSourceResponse, BiSourceUpdate
-from app.services.bi_sources_utils import get_merged_csv_for_project
-from app.services.duckdb_store import sync_project_csv_to_duckdb
 
 router = APIRouter()
 
-
-def _sync_project_duckdb(db: Session, project_id: str) -> None:
-    """專案 bi_sources 變更後，同步至 DuckDB（若已啟用）"""
-    merged = get_merged_csv_for_project(db, project_id)
-    sync_project_csv_to_duckdb(project_id, merged)
+# 注意：勿在 bi_sources CRUD 自動寫 DuckDB。sync_project_csv_to_duckdb 使用「合併後原始 CSV 表頭」，
+# 會覆蓋 import-csv（依 bi_schemas 轉成 col_1…）的結果。需要以 bi_sources 合併內容更新 DuckDB 時，
+# 請改呼叫 bi_projects 的 POST /{project_id}/sync-duckdb。
 
 SOURCE_TYPE_DATA = "DATA"
 
@@ -61,7 +57,6 @@ def create_bi_source(
     db.add(src)
     db.commit()
     db.refresh(src)
-    _sync_project_duckdb(db, body.project_id)
     return BiSourceResponse(
         source_id=str(src.source_id),
         project_id=str(src.project_id),
@@ -148,7 +143,6 @@ def update_bi_source(
 
     db.commit()
     db.refresh(src)
-    _sync_project_duckdb(db, str(src.project_id))
     return BiSourceResponse(
         source_id=str(src.source_id),
         project_id=str(src.project_id),
@@ -180,5 +174,4 @@ def delete_bi_source(
     project_id = str(src.project_id)
     db.delete(src)
     db.commit()
-    _sync_project_duckdb(db, project_id)
     return None

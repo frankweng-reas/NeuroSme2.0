@@ -24,6 +24,10 @@ class BiProjectResponse(BaseModel):
     project_desc: str | None
     created_at: datetime
     conversation_data: list[dict[str, Any]] | None = None
+    schema_id: str | None = Field(
+        None,
+        description="與 DuckDB / 分析意圖對齊的 bi_schemas.id；匯入 CSV 時會依所選模板更新",
+    )
 
     class Config:
         from_attributes = True

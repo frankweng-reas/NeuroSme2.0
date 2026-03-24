@@ -62,6 +62,7 @@ class ChatRequest(BaseModel):
     agent_id: str = ""  # chat.py 必填；chat_dev 不填
     project_id: str = ""  # quotation_parse 時可填，改從 qtn_sources 取參考資料
     prompt_type: str = ""  # 空或 analysis → system_prompt_analysis.md；quotation_parse → system_prompt_quotation_1_parse.md
+    schema_id: str = ""  # dev-test-compute-tool：覆寫專案 schema，從 bi_schemas 載入
     system_prompt: str = ""
     user_prompt: str = ""
     data: str = ""  # 保留，chat.py 由後端組 data 時忽略

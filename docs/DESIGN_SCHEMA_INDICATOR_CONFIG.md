@@ -1,18 +1,26 @@
 # 設計：Schema 與 Indicator 可配置化
 
+## 資料來源（正式）
+
+- **唯一正式儲存**：PostgreSQL **`bi_schemas`** 表，欄位 **`schema_json`**（JSON 物件，含 `id`、`columns`、`indicators` 等）。
+- 後端以 **`load_schema_from_db(schema_id, db)`** 載入；chat / intent-to-compute / 產品路徑皆然。
+- 倉庫內 **`config/schemas/*.yaml`** 僅作歷史範本／開發對照，**規劃刪除**；新功能與文件請以 DB 為準。
+
+---
+
 ## 目標
 
 將 **Schema**（欄位、別名）與 **Indicator**（指標、公式）改為透過設定儲存，不再寫死在程式。
 
-**流程**：`schema + indicators 設定` → 注入 system prompt → LLM 輸出 intent → `compute_aggregate(schema, indicators)` 計算
+**流程**：`bi_schemas.schema_json` → 注入 system prompt → LLM 輸出 intent → `compute_aggregate(schema_def)` 計算
 
 ---
 
 ## 一、資料結構設計
 
-### 1.1 Schema 設定（擴充既有 YAML）
+### 1.1 Schema 設定（結構與下列範例相同；實際存於 bi_schemas）
 
-**路徑**：`config/schemas/{schema_id}.yaml`
+**舊檔路徑（僅作格式參考，非執行來源）**：`config/schemas/{schema_id}.yaml`
 
 ```yaml
 id: fact_business_operations
@@ -45,7 +53,7 @@ columns:
 
 ### 1.2 Indicator 設定（新增）
 
-**路徑**：可放在同一個 schema YAML，或獨立 `config/schemas/{schema_id}_indicators.yaml`
+**儲存位置**：與 `columns` 同層，寫入 **`bi_schemas.schema_json.indicators`**（勿依賴 YAML 檔）。
 
 ```yaml
 indicators:
@@ -99,7 +107,7 @@ indicators:
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │ 1. 載入設定                                                      │
-│    schema_def = load_schema(schema_id)                           │
+│    schema_def = load_schema_from_db(schema_id, db)                │
 │    - group_aliases, value_aliases, columns, indicators           │
 └────────────────────────────────┬────────────────────────────────┘
                                  │
@@ -181,7 +189,7 @@ def compute_aggregate(
 | 階段 | 內容 | 說明 |
 |------|------|------|
 | **Phase 1** | Schema 擴充 `columns` | 讓 schema_summary 與 prompt 的 schema 區塊由 config 產生 |
-| **Phase 2** | Indicator 存入 schema YAML | 新增 `indicators` 區塊，格式如上 |
+| **Phase 2** | Indicator 存入 schema | 新增 `indicators` 區塊於 `schema_json`，格式如上 |
 | **Phase 3** | Prompt 動態注入 | `_build_intent_prompt(schema_def)` 產生完整 prompt |
 | **Phase 4** | compute_aggregate 支援 indicator_defs | 接收 config，取代或補充既有常數 |
 | **Phase 5** | 移除寫死常數 | 全改為 config-driven，僅保留最小 fallback |
@@ -192,7 +200,7 @@ def compute_aggregate(
 
 - 每個 **BI 專案** 可對應不同 `schema_id`
 - `schema_id` 可來自專案設定或 API 參數
-- 不同專案可掛不同 `config/schemas/{schema_id}.yaml`，各自定義 `columns`、`indicators`
+- 不同專案可掛不同 `schema_id`，於 **`bi_schemas`** 各自定義 `columns`、`indicators`
 
 ---
 

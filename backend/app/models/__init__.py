@@ -1,4 +1,4 @@
-"""Models 匯出：Base, Tenant, User, AgentCatalog, TenantAgent, UserAgent, SourceFile, PromptTemplate, QtnProject, QtnSource, QtnCatalog, Company, QtnSequence, BiProject, BiSource, UserSchemaMapping"""
+"""Models 匯出：Base, Tenant, User, AgentCatalog, TenantAgent, UserAgent, SourceFile, PromptTemplate, QtnProject, QtnSource, QtnCatalog, Company, QtnSequence, BiProject, BiSource, BiSchema, UserSchemaMapping"""
 from app.core.database import Base
 from app.models.tenant import Tenant
 from app.models.user import User
@@ -14,10 +14,11 @@ from app.models.company import Company
 from app.models.qtn_sequence import QtnSequence
 from app.models.bi_project import BiProject
 from app.models.bi_source import BiSource
+from app.models.bi_schema import BiSchema
 from app.models.user_schema_mapping import UserSchemaMapping
 
 __all__ = [
     "Base", "Tenant", "User", "AgentCatalog", "TenantAgent", "UserAgent",
     "SourceFile", "PromptTemplate", "QtnProject", "QtnSource", "QtnCatalog", "Company", "QtnSequence",
-    "BiProject", "BiSource", "UserSchemaMapping",
+    "BiProject", "BiSource", "BiSchema", "UserSchemaMapping",
 ]

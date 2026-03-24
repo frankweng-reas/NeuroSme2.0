@@ -115,6 +115,8 @@ class _SchemaConfig:
     value_suffix: dict[str, str]
     dataset_label_suffix: dict[str, str]
     display_field_aliases: dict[str, list[str]]
+    # 指標 value_components 順序（語意名如 gross_profit），若 DuckDB 為 col_* 需與 value_columns 同序對位
+    indicator_component_lists: dict[str, list[str]]
 
 
 def _derive_schema_config(schema_def: dict[str, Any]) -> _SchemaConfig:
@@ -124,6 +126,14 @@ def _derive_schema_config(schema_def: dict[str, Any]) -> _SchemaConfig:
     """
     columns = schema_def.get("columns") or {}
     indicators = schema_def.get("indicators") or {}
+
+    indicator_component_lists: dict[str, list[str]] = {}
+    for code, meta in indicators.items():
+        if not isinstance(meta, dict):
+            continue
+        vc = meta.get("value_components") or []
+        if isinstance(vc, list) and vc:
+            indicator_component_lists[code] = [str(x).strip() for x in vc if x]
 
     # group_aliases, value_aliases, value_key_to_column, value_column_names
     group_aliases: dict[str, list[str]] = {}
@@ -229,13 +239,27 @@ def _derive_schema_config(schema_def: dict[str, Any]) -> _SchemaConfig:
             display_field_aliases[display] = [display, col_name] + [str(a) for a in aliases]
     display_field_aliases["YoY成長率"] = ["YoY成長率", "sales_yoy_growth", "yoy_growth"]
     display_field_aliases["去年同期銷售金額"] = ["去年同期銷售金額", "sales_amount_compare", "previous_sales_amount"]
+    # 純數值欄 compare_periods：讓 previous_col_n、col_n_yoy_growth 能對到「去年同期{顯示名}」與 YoY
+    for col in value_column_names:
+        dn = value_display_names.get(col, col)
+        prev_lbl = f"去年同期{dn}"
+        extra_prev = [f"previous_{col}", f"{col}_compare"]
+        if prev_lbl not in display_field_aliases:
+            display_field_aliases[prev_lbl] = [prev_lbl, *extra_prev]
+        else:
+            display_field_aliases[prev_lbl].extend([a for a in extra_prev if a not in display_field_aliases[prev_lbl]])
+        for yoy_a in (f"{col}_yoy_growth", f"{col}_growth"):
+            if yoy_a not in display_field_aliases["YoY成長率"]:
+                display_field_aliases["YoY成長率"].append(yoy_a)
     # 各 ratio 指標的「前期」「成長率」別名，供 compare_periods + ratio 流程使用
     for code, lbl in indicator_labels.items():
         if code in indicator_column_names and code not in compare_indicator_value_col:
             prev_lbl = f"前期{lbl}"
             display_field_aliases[prev_lbl] = [prev_lbl, f"previous_{code}", f"{code}_compare"]
             growth_lbl = f"{lbl}成長率"
-            display_field_aliases[growth_lbl] = [growth_lbl, f"{code}_growth"]
+            display_field_aliases[growth_lbl] = [
+                growth_lbl, f"{code}_growth", f"{code}_yoy_growth"
+            ]
 
     return _SchemaConfig(
         group_aliases=group_aliases,
@@ -251,6 +275,7 @@ def _derive_schema_config(schema_def: dict[str, Any]) -> _SchemaConfig:
         value_suffix=value_suffix,
         dataset_label_suffix=dataset_label_suffix,
         display_field_aliases=display_field_aliases,
+        indicator_component_lists=indicator_component_lists,
     )
 
 
@@ -423,10 +448,20 @@ def _indicator_str(indicator: list[str] | None) -> str:
     return ""
 
 
-def _is_date_column(column: str) -> bool:
-    """是否為日期欄位（用於 BETWEEN/>= <= 邏輯）"""
+def _is_date_column(column: str, schema_def: dict[str, Any] | None = None) -> bool:
+    """是否為日期欄位（用於 BETWEEN/>= <= 邏輯）。`col_2` 等須依 schema columns.attr=dim_time 判斷。"""
     c = (column or "").strip().lower()
-    return c in _DATE_COLUMN_NAMES or "date" in c
+    if c in _DATE_COLUMN_NAMES or "date" in c:
+        return True
+    if schema_def and isinstance(schema_def.get("columns"), dict):
+        for k, m in schema_def["columns"].items():
+            if not isinstance(m, dict):
+                continue
+            if str(k).strip().lower() == c:
+                if (m.get("attr") or "").strip().lower() == "dim_time":
+                    return True
+                break
+    return False
 
 
 def _apply_filter(
@@ -719,9 +754,10 @@ def _is_compare_indicator(indicator: list[str] | None, cfg: _SchemaConfig) -> tu
     if not indicator:
         return (False, None)
     for ind in indicator:
+        ic = _canonical_indicator_code(str(ind or ""), cfg)
+        if ic in cfg.compare_indicator_value_col:
+            return (True, cfg.compare_indicator_value_col[ic])
         s = (ind or "").strip().lower()
-        if s in cfg.compare_indicator_value_col:
-            return (True, cfg.compare_indicator_value_col[s])
         if s.endswith("_yoy_growth") and len(s) > 11:
             vcol = s[:-11].strip()
             if vcol:
@@ -742,8 +778,27 @@ def _resolve_dynamic_ratio_column(base: str, cfg: _SchemaConfig) -> str | None:
     return None
 
 
+def _canonical_indicator_code(ind: str, cfg: _SchemaConfig) -> str:
+    """與 schema 中 indicators 鍵一致（大小寫不敏感，如 roi ↔ ROI）；含 compare_period 與動態 *_yoy_growth 對照。"""
+    s = str(ind).strip()
+    if not s:
+        return ind
+    sl = s.lower()
+    for k in cfg.indicator_column_names:
+        if str(k).lower() == sl:
+            return str(k)
+    for k in cfg.indicator_labels:
+        if str(k).lower() == sl:
+            return str(k)
+    for k in cfg.compare_indicator_value_col:
+        if str(k).lower() == sl:
+            return str(k)
+    return ind
+
+
 def _get_indicator_keys(ind: str, value_keys: list[str], cfg: _SchemaConfig) -> tuple[str, str, bool] | None:
     """依欄位名稱解析 indicator 的 num_key, denom_key, as_percent。支援 config、運算式 (A/B)、動態 {col}_ratio。"""
+    ind = _canonical_indicator_code(ind, cfg)
     if ind in cfg.indicator_column_names:
         num_col, denom_col = cfg.indicator_column_names[ind]
         as_pct = cfg.indicator_as_percent.get(ind, False)
@@ -755,10 +810,58 @@ def _get_indicator_keys(ind: str, value_keys: list[str], cfg: _SchemaConfig) -> 
             None,
         )
         if not num_key:
+            # 指標語意名（gross_profit）與實體欄（col_9）不一致時：依 value_components 順序與 value_columns 同序對位
+            comps = list(cfg.indicator_component_lists.get(ind) or [])
+            if len(comps) < 2 and denom_col != "__total__" and num_col and denom_col:
+                comps = [num_col, denom_col]
+            if (
+                comps
+                and len(comps) == 2
+                and denom_col != "__total__"
+                and len(value_keys) == len(comps)
+            ):
+                def _idx(comp_list: list[str], name: str) -> int | None:
+                    nl = (name or "").strip().lower()
+                    for i, c in enumerate(comp_list):
+                        if str(c).strip().lower() == nl:
+                            return i
+                    return None
+
+                ni = _idx(comps, str(num_col))
+                di = _idx(comps, str(denom_col))
+                if ni is not None and di is not None:
+                    try:
+                        return (value_keys[ni], value_keys[di], as_pct)
+                    except IndexError:
+                        pass
             return None
         if denom_col == "__total__":
             return (num_key, "__total__", as_pct)
         denom_key = next((k for k in value_keys if k.strip().lower() == denom_col.lower() or denom_col.lower() in k.strip().lower()), None)
+        if not denom_key:
+            comps = list(cfg.indicator_component_lists.get(ind) or [])
+            if len(comps) < 2 and denom_col != "__total__" and num_col and denom_col:
+                comps = [num_col, denom_col]
+            if (
+                comps
+                and len(comps) == 2
+                and denom_col != "__total__"
+                and len(value_keys) == len(comps)
+            ):
+                def _idx2(comp_list: list[str], name: str) -> int | None:
+                    nl = (name or "").strip().lower()
+                    for i, c in enumerate(comp_list):
+                        if str(c).strip().lower() == nl:
+                            return i
+                    return None
+
+                ni = _idx2(comps, str(num_col))
+                di = _idx2(comps, str(denom_col))
+                if ni is not None and di is not None:
+                    try:
+                        return (value_keys[ni], value_keys[di], as_pct)
+                    except IndexError:
+                        pass
         return (num_key, denom_key, as_pct) if denom_key else None
     if ind and ind.endswith("_ratio") and len(ind) > 5:
         base = ind[:-5]
@@ -796,20 +899,48 @@ def _filter_datasets_by_display_fields(
 ) -> list[tuple[str, list[float]]]:
     """
     依 display_fields 過濾 datasets。
+    - 支援 dataset label 大小寫不一致、以及指標 code（如 roi）與 display_label（如 ROI）對應。
+    - display_fields 常混入 group_by 欄位名（僅軸／labels，非 series）：若無任何匹配則回傳原 datasets，避免過濾成空導致後續 list index out of range。
     """
     if not display_fields:
         return datasets
     label_to_data = {lbl: data for lbl, data in datasets}
     filtered: list[tuple[str, list[float]]] = []
     seen: set[str] = set()
+
+    def _add_if_matched(token: str) -> bool:
+        """依 token 找 label_to_data 的 key（精確或不分大小寫）。"""
+        if not token:
+            return False
+        if token in label_to_data and token not in seen:
+            filtered.append((token, label_to_data[token]))
+            seen.add(token)
+            return True
+        tl = token.lower()
+        for k in label_to_data:
+            if k.lower() == tl and k not in seen:
+                filtered.append((k, label_to_data[k]))
+                seen.add(k)
+                return True
+        return False
+
     for df in display_fields:
         df_clean = (df or "").strip()
         if not df_clean:
             continue
-        if df_clean in label_to_data and df_clean not in seen:
-            filtered.append((df_clean, label_to_data[df_clean]))
-            seen.add(df_clean)
+        if _add_if_matched(df_clean):
             continue
+        # 指標 code / display_label（與 intent 中 ROI、roi 混用一致）
+        matched_code = False
+        for code, disp in cfg.indicator_labels.items():
+            if df_clean.lower() not in (str(code).lower(), str(disp).lower()):
+                continue
+            if _add_if_matched(str(disp)) or _add_if_matched(str(code)):
+                matched_code = True
+                break
+        if matched_code:
+            continue
+        matched_this_df = False
         for label, aliases in cfg.display_field_aliases.items():
             if df_clean not in aliases and df_clean != label:
                 continue
@@ -818,16 +949,38 @@ def _filter_datasets_by_display_fields(
                 if (base == label or base in aliases) and lbl not in seen:
                     filtered.append((lbl, data))
                     seen.add(lbl)
-            break
-    return filtered if filtered else datasets
+                    matched_this_df = True
+            if matched_this_df:
+                break
+    if not filtered and datasets:
+        return datasets
+    return filtered
+
+
+def _schema_column_codes_and_aliases(col: str, cfg: _SchemaConfig) -> set[str]:
+    """欄位實際名與 display_field_aliases 內所有可指到該欄的字串（小寫）。"""
+    c = (col or "").strip().lower()
+    out: set[str] = {c}
+    for label, aliases in cfg.display_field_aliases.items():
+        al = [str(x).strip().lower() for x in (aliases or [])]
+        lb = str(label).strip().lower()
+        if c == lb or c in al:
+            out.add(lb)
+            out.update(al)
+    return out
 
 
 def _apply_display_fields(
     pairs: list[tuple[str, float]],
     display_fields: list[str],
     cfg: _SchemaConfig,
+    *,
+    resolved: _ResolvedColumns | None = None,
 ) -> list[tuple[str, float]]:
-    """依 display_fields 過濾並排序，只保留用戶要求的項目。"""
+    """
+    依 display_fields 過濾 pairs。
+    有分組時 pairs 為 (分組值, 數值)，若 display_fields 只含分組欄與數值欄代碼／別名，應保留整段序列（勿誤當指標 label 過濾）。
+    """
     if not display_fields or not pairs:
         return pairs
     label_to_val = {p[0]: p[1] for p in pairs}
@@ -845,7 +998,19 @@ def _apply_display_fields(
                     result.append((label, label_to_val[label]))
                     seen.add(label)
                 break
-    return result if result else pairs
+    if not result and resolved and len(resolved.value_keys) >= 1:
+        allowed: set[str] = set()
+        for gcol in (resolved.group_keys or [resolved.group_key]):
+            allowed |= _schema_column_codes_and_aliases(gcol, cfg)
+        for vk in resolved.value_keys:
+            allowed |= _schema_column_codes_and_aliases(vk, cfg)
+        if all(
+            (df or "").strip().lower() in allowed
+            for df in display_fields
+            if (df or "").strip()
+        ):
+            return pairs
+    return result
 
 
 def _aggregate_indicator_plus_values_by_group(
@@ -1415,6 +1580,7 @@ def _run_compare_periods_flow(
     g_aliases: dict[str, list[str]],
     error_out: list[str] | None,
     cfg: _SchemaConfig,
+    schema_def: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """
     比較期間流程：分別彙總 current / compare 兩期間，join 後計算 YoY。
@@ -1461,7 +1627,9 @@ def _run_compare_periods_flow(
             key = next((ak for ak in actual_keys if ak.strip().lower() == col_str.strip().lower()), None) or _find_matching_column(actual_keys, col_str, g_aliases)
             if key:
                 v = vals[0] if len(vals) == 1 else vals
-                base = _apply_filter(base, key, v, op=op_str, is_date_column=_is_date_column(col_str))
+                base = _apply_filter(
+                    base, key, v, op=op_str, is_date_column=_is_date_column(col_str, schema_def)
+                )
                 if not base:
                     if error_out is not None:
                         error_out.append(f"filters 篩選後無資料: column={col_str!r}")
@@ -1481,8 +1649,17 @@ def _run_compare_periods_flow(
     value_aggs = resolved.value_aggregations
 
     # 3. 兩次彙總（只取 value_col_for_yoy 對應的 value_key）
-    vk_idx = next((i for i, k in enumerate(value_keys) if k.strip().lower() == value_col_for_yoy.strip().lower()), 0)
-    vk = value_keys[vk_idx] if vk_idx < len(value_keys) else value_keys[0]
+    vk_idx = next(
+        (i for i, k in enumerate(value_keys) if k.strip().lower() == value_col_for_yoy.strip().lower()),
+        None,
+    )
+    if vk_idx is None:
+        if error_out is not None:
+            error_out.append(
+                f"compare_periods 數值欄位無法對應: {value_col_for_yoy!r} 不在 value_keys={value_keys!r}"
+            )
+        return None
+    vk = value_keys[vk_idx]
     agg = (value_aggs[vk_idx] if vk_idx < len(value_aggs) else "sum").lower()
 
     def _agg_by_group(rows: list[dict[str, Any]]) -> dict[str, float]:
@@ -1517,6 +1694,10 @@ def _run_compare_periods_flow(
         ("YoY成長率", yoy_data),
     ]
     datasets = _filter_datasets_by_display_fields(datasets, display_fields, cfg)
+    if not datasets:
+        if error_out is not None:
+            error_out.append("display_fields 無法對應任何輸出序列，請檢查別名或 display_fields")
+        return None
 
     # 6. having_filters
     if having_filters:
@@ -1559,6 +1740,7 @@ def _run_compare_periods_ratio_flow(
     g_aliases: dict[str, list[str]],
     error_out: list[str] | None,
     cfg: _SchemaConfig,
+    schema_def: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """
     compare_periods + ratio 指標：分別彙總 current / compare 兩期間的指標，輸出本期與前期。
@@ -1611,7 +1793,9 @@ def _run_compare_periods_ratio_flow(
             key = next((ak for ak in actual_keys if ak.strip().lower() == col_str.strip().lower()), None) or _find_matching_column(actual_keys, col_str, g_aliases)
             if key:
                 v = vals[0] if len(vals) == 1 else vals
-                base = _apply_filter(base, key, v, op=op_str, is_date_column=_is_date_column(col_str))
+                base = _apply_filter(
+                    base, key, v, op=op_str, is_date_column=_is_date_column(col_str, schema_def)
+                )
                 if not base:
                     if error_out is not None:
                         error_out.append(f"filters 篩選後無資料: column={col_str!r}")
@@ -1661,6 +1845,10 @@ def _run_compare_periods_ratio_flow(
         (growth_label, growth_data),
     ]
     datasets = _filter_datasets_by_display_fields(datasets, display_fields, cfg)
+    if not datasets:
+        if error_out is not None:
+            error_out.append("display_fields 無法對應任何輸出序列，請檢查別名或 display_fields")
+        return None
 
     # 5. having_filters
     if having_filters:
@@ -1741,7 +1929,7 @@ def compute_aggregate(
         return None
     if not schema_def or not isinstance(schema_def, dict):
         if error_out is not None:
-            error_out.append("schema_def 必填，請從 load_schema() 載入")
+            error_out.append("schema_def 必填，請從 load_schema_from_db()（bi_schemas）載入")
         return None
     cfg = _derive_schema_config(schema_def)
     g_aliases = cfg.group_aliases
@@ -1758,7 +1946,8 @@ def compute_aggregate(
     if not gb_list_norm:
         group_by_column = _SYNTHETIC_GROUP
         ind_key = _indicator_str(indicator)
-        synth_label = cfg.indicator_labels.get(ind_key, ind_key if ind_key else "總計")
+        # 僅當第一個 indicator 為已定義指標時用其顯示名；否則用「總計」（避免 col_n 變成假分組標籤）
+        synth_label = cfg.indicator_labels.get(ind_key) or "總計"
         work_rows = [{**r, _SYNTHETIC_GROUP: synth_label} for r in rows]
     else:
         group_by_column = gb_list_norm
@@ -1769,7 +1958,9 @@ def compute_aggregate(
             (group_by_column[0] if isinstance(group_by_column, list) and len(group_by_column) == 1 else None)
         )
         grain = (time_grain or "").strip().lower()
-        if gb_single and grain in ("day", "week", "month", "quarter", "year") and _is_date_column(gb_single):
+        if gb_single and grain in ("day", "week", "month", "quarter", "year") and _is_date_column(
+            gb_single, schema_def
+        ):
             actual_keys = [k for k in work_rows[0].keys() if k and k.strip()]
             date_col = (
                 next((ak for ak in actual_keys if ak.strip() == gb_single.strip()), None)
@@ -1791,6 +1982,9 @@ def compute_aggregate(
             error_out.append(f"_resolve_columns 失敗: group_by={group_by_column!r} value_columns={value_columns!r}")
         return None
 
+    # 比較期間流程：需有可彙總的維度（真實分組或合成 __total__ 單一桶）
+    compare_periods_has_group = bool(gb_list_norm) or resolved.group_key == _SYNTHETIC_GROUP
+
     # 比較期間流程
     cp = _parse_compare_periods(compare_periods)
     is_compare, value_col_yoy = _is_compare_indicator(indicator, cfg)
@@ -1800,23 +1994,8 @@ def compute_aggregate(
         or (ind_str.endswith("_ratio") and len(ind_str) > 5 and _resolve_dynamic_ratio_column(ind_str[:-5], cfg))
     )
 
-    if cp and is_compare and value_col_yoy and gb_list_norm:
-        return _run_compare_periods_flow(
-            work_rows,
-            group_by_column,
-            resolved,
-            filters,
-            cp,
-            value_col_yoy,
-            top_n,
-            sort_order,
-            display_fields,
-            having_filters,
-            g_aliases,
-            error_out,
-            cfg,
-        )
-    if cp and is_ratio_indicator and gb_list_norm and _get_indicator_keys(ind_str, resolved.value_keys, cfg):
+    # 優先用 ratio flow：arpu_yoy_growth 等 ratio 型 YoY 必須走此流程
+    if cp and is_ratio_indicator and compare_periods_has_group and _get_indicator_keys(ind_str, resolved.value_keys, cfg):
         return _run_compare_periods_ratio_flow(
             work_rows,
             group_by_column,
@@ -1831,6 +2010,24 @@ def compute_aggregate(
             g_aliases,
             error_out,
             cfg,
+            schema_def,
+        )
+    if cp and is_compare and value_col_yoy and compare_periods_has_group:
+        return _run_compare_periods_flow(
+            work_rows,
+            group_by_column,
+            resolved,
+            filters,
+            cp,
+            value_col_yoy,
+            top_n,
+            sort_order,
+            display_fields,
+            having_filters,
+            g_aliases,
+            error_out,
+            cfg,
+            schema_def,
         )
 
     work = work_rows
@@ -1870,7 +2067,7 @@ def compute_aggregate(
         if key:
             val = vals[0] if len(vals) == 1 else vals
             work = _apply_filter(
-                work, key, val, op=op_str, is_date_column=_is_date_column(col_str)
+                work, key, val, op=op_str, is_date_column=_is_date_column(col_str, schema_def)
             )
             if not work:
                 msg = f"filters 篩選後無資料: column={col_str!r} op={op_str!r} value={val!r}"
@@ -1949,8 +2146,12 @@ def compute_aggregate(
             s = str(ind_s).strip().lower()
             if not s:
                 return None
-            if s in cfg.indicator_column_names:
-                return s
+            for k in cfg.indicator_column_names:
+                if str(k).lower() == s:
+                    return k
+            for k in cfg.indicator_labels:
+                if str(k).lower() == s:
+                    return k
             if s in label_to_code:
                 return label_to_code[s]
             if "/" in s and len(s.split("/")) == 2:
@@ -2005,7 +2206,11 @@ def compute_aggregate(
                     datasets = [(lbl, [data[i] for i in keep_idx]) for lbl, data in datasets]
                 else:
                     group_vals, datasets = [], []
-            order_pairs = [(group_vals[i], datasets[0][1][i]) for i in range(len(group_vals))] if group_vals else []
+            order_pairs = (
+                [(group_vals[i], datasets[0][1][i]) for i in range(len(group_vals))]
+                if group_vals and datasets
+                else []
+            )
             order_pairs = _apply_sort_top_n(order_pairs, sort_order, top_n, time_order, datasets=datasets)
             new_group_vals = [p[0] for p in order_pairs]
             gv_to_idx = {gv: i for i, gv in enumerate(group_vals)}
@@ -2068,7 +2273,11 @@ def compute_aggregate(
                 else:
                     group_vals, datasets = [], []
             # sort / top_n 可依指定 column 排序，未指定則依第一組 data
-            order_pairs = [(group_vals[i], datasets[0][1][i]) for i in range(len(group_vals))] if group_vals else []
+            order_pairs = (
+                [(group_vals[i], datasets[0][1][i]) for i in range(len(group_vals))]
+                if group_vals and datasets
+                else []
+            )
             order_pairs = _apply_sort_top_n(order_pairs, sort_order, top_n, time_order, datasets=datasets, cfg=cfg)
             new_group_vals = [p[0] for p in order_pairs]
             gv_to_idx = {gv: i for i, gv in enumerate(group_vals)}
@@ -2107,7 +2316,7 @@ def compute_aggregate(
             else:
                 pairs = []
     pairs = _apply_sort_top_n(pairs, sort_order, top_n, time_order, datasets=None, cfg=cfg)
-    pairs = _apply_display_fields(pairs, display_fields or [], cfg)
+    pairs = _apply_display_fields(pairs, display_fields or [], cfg, resolved=resolved)
     if ind in cfg.indicator_column_names:
         as_pct = cfg.indicator_as_percent.get(ind, False)
         value_label = cfg.indicator_labels.get(ind, ind)

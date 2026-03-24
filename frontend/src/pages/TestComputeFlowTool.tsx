@@ -12,6 +12,7 @@ import remarkGfm from 'remark-gfm'
 import { extractIntentOnly, computeFromIntent } from '@/api/chat'
 import { ApiError } from '@/api/client'
 import { listBiProjects } from '@/api/biProjects'
+import { listBiSchemas, type BiSchemaItem } from '@/api/biSchemas'
 import type { Agent } from '@/types'
 import type { BiProjectItem } from '@/api/biProjects'
 
@@ -19,7 +20,10 @@ import ModelSelect from '@/components/ModelSelect'
 import ChartModal from '@/components/ChartModal'
 import type { ChartData } from '@/components/ChartModal'
 
-const STORAGE_KEY_PROJECT = 'bi_compute_project_id'
+const STORAGE_KEY_DUCKDB = 'bi_compute_duckdb_project_id'
+/** 舊版「專案」下拉曾寫入，載入時若無 DuckDB 鍵則沿用 */
+const STORAGE_KEY_PROJECT_LEGACY = 'bi_compute_project_id'
+const STORAGE_KEY_SCHEMA = 'bi_compute_schema_id'
 const STORAGE_KEY_PROMPT_WIDTH = 'bi_compute_prompt_width'
 
 /** 固定使用 Business insight agent（不讀 DB）。id 須與 agent_catalog.id 一致 */
@@ -40,9 +44,16 @@ interface ComputeResult {
 
 export default function TestComputeFlowTool() {
   const [projects, setProjects] = useState<BiProjectItem[]>([])
-  const [selectedProject, setSelectedProject] = useState<BiProjectItem | null>(null)
+  const [selectedDuckdbProjectId, setSelectedDuckdbProjectId] = useState<string>(() =>
+    localStorage.getItem(STORAGE_KEY_DUCKDB) || ''
+  )
   const [projectsLoading, setProjectsLoading] = useState(true)
   const [projectsError, setProjectsError] = useState<string | null>(null)
+  const [schemas, setSchemas] = useState<BiSchemaItem[]>([])
+  const [selectedSchemaId, setSelectedSchemaId] = useState<string>(() =>
+    localStorage.getItem(STORAGE_KEY_SCHEMA) || ''
+  )
+  const [schemasLoading, setSchemasLoading] = useState(true)
   const [input, setInput] = useState('')
   const [model, setModel] = useState('gpt-4o-mini')
   const [isLoading, setIsLoading] = useState(false)
@@ -97,11 +108,12 @@ export default function TestComputeFlowTool() {
       .then((list) => {
         setProjects(list)
         setProjectsError(null)
-        const savedId = localStorage.getItem(STORAGE_KEY_PROJECT)
-        if (savedId && list.some((p) => p.project_id === savedId)) {
-          setSelectedProject(list.find((p) => p.project_id === savedId) ?? null)
+        const savedDuckdbId =
+          localStorage.getItem(STORAGE_KEY_DUCKDB) || localStorage.getItem(STORAGE_KEY_PROJECT_LEGACY)
+        if (savedDuckdbId && list.some((p) => p.project_id === savedDuckdbId)) {
+          setSelectedDuckdbProjectId(savedDuckdbId)
         } else {
-          setSelectedProject(null)
+          setSelectedDuckdbProjectId('')
         }
       })
       .catch((err) => {
@@ -111,6 +123,14 @@ export default function TestComputeFlowTool() {
         setProjects([])
       })
       .finally(() => setProjectsLoading(false))
+  }, [])
+
+  useEffect(() => {
+    setSchemasLoading(true)
+    listBiSchemas()
+      .then((list) => setSchemas(list))
+      .catch(() => setSchemas([]))
+      .finally(() => setSchemasLoading(false))
   }, [])
 
   function toChartData(cd: NonNullable<ComputeResult['chartData']>): ChartData {
@@ -142,7 +162,7 @@ export default function TestComputeFlowTool() {
   }
 
   async function handleSubmit() {
-    if (!input.trim() || !selectedProject || isLoading) return
+    if (!input.trim() || !selectedDuckdbProjectId || isLoading) return
 
     setError(null)
     setIntentResult(null)
@@ -153,7 +173,8 @@ export default function TestComputeFlowTool() {
     try {
       const res = await extractIntentOnly({
         agent_id: BUSINESS_INSIGHT_AGENT.id,
-        project_id: selectedProject.project_id,
+        project_id: selectedDuckdbProjectId,
+        schema_id: selectedSchemaId || undefined,
         prompt_type: 'analysis',
         system_prompt: '',
         user_prompt: '',
@@ -183,7 +204,7 @@ export default function TestComputeFlowTool() {
   }
 
   async function handleCompute() {
-    if (!input.trim() || !selectedProject || !intentResult || isComputing) return
+    if (!input.trim() || !selectedDuckdbProjectId || !intentResult || isComputing) return
 
     setError(null)
     setComputeResult(null)
@@ -192,7 +213,8 @@ export default function TestComputeFlowTool() {
     try {
       const res = await computeFromIntent({
         agent_id: BUSINESS_INSIGHT_AGENT.id,
-        project_id: selectedProject.project_id,
+        project_id: selectedDuckdbProjectId,
+        schema_id: selectedSchemaId || undefined,
         content: input.trim(),
         intent: intentResult.intent,
         model,
@@ -251,22 +273,20 @@ export default function TestComputeFlowTool() {
           </div>
 
           <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">專案</label>
+            <label className="mb-1 block text-sm font-medium text-gray-700">DuckDB 選擇</label>
             <select
-              value={selectedProject?.project_id ?? ''}
+              value={selectedDuckdbProjectId}
               onChange={(e) => {
                 const val = e.target.value
-                const p = val ? projects.find((x) => x.project_id === val) : null
-                setSelectedProject(p ?? null)
+                setSelectedDuckdbProjectId(val)
                 if (val) {
-                  localStorage.setItem(STORAGE_KEY_PROJECT, val)
+                  localStorage.setItem(STORAGE_KEY_DUCKDB, val)
                 } else {
-                  localStorage.removeItem(STORAGE_KEY_PROJECT)
+                  localStorage.removeItem(STORAGE_KEY_DUCKDB)
                 }
               }}
-              disabled={false}
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-base disabled:bg-gray-100 disabled:opacity-70"
-              aria-label="選擇專案"
+              aria-label="選擇 DuckDB"
             >
               <option value="">請選擇</option>
               {projects.map((p) => (
@@ -292,6 +312,35 @@ export default function TestComputeFlowTool() {
                 </Link>
               </p>
             )}
+            <p className="mt-1 text-xs text-gray-500">
+              意圖萃取與計算皆使用此專案對應的 DuckDB（project_id.duckdb）。
+            </p>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700">Schema</label>
+            <select
+              value={selectedSchemaId}
+              onChange={(e) => {
+                const val = e.target.value
+                setSelectedSchemaId(val)
+                if (val) {
+                  localStorage.setItem(STORAGE_KEY_SCHEMA, val)
+                } else {
+                  localStorage.removeItem(STORAGE_KEY_SCHEMA)
+                }
+              }}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-base disabled:bg-gray-100 disabled:opacity-70"
+              aria-label="選擇 Schema"
+            >
+              <option value="">使用專案預設</option>
+              {schemas.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {(s.name || '').trim() || s.id}
+                </option>
+              ))}
+            </select>
+            {schemasLoading && <p className="mt-1 text-xs text-gray-500">載入中…</p>}
           </div>
 
           <ModelSelect value={model} onChange={setModel} />
@@ -310,7 +359,7 @@ export default function TestComputeFlowTool() {
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={!selectedProject || !input.trim() || isLoading}
+            disabled={!selectedDuckdbProjectId || !input.trim() || isLoading}
             className="flex items-center justify-center gap-2 rounded-lg bg-[#1C3939] px-4 py-3 font-medium text-white transition-opacity hover:bg-[#2a4d4d] disabled:opacity-50"
           >
             {isLoading ? (
@@ -453,7 +502,7 @@ export default function TestComputeFlowTool() {
 
           {!intentResult && !error && (
             <div className="flex flex-col items-center justify-center py-16 text-gray-500">
-              <p className="mb-2">選擇 Agent、專案並輸入問題後送出</p>
+              <p className="mb-2">選擇 DuckDB 專案並輸入問題後送出</p>
               <p className="text-sm">送出後先產生意圖與 Token 用量，再按「計算結果」執行計算</p>
             </div>
           )}
