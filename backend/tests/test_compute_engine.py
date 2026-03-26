@@ -1,10 +1,13 @@
 """compute_engine：純邏輯單元測試（不依賴 DuckDB 檔案）；Intent 僅 v2。"""
+import re
+
+import pandas as pd
 import pytest
 from pydantic import ValidationError
 
 from app.services.compute_engine import _aggregate_pairs, _apply_filters_v1
 from app.schemas.intent_v2 import IntentV2, intent_sql_blockers_v2
-from app.services.compute_engine_sql import intent_sql_blockers
+from app.services.compute_engine_sql import chart_from_sql_dataframe, intent_sql_blockers
 from app.services.compute_engine_sql_v2 import try_build_sql_v2
 
 
@@ -62,6 +65,126 @@ def test_sql_builder_group_sum_filters():
     assert "SUM" in sql
     assert meta["group_cols"] == ["region"]
     assert params == []
+
+
+def test_sql_builder_filter_contains():
+    intent = IntentV2.model_validate(
+        _v2(
+            group_by=[],
+            metrics=[
+                {"id": "m1", "kind": "aggregate", "column": "col_11", "aggregation": "sum", "as": "total_sales"}
+            ],
+            filters=[{"column": "col_4", "op": "contains", "value": "鮮乳"}],
+        )
+    )
+    allow = {"col_1", "col_4", "col_11"}
+    built = try_build_sql_v2(intent, allow)
+    assert built is not None
+    sql, _, _ = built
+    assert re.search(r"contains\s*\(\s*CAST\s*\(\s*col_4\s+AS\s+VARCHAR\s*\)\s*,\s*'鮮乳'\s*\)", sql, re.IGNORECASE)
+
+
+def test_intent_v2_contains_rejects_empty_value():
+    with pytest.raises(ValidationError):
+        IntentV2.model_validate(
+            _v2(
+                group_by=[],
+                metrics=[
+                    {"id": "m1", "kind": "aggregate", "column": "col_11", "aggregation": "sum", "as": "s"}
+                ],
+                filters=[{"column": "col_4", "op": "contains", "value": "   "}],
+            )
+        )
+
+
+def test_sql_builder_grand_share():
+    intent = IntentV2.model_validate(
+        _v2(
+            group_by=[],
+            metrics=[
+                {
+                    "id": "gs1",
+                    "kind": "grand_share",
+                    "column": "col_11",
+                    "as": "slice_grand_share",
+                    "numerator_filters": [
+                        {"column": "col_4", "op": "eq", "value": "燕麥大師"},
+                        {"column": "col_5", "op": "contains", "value": "麥片"},
+                    ],
+                }
+            ],
+            time_filter={"column": "col_1", "op": "between", "value": ["2025-01-01", "2025-12-31"]},
+        )
+    )
+    allow = {"col_1", "col_4", "col_5", "col_11"}
+    built = try_build_sql_v2(intent, allow)
+    assert built is not None
+    sql, _, meta = built
+    assert meta.get("grand_share") is True
+    assert meta["group_cols"] == []
+    assert re.search(r"SUM\s*\(\s*CASE\s+WHEN", sql, re.IGNORECASE)
+    assert "OVER" not in sql.upper()
+    assert re.search(
+        r"NULLIF\s*\(\s*CAST\s*\(\s*SUM\s*\(\s*col_11\s*\)\s+AS\s+DOUBLE\s*\)\s*,\s*0\s*\)",
+        sql,
+        re.IGNORECASE,
+    )
+    assert "ORDER BY" not in sql.upper()
+
+
+def test_sql_builder_grand_share_with_group_by():
+    intent = IntentV2.model_validate(
+        _v2(
+            group_by=["col_3"],
+            metrics=[
+                {
+                    "id": "gs1",
+                    "kind": "grand_share",
+                    "column": "col_11",
+                    "as": "slice_share_by_region",
+                    "numerator_filters": [{"column": "col_4", "op": "eq", "value": "燕麥大師"}],
+                }
+            ],
+        )
+    )
+    allow = {"col_3", "col_4", "col_11"}
+    built = try_build_sql_v2(intent, allow)
+    assert built is not None
+    sql, _, meta = built
+    assert meta["group_cols"] == ["col_3"]
+    assert "GROUP BY" in sql.upper()
+    assert re.search(r"SUM\s*\(\s*SUM\s*\(\s*col_11\s*\)\s*\)\s+OVER\s*\(\s*\)", sql, re.IGNORECASE)
+
+
+def test_intent_v2_grand_share_rejects_mixed_metrics():
+    with pytest.raises(ValidationError):
+        IntentV2.model_validate(
+            _v2(
+                group_by=[],
+                metrics=[
+                    {
+                        "id": "gs1",
+                        "kind": "grand_share",
+                        "column": "col_11",
+                        "as": "g",
+                        "numerator_filters": [{"column": "col_4", "op": "eq", "value": "x"}],
+                    },
+                    {"id": "m1", "kind": "aggregate", "column": "col_11", "aggregation": "sum", "as": "t"},
+                ],
+            )
+        )
+
+
+def test_chart_from_sql_grand_share_meta_scales_ratio():
+    df = pd.DataFrame({"slice_grand_share": [0.0314]})
+    meta = {
+        "group_cols": [],
+        "agg_aliases": ["slice_grand_share"],
+        "dataset_labels": ["slice"],
+        "grand_share": True,
+    }
+    chart = chart_from_sql_dataframe(df, meta, sql_pushdown=True, engine_version=2)
+    assert chart["datasets"][0]["data"][0] == pytest.approx(3.14)
 
 
 def test_sql_builder_between_time_filter():
@@ -917,3 +1040,30 @@ def test_having_previous_without_compare_blocked():
                 ],
             )
         )
+
+
+def test_chart_from_sql_ratio_series_as_percent_display():
+    import pandas as pd
+
+    df = pd.DataFrame({"col_3": ["momo"], "sales_yoy": [-0.051470588235294115]})
+    meta = {
+        "group_cols": ["col_3"],
+        "agg_aliases": ["sales_yoy"],
+        "dataset_labels": ["銷售金額（加總）（成長率）"],
+    }
+    chart = chart_from_sql_dataframe(df, meta)
+    assert chart["datasets"][0]["data"][0] == -5.15
+    assert "（%）" in chart["datasets"][0]["label"]
+
+
+def test_chart_from_sql_preserves_sum_precision_label():
+    import pandas as pd
+
+    df = pd.DataFrame({"col_3": ["momo"], "s": [1234567.891234]})
+    meta = {
+        "group_cols": ["col_3"],
+        "agg_aliases": ["s"],
+        "dataset_labels": ["銷售金額（加總）"],
+    }
+    chart = chart_from_sql_dataframe(df, meta)
+    assert chart["datasets"][0]["data"][0] == 1234567.891234

@@ -24,11 +24,16 @@ from app.api.endpoints.chat import (
     _get_provider_name,
     _twcc_model_id,
 )
+from app.core.config import settings
 from app.core.database import get_db
 from app.models.bi_project import BiProject
 from app.core.security import get_current_user
 from app.models.user import User
-from app.schemas.intent_v2 import IntentV2, USER_FACING_INTENT_VALIDATION_MESSAGE
+from app.schemas.intent_v2 import (
+    IntentV2,
+    USER_FACING_INTENT_NO_JSON_MESSAGE,
+    USER_FACING_INTENT_VALIDATION_MESSAGE,
+)
 from app.services.analysis_compute import get_schema_summary
 from app.services.compute_engine import run_compute_engine
 from app.services.duckdb_store import execute_sql_on_duckdb_file, get_project_duckdb_path
@@ -37,7 +42,26 @@ from app.services.schema_loader import load_schema_from_db
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+# 使用者常用全形書名號標示專有名詞；易使 LLM 複製進 JSON filter value。意圖萃取前剔除，內文保留。
+_CJK_BOOK_BRACKETS_TO_STRIP = "『』「」﹃﹄﹁﹂"
+
+
+def _normalize_question_for_intent_extraction(text: str | None) -> str:
+    """供意圖萃取 user 訊息用：移除全形書名號，保留內文。"""
+    if not text:
+        return ""
+    return text.translate(str.maketrans("", "", _CJK_BOOK_BRACKETS_TO_STRIP))
+
+
 _MISSING_SCHEMA_MSG = "未設定資料 schema：請先以 CSV 匯入並選定模板，或於請求帶入 schema_id"
+
+
+def _pydantic_errors_json_safe(e: ValidationError) -> list[Any]:
+    """
+    e.errors() 內 ctx 可能含 Exception 實例（如 model_validator 的 ValueError），
+    無法 json.dumps；改為與 Pydantic 對外 JSON 一致的可序列化結構。
+    """
+    return json.loads(e.json())
 
 
 def _resolve_schema_def(
@@ -90,20 +114,43 @@ def _compute_with_intent_v2(
     return None, out_errs, dbg
 
 
-def _user_message_for_compute_errors(err_list: list[str], *, detail: bool = False) -> str:
+def _user_message_for_compute_errors(
+    err_list: list[str],
+    *,
+    detail: bool = False,
+    sql_debug: str | None = None,
+) -> str:
     msg = "; ".join(err_list) if err_list else ""
-    if "篩選後無資料" in msg or "無資料" in msg:
-        return "查無符合條件的資料，請調整篩選條件或時間範圍。"
+    expose = settings.EXPOSE_COMPUTE_ERROR_DETAIL
+
+    def _append_technical_lines(friendly: str) -> str:
+        lines: list[str] = []
+        if expose or detail:
+            if msg.strip():
+                lines.append(f"【除錯】{msg.strip()}")
+            if (sql_debug or "").strip():
+                lines.append(f"【SQL】{(sql_debug or '').strip()}")
+        if not lines:
+            return friendly
+        return f"{friendly}\n\n" + "\n".join(lines)
+
+    if "篩選後無資料" in msg or "無資料" in msg or "無資料列" in msg:
+        return _append_technical_lines("查無符合條件的資料，請調整篩選條件或時間範圍。")
     if "計算已統一為 DuckDB SQL" in msg or "僅 in-memory rows" in msg:
+        if (expose or detail) and (sql_debug or "").strip():
+            return f"{msg}\n\n【SQL】{(sql_debug or '').strip()}"
         return msg
     if USER_FACING_INTENT_VALIDATION_MESSAGE in msg or "Intent v2 驗證失敗" in msg:
         return USER_FACING_INTENT_VALIDATION_MESSAGE
     if "value_columns 為空" in msg:
-        return "無法解析數值欄位：請在 intent 的 metrics 提供 aggregate 指標。"
+        return _append_technical_lines("無法解析數值欄位：請在 intent 的 metrics 提供 aggregate 指標。")
     if "_resolve_columns" in msg or "rows 為空" in msg:
-        return "無法解析欄位對應，請確認問題描述與資料 schema。"
+        return _append_technical_lines("無法解析欄位對應，請確認問題描述與資料 schema。")
     if detail and msg:
-        return f"後端計算失敗：{msg}"
+        tail = f"\n\n【SQL】{(sql_debug or '').strip()}" if (sql_debug or "").strip() else ""
+        return f"後端計算失敗：{msg}{tail}"
+    if msg and expose:
+        return _append_technical_lines("後端計算失敗，請稍後再試或調整問題描述。")
     return "後端計算失敗，請稍後再試或調整問題描述。"
 
 
@@ -418,31 +465,19 @@ def _load_intent_prompt(schema_def: dict[str, Any] | None) -> str:
 
 
 def _extract_json_from_llm(raw: str) -> dict | None:
-    """從 LLM 回覆中萃取 JSON"""
+    """從 LLM 回覆中萃取第一個 JSON 物件（尊重字串內含 `}`，勿僅用括號深度截斷）。"""
     if not raw or not raw.strip():
         return None
     text = raw.strip()
     start = text.find("{")
     if start < 0:
         return None
-    depth = 0
-    for i in range(start, len(text)):
-        if text[i] == "{":
-            depth += 1
-        elif text[i] == "}":
-            depth -= 1
-            if depth == 0:
-                try:
-                    return json.loads(text[start : i + 1])
-                except json.JSONDecodeError:
-                    pass
-                break
-    if text.startswith("{"):
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            pass
-    return None
+    dec = json.JSONDecoder()
+    try:
+        obj, _end = dec.raw_decode(text[start:])
+    except json.JSONDecodeError:
+        return None
+    return obj if isinstance(obj, dict) else None
 
 
 def _chart_result_to_detail_lines(chart_result: dict[str, Any]) -> list[str]:
@@ -554,6 +589,10 @@ class ExtractIntentResponse(BaseModel):
     model: str = ""
     error_message: str | None = None  # 意圖無效時的訊息
     system_prompt: str = ""  # 組合好的 system prompt（含 schema/indicator 注入）
+    intent_validation_errors: list[Any] | None = Field(
+        default=None,
+        description="Intent v2 未過驗證時的 Pydantic errors（JSON 可解析但契約不符）",
+    )
 
 
 class ComputeFromIntentRequest(BaseModel):
@@ -675,9 +714,10 @@ async def extract_intent_only(
         raise HTTPException(status_code=500, detail="Intent prompt 檔案不存在")
 
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    q_for_intent = _normalize_question_for_intent_extraction(req.content)
     user_content_intent = f"""當前時間：{now_str}
 
-問題: {req.content}"""
+問題: {q_for_intent}"""
     try:
         intent_raw, usage1 = await _call_llm(model, intent_prompt, user_content_intent)
     except Exception as e:
@@ -690,7 +730,7 @@ async def extract_intent_only(
             intent=None,
             usage=usage1,
             model=model,
-            error_message="無法解析您的分析意圖，請換個方式詢問。",
+            error_message=USER_FACING_INTENT_NO_JSON_MESSAGE,
             system_prompt=intent_prompt,
         )
     try:
@@ -703,6 +743,7 @@ async def extract_intent_only(
             model=model,
             error_message=USER_FACING_INTENT_VALIDATION_MESSAGE,
             system_prompt=intent_prompt,
+            intent_validation_errors=_pydantic_errors_json_safe(e),
         )
 
     return ExtractIntentResponse(intent=intent, usage=usage1, model=model, system_prompt=intent_prompt)
@@ -749,9 +790,10 @@ async def chat_completions_compute_tool(
         raise HTTPException(status_code=500, detail="Intent prompt 檔案不存在 (system_prompt_analysis_intent_tool.md)")
 
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    q_for_intent = _normalize_question_for_intent_extraction(req.content)
     user_content_intent = f"""當前時間：{now_str}
 
-問題: {req.content}"""
+問題: {q_for_intent}"""
     try:
         intent_raw, usage1 = await _call_llm(model, intent_prompt, user_content_intent)
     except Exception as e:
@@ -763,7 +805,7 @@ async def chat_completions_compute_tool(
     intent = _extract_json_from_llm(intent_raw)
     if not intent or not isinstance(intent, dict):
         return ChatResponseComputeTool(
-            content="無法解析您的分析意圖，請換個方式詢問。",
+            content=USER_FACING_INTENT_NO_JSON_MESSAGE,
             model=model,
             usage=usage1,
             chart_data=None,
@@ -773,6 +815,8 @@ async def chat_completions_compute_tool(
         IntentV2.model_validate(intent)
     except ValidationError as e:
         logger.info("IntentV2 驗證失敗（completions-compute-tool）: %s", e.errors())
+        debug["intent_validation_errors"] = _pydantic_errors_json_safe(e)
+        debug["intent_invalid_draft"] = intent
         return ChatResponseComputeTool(
             content=USER_FACING_INTENT_VALIDATION_MESSAGE,
             model=model,
@@ -790,7 +834,10 @@ async def chat_completions_compute_tool(
         debug.update(ce_debug)
 
     if not chart_result:
-        content = _user_message_for_compute_errors(error_list)
+        debug["compute_errors_raw"] = list(error_list)
+        content = _user_message_for_compute_errors(
+            error_list, sql_debug=debug.get("sql") if isinstance(debug.get("sql"), str) else None
+        )
         return ChatResponseComputeTool(
             content=content,
             model=model,
@@ -919,8 +966,9 @@ async def compute_from_intent(
         debug.update(ce_debug)
 
     if not chart_result:
-        debug["compute_aggregate_errors"] = error_list
-        content = _user_message_for_compute_errors(error_list, detail=True)
+        debug["compute_errors_raw"] = list(error_list)
+        sql_s = debug.get("sql") if isinstance(debug.get("sql"), str) else None
+        content = _user_message_for_compute_errors(error_list, detail=True, sql_debug=sql_s)
         return ChatResponseComputeTool(
             content=content,
             model=model,
@@ -1022,9 +1070,10 @@ async def _stream_compute_tool(
         return
 
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    q_for_intent = _normalize_question_for_intent_extraction(req.content)
     user_content_intent = f"""當前時間：{now_str}
 
-問題: {req.content}"""
+問題: {q_for_intent}"""
     try:
         intent_raw, usage1 = await _call_llm(model, intent_prompt, user_content_intent)
     except Exception as e:
@@ -1037,7 +1086,7 @@ async def _stream_compute_tool(
         yield _sse_event({
             "stage": "done",
             "error_stage": "intent",
-            "content": "無法解析您的分析意圖，請換個方式詢問。",
+            "content": USER_FACING_INTENT_NO_JSON_MESSAGE,
             "chart_data": None,
         })
         return
@@ -1050,19 +1099,33 @@ async def _stream_compute_tool(
             "error_stage": "intent",
             "content": USER_FACING_INTENT_VALIDATION_MESSAGE,
             "chart_data": None,
+            "intent_validation_errors": _pydantic_errors_json_safe(e),
+            "intent_invalid_draft": intent,
         })
         return
 
     yield _sse_event({"stage": "compute"})
 
-    chart_result, error_list, _ce_debug = _compute_with_intent_v2(
+    chart_result, error_list, ce_debug = _compute_with_intent_v2(
         intent, schema_def, duckdb_project_id=pid
     )
 
     if not chart_result:
-        content = _user_message_for_compute_errors(error_list)
+        sql_s = None
+        if ce_debug and isinstance(ce_debug.get("sql"), str):
+            sql_s = ce_debug["sql"]
+        content = _user_message_for_compute_errors(error_list, sql_debug=sql_s)
         logger.info("compute 階段失敗: error_list=%s -> content=%s", error_list, content)
-        yield _sse_event({"stage": "done", "error_stage": "compute", "content": content, "chart_data": None})
+        payload: dict[str, Any] = {
+            "stage": "done",
+            "error_stage": "compute",
+            "content": content,
+            "chart_data": None,
+            "compute_errors_raw": list(error_list),
+        }
+        if ce_debug:
+            payload["compute_debug"] = ce_debug
+        yield _sse_event(payload)
         return
 
     if not chart_result.get("yAxisLabel") and chart_result.get("valueLabel"):

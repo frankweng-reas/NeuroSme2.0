@@ -472,7 +472,7 @@ def _apply_filter(
     op: str = "==",
     is_date_column: bool = False,
 ) -> list[dict[str, Any]]:
-    """依 filter_value 與 op 篩選 rows。op: ==, !=, >, <, >=, <=, like。日期區間維持現有邏輯，op 不影響。"""
+    """依 filter_value 與 op 篩選 rows。op: ==, !=, >, <, >=, <=, like, contains。日期區間維持現有邏輯，op 不影響。"""
     if not rows or not filter_key or filter_value is None:
         return rows
     op = (op or "==").strip().lower().replace(" ", "") or "=="
@@ -597,6 +597,11 @@ def _apply_filter(
         return [r for r in rows if _normalize_for_match(str(r.get(filter_key, "") or "")) != target_norm]
     if op == "like":
         return [r for r in rows if _like_match(val_str, str(r.get(filter_key, "") or ""))]
+    if op == "contains":
+        needle = val_str
+        if not needle:
+            return rows
+        return [r for r in rows if needle in str(r.get(filter_key, "") or "")]
     # op == "=="（預設）
     target_norm = _normalize_for_match(val_str)
     exact = [r for r in rows if _normalize_for_match(str(r.get(filter_key, "") or "")) == target_norm]

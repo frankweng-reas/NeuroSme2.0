@@ -13,8 +13,13 @@ from typing import Self
 _FILTER_COL_NAMES = re.compile(r"\b(col_[a-zA-Z0-9_]+)\b")
 
 # 回給前端／使用者時請用此句，勿直接附加 Pydantic ValidationError 字串。
+USER_FACING_INTENT_NO_JSON_MESSAGE = (
+    "暫時無法從回覆中取得有效的分析結構。請用較具體的方式描述，例如：**時間範圍**、**想看的數字**"
+    "（如銷售額、筆數），或稍後再試一次。"
+)
 USER_FACING_INTENT_VALIDATION_MESSAGE = (
-    "無法解析您的分析意圖，請以資料分析方式描述問題，或換個方式詢問。"
+    "這則問題無法對應到目前支援的分析格式（常見原因：缺**明確時間**、指標與條件組合過複雜，或與資料欄位對不起來）。"
+    "建議：**寫清楚起訖日期或期間**、**先問單一指標**（如總銷售額），需要篩選或對照期時再拆成下一步提問。"
 )
 
 
@@ -59,8 +64,27 @@ class FilterCondition(BaseModel):
     """列級 WHERE；value 依 op 而定（between 為長度 2 的 list）。"""
 
     column: str = Field(min_length=1)
-    op: Literal["eq", "ne", "gt", "gte", "lt", "lte", "between", "in", "is_null", "is_not_null"]
+    op: Literal[
+        "eq",
+        "ne",
+        "gt",
+        "gte",
+        "lt",
+        "lte",
+        "between",
+        "in",
+        "contains",
+        "is_null",
+        "is_not_null",
+    ]
     value: Any | None = None
+
+    @model_validator(mode="after")
+    def filter_value_by_op(self) -> Self:
+        if self.op == "contains":
+            if not isinstance(self.value, str) or not self.value.strip():
+                raise ValueError("op=contains 時 value 須為非空字串")
+        return self
 
 
 class MetricCompareV2(BaseModel):
@@ -110,7 +134,27 @@ class MetricExpressionV2(BaseModel):
         return self
 
 
-MetricSpecV2 = Annotated[MetricAggregateV2 | MetricExpressionV2, Field(discriminator="kind")]
+class MetricGrandShareV2(BaseModel):
+    """
+    全域佔比：分子為「同一資料範圍內」符合 numerator_filters 之列加總，
+    分母為該範圍內全部列的 SUM(column)（全體總額）。頂層 filters／time_filter 界定與分子共用之範圍；
+    切片條件（品牌、子類等）必須放在 numerator_filters，不可放進頂層 filters。
+    dimensions.group_by 為空時為單列總體佔比；非空時每組一列，分母仍為全體總額。
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str = Field(min_length=1)
+    kind: Literal["grand_share"] = "grand_share"
+    column: str = Field(min_length=1)
+    as_name: str = Field(alias="as", min_length=1)
+    numerator_filters: list[FilterCondition] = Field(min_length=1)
+
+
+MetricSpecV2 = Annotated[
+    MetricAggregateV2 | MetricExpressionV2 | MetricGrandShareV2,
+    Field(discriminator="kind"),
+]
 
 
 class PostSortV2(BaseModel):
@@ -279,6 +323,14 @@ class IntentV2(BaseModel):
 
     @model_validator(mode="after")
     def metrics_rules(self) -> Self:
+        grand = [m for m in self.metrics if isinstance(m, MetricGrandShareV2)]
+        non_grand = [m for m in self.metrics if not isinstance(m, MetricGrandShareV2)]
+        if grand:
+            if non_grand:
+                raise ValueError("grand_share 指標不可與 aggregate / expression 併用於同一 Intent")
+            if self.dimensions.compare_periods is not None:
+                raise ValueError("grand_share 不支援 compare_periods")
+
         has_compare_metric = any(
             isinstance(m, MetricAggregateV2)
             and m.compare
@@ -298,7 +350,11 @@ class IntentV2(BaseModel):
                 if m.as_name in seen:
                     raise ValueError(f"metrics 輸出別名重複：{m.as_name}")
                 seen.add(m.as_name)
-            else:
+            elif isinstance(m, MetricGrandShareV2):
+                if m.as_name in seen:
+                    raise ValueError(f"metrics 輸出別名重複：{m.as_name}")
+                seen.add(m.as_name)
+            elif isinstance(m, MetricAggregateV2):
                 if m.as_name in seen:
                     raise ValueError(f"metrics 輸出別名重複：{m.as_name}")
                 seen.add(m.as_name)
@@ -348,7 +404,11 @@ def validate_intent_v2_columns(intent: IntentV2, schema_def: dict[str, Any]) -> 
     for m in intent.metrics:
         if isinstance(m, MetricAggregateV2):
             check_col(m.column, f"metric[{m.id}]")
-        else:
+        elif isinstance(m, MetricGrandShareV2):
+            check_col(m.column, f"metric[{m.id}]")
+            for i, nf in enumerate(m.numerator_filters):
+                check_col(nf.column, f"metric[{m.id}].numerator_filters[{i}]")
+        elif isinstance(m, MetricExpressionV2):
             for c in m.refs["columns"]:
                 check_col(c, f"metric[{m.id}].refs")
             for c in set(_FILTER_COL_NAMES.findall(m.expression)):

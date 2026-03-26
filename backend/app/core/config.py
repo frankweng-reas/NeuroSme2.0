@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     # DuckDB 長存：專案資料的 .duckdb 檔存放目錄（空則不啟用長存）
     DUCKDB_DATA_DIR: str = "data/duckdb"
 
+    # 為 True 時，計算失敗（含「查無資料」）在使用者可見的 content 末段附加後端錯誤與 SQL，利於除錯；正式環境建議 False
+    EXPOSE_COMPUTE_ERROR_DETAIL: bool = False
+
     # Schema 檔案目錄（過渡；正式 schema 一律為 bi_schemas，見 schema_loader.load_schema_from_db）
     SCHEMA_CONFIG_DIR: str = ""
 

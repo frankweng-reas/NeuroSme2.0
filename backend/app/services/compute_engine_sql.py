@@ -20,6 +20,47 @@ logger = logging.getLogger(__name__)
 
 from app.services.duckdb_store import execute_sql_on_duckdb_file
 
+# 圖表序列若為成長率／占比：SQL 多為 0～1 比率，改以「百分比數字」顯示（×100，小數兩位）並標註（%）
+_RATIO_LIKE_TOKENS = (
+    "成長",
+    "增幅",
+    "yoy",
+    "占比",
+    "佔比",
+    "比率",
+    "比例",
+    "变动",
+    "變動",
+    "同比",
+    "环比",
+    "環比",
+    "mom",
+    "wow",
+)
+
+
+def _sql_chart_series_is_ratio_like(dataset_label: str, agg_alias: str) -> bool:
+    h = f"{dataset_label or ''} {agg_alias or ''}".lower()
+    if any(t.lower() in h for t in _RATIO_LIKE_TOKENS):
+        return True
+    a = (agg_alias or "").strip().lower()
+    return "yoy" in a or "growth" in a or a.endswith("_growth")
+
+
+def _sql_chart_ratio_to_percent_display(v: float) -> float:
+    if math.isnan(v) or math.isinf(v):
+        return 0.0
+    return round(float(v) * 100.0, 2)
+
+
+def _sql_chart_label_append_percent_unit(label: str) -> str:
+    s = (label or "").strip()
+    if not s:
+        return "（%）"
+    if "%" in s or "％" in s or "（%）" in s or "百分比" in s:
+        return s
+    return f"{s}（%）"
+
 
 def column_allowlist_from_schema(schema_def: dict[str, Any]) -> set[str]:
     cols = schema_def.get("columns") if isinstance(schema_def, dict) else None
@@ -284,8 +325,14 @@ def chart_from_sql_dataframe(
     datasets: list[dict[str, Any]] = []
     for alias, lbl in zip(aliases, meta["dataset_labels"]):
         col_name = _resolve_df_column(df, alias)
-        series = [cell_float(x) for x in df[col_name].tolist()]
-        datasets.append({"label": lbl, "data": series, "valueLabel": lbl})
+        ratio_like = bool(meta.get("grand_share")) or _sql_chart_series_is_ratio_like(lbl, alias)
+        if ratio_like:
+            series = [_sql_chart_ratio_to_percent_display(cell_float(x)) for x in df[col_name].tolist()]
+            lbl_out = _sql_chart_label_append_percent_unit(lbl)
+        else:
+            series = [cell_float(x) for x in df[col_name].tolist()]
+            lbl_out = lbl
+        datasets.append({"label": lbl_out, "data": series, "valueLabel": lbl_out})
 
     return {
         "labels": labels_list,

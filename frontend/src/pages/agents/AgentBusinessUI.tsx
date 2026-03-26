@@ -301,7 +301,7 @@ function BlockCard({
   return (
     <div className="flex shrink-0 flex-col overflow-hidden rounded-lg border-2 border-gray-200 bg-white shadow-sm">
       <div className="flex items-center justify-between border-b border-gray-200 bg-gray-100 px-4 py-3">
-        <span className="text-lg font-medium text-gray-700">區塊</span>
+        <span className="text-lg font-medium text-gray-700">匯入資料</span>
         {canDelete && (
           <button
             type="button"
@@ -316,7 +316,7 @@ function BlockCard({
       <div className="flex flex-col gap-5 p-4">
         <div className="flex flex-col gap-2">
           <label className="text-lg font-medium text-gray-700" htmlFor={`block-schema-${block.id}`}>
-            資料 Schema（bi_schemas）
+            資料模型-Schema
           </label>
           <select
             id={`block-schema-${block.id}`}
@@ -339,7 +339,8 @@ function BlockCard({
             id={fileInputId}
             type="file"
             accept=".csv,text/csv"
-            multiple
+            multiple={true}
+            aria-label="選擇 CSV 檔案（可多選）"
             className="hidden"
             onChange={handleFileChange}
           />
@@ -378,13 +379,17 @@ function BlockCard({
                 ? 'hover:border-gray-300 hover:bg-gray-100'
                 : 'cursor-not-allowed opacity-60'
             }`}
-            title={!block.selectedSchemaId ? '請先選擇資料 Schema（bi_schemas）' : '點擊或拖曳檔案至此'}
+            title={
+              !block.selectedSchemaId
+                ? '請先選擇資料 Schema（bi_schemas）'
+                : '點擊可一次選多個 CSV；或拖曳多個檔案至此'
+            }
           >
             <div className="flex items-center justify-between px-3">
               <span className="text-lg text-gray-600">
                 {block.selectedFiles.length > 0
                   ? `已選擇 ${block.selectedFiles.length} 個檔案`
-                  : '點擊或拖曳檔案至此'}
+                  : '點擊或拖曳 CSV 至此（可複選多個檔案）'}
               </span>
               {block.selectedFiles.length > 0 && (
                 <button
@@ -1010,7 +1015,17 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
         res.chart_data && res.chart_data.labels && (res.chart_data.data || res.chart_data.datasets)
           ? toChartData(res.chart_data)
           : undefined
-      setMessages((prev) => [...prev, { role: 'assistant', content: res.content, meta, chartData }])
+      const dbg = res.debug && typeof res.debug === 'object' ? (res.debug as Record<string, unknown>) : undefined
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: res.content,
+          meta,
+          chartData,
+          ...(dbg && Object.keys(dbg).length > 0 ? { computeDebug: dbg } : {}),
+        },
+      ])
     } catch (err) {
       let msg = '未知錯誤'
       if (err instanceof ApiError) msg = err.detail ?? err.message

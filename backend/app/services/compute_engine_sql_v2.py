@@ -12,6 +12,7 @@ from app.schemas.intent_v2 import (
     IntentV2,
     MetricAggregateV2,
     MetricExpressionV2,
+    MetricGrandShareV2,
     PostWhereClause,
     PostWhereLiteral,
     PostWhereRef,
@@ -107,6 +108,14 @@ def _filter_condition_sql(f: FilterCondition) -> str | None:
             return None
         inner = ", ".join(_sql_literal(x) for x in v)
         return f"{col} IN ({inner})"
+    if op == "contains":
+        if not isinstance(f.value, str):
+            return None
+        sub = f.value.strip()
+        if not sub:
+            return None
+        lit = _sql_literal(sub)
+        return f"contains(CAST({col} AS VARCHAR), {lit})"
     if f.value is None:
         return None
     rhs = _sql_literal(f.value)
@@ -216,7 +225,9 @@ def _output_as_names(intent: IntentV2, include_prev_yoy: bool) -> set[str]:
     for m in intent.metrics:
         if isinstance(m, MetricExpressionV2):
             out.add(m.as_name)
-        else:
+        elif isinstance(m, MetricGrandShareV2):
+            out.add(m.as_name)
+        elif isinstance(m, MetricAggregateV2):
             out.add(m.as_name)
             if include_prev_yoy and m.compare:
                 if m.compare.previous_as:
@@ -262,6 +273,98 @@ def _limit_sql(intent: IntentV2, group_cols: list) -> str:
 
 def _aggregate_specs(intent: IntentV2) -> list[MetricAggregateV2]:
     return [m for m in intent.metrics if isinstance(m, MetricAggregateV2)]
+
+
+def _try_build_sql_grand_share_v2(
+    intent: IntentV2,
+    allowlist: set[str],
+    schema_def: dict[str, Any] | None,
+    metrics: list[MetricGrandShareV2],
+) -> tuple[str, list[Any], dict[str, Any]] | None:
+    """
+    全域佔比 SQL 分兩種（避免無 GROUP BY 時誤用 SUM(SUM(x)) OVER ()）：
+    - **group_by 為空**：單列結果 — 分母為 `NULLIF(CAST(SUM(col) AS DOUBLE), 0)`；**不**加 ORDER BY。
+    - **group_by 非空**：每組一列 — 分母為 `NULLIF(SUM(SUM(col)) OVER (), 0)`（各組分子／全體分母）；可 ORDER BY / LIMIT。
+    """
+    filter_parts = _collect_filter_sql_parts(intent, schema_def)
+    if filter_parts is None:
+        return None
+    where_clause = f"WHERE {' AND '.join(filter_parts)}" if filter_parts else ""
+
+    group_cols = list(intent.dimensions.group_by)
+    for gc in group_cols:
+        if gc not in allowlist:
+            return None
+
+    group_select = [f"{_sql_ident(g)} AS {_sql_ident(g)}" for g in group_cols]
+
+    select_parts: list[str] = []
+    agg_aliases: list[str] = []
+    dataset_labels: list[str] = []
+    for m in metrics:
+        if m.column not in allowlist:
+            return None
+        num_frags: list[str] = []
+        for f in m.numerator_filters:
+            frag = _filter_condition_sql(f)
+            if frag is None:
+                return None
+            num_frags.append(f"({frag})")
+        case_pred = " AND ".join(num_frags)
+        qc = _sql_ident(m.column)
+        num = f"CAST(SUM(CASE WHEN {case_pred} THEN {qc} ELSE 0 END) AS DOUBLE)"
+        if group_cols:
+            den = f"NULLIF(SUM(SUM({qc})) OVER (), 0)"
+        else:
+            den = f"NULLIF(CAST(SUM({qc}) AS DOUBLE), 0)"
+        expr = f"(({num}) / ({den}))"
+        select_parts.append(f"{expr} AS {_sql_ident(m.as_name)}")
+        agg_aliases.append(m.as_name)
+        dataset_labels.append(_dataset_label_for_formula_alias(m.as_name, schema_def))
+
+    if group_cols:
+        gb_sql = ", ".join(_sql_ident(g) for g in group_cols)
+        inner_sql = (
+            f"SELECT {', '.join(group_select + select_parts)} "
+            f"{_from_data(where_clause)}"
+            f"GROUP BY {gb_sql}"
+        )
+    else:
+        inner_sql = f"SELECT {', '.join(select_parts)} {_from_data(where_clause).rstrip()}"
+
+    output_as = set(agg_aliases)
+    group_set = set(group_cols)
+    pa = intent.post_aggregate
+    hav_parts: list[str] = []
+    if pa and pa.where:
+        for clause in pa.where:
+            sql = _post_where_clause_sql(clause, group_set, output_as)
+            if sql is None:
+                return None
+            hav_parts.append(sql)
+
+    default_sort = agg_aliases[0] if agg_aliases else ""
+    if group_cols:
+        sort_lim = f"{_sort_sql_v2(intent, group_cols, default_sort)}{_limit_sql(intent, group_cols)}"
+    else:
+        sort_lim = ""
+    if hav_parts:
+        sql = (
+            f"SELECT * FROM ({inner_sql}) s WHERE {' AND '.join(f'({w})' for w in hav_parts)}"
+            f"{sort_lim}"
+        )
+    else:
+        sql = f"{inner_sql}{sort_lim}"
+
+    meta: dict[str, Any] = {
+        "group_cols": group_cols,
+        "agg_aliases": agg_aliases,
+        "dataset_labels": dataset_labels,
+        "value_specs": [],
+        "formula": True,
+        "grand_share": True,
+    }
+    return sql, [], meta
 
 
 def _try_build_sql_expression_v2(
@@ -687,6 +790,10 @@ def try_build_sql_v2(
     allowlist: set[str],
     schema_def: dict[str, Any] | None = None,
 ) -> tuple[str, list[Any], dict[str, Any]] | None:
+    grand = [m for m in intent.metrics if isinstance(m, MetricGrandShareV2)]
+    if grand:
+        return _try_build_sql_grand_share_v2(intent, allowlist, schema_def, grand)
+
     exprs = [m for m in intent.metrics if isinstance(m, MetricExpressionV2)]
     aggs = [m for m in intent.metrics if isinstance(m, MetricAggregateV2)]
     if exprs and aggs:
