@@ -636,8 +636,8 @@ class ComputeEngineResponse(BaseModel):
     """compute_engine 專用：含 debug（例如產生的 SQL）。"""
     chart_result: dict[str, Any] | None
     error_detail: str | None = None
-    debug: dict[str, Any] = Field(default_factory=dict)
-    generated_sql: str | None = Field(None, description="與 debug.sql 相同，供前端直接顯示")
+    debug: dict[str, Any] | None = None
+    generated_sql: str | None = None
 
 
 class ExtractIntentResponse(BaseModel):
