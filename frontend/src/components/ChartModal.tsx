@@ -136,6 +136,26 @@ function transformToBarLineData(data: ChartData): Record<string, string | number
   })
 }
 
+/** 判斷 dataset label 是否為比率型（含 %） */
+function isRatioDataset(label: string): boolean {
+  return label.includes('（%）') || label.includes('(%)') || label.toLowerCase().endsWith('_pct') || label.toLowerCase().endsWith('_rate')
+}
+
+/**
+ * 智慧預設：若 datasets 中同時有比率型與非比率型，
+ * 預設只顯示比率型（避免量級不同的資料塞在同一圖）；
+ * 全為同類型時顯示全部。
+ */
+function computeDefaultActiveDatasets(datasets: { label: string }[]): Set<string> {
+  if (datasets.length <= 1) return new Set(datasets.map((d) => d.label))
+  const ratioLabels = datasets.filter((d) => isRatioDataset(d.label)).map((d) => d.label)
+  const nonRatioLabels = datasets.filter((d) => !isRatioDataset(d.label)).map((d) => d.label)
+  if (ratioLabels.length > 0 && nonRatioLabels.length > 0) {
+    return new Set(ratioLabels)
+  }
+  return new Set(datasets.map((d) => d.label))
+}
+
 /** 將 ChartData 轉成 Recharts Pie 格式 */
 function transformToPieData(data: ChartData): { name: string; value: number }[] {
   const { labels } = data
@@ -153,18 +173,27 @@ export default function ChartModal({ open, data, onClose }: ChartModalProps) {
   const isFromPieData = !data.datasets?.length && !!data.data?.length
   const singleDataLabel = data.yAxisLabel || '數值'
   const singleDataSuffix = data.valueSuffix ?? ''
-  const effectiveDatasets =
+  const allDatasets =
     data.datasets && data.datasets.length > 0
       ? data.datasets
       : data.data
         ? [{ label: singleDataLabel, data: data.data, valueSuffix: singleDataSuffix }]
         : []
 
+  const [activeDatasets, setActiveDatasets] = useState<Set<string>>(
+    () => computeDefaultActiveDatasets(allDatasets)
+  )
+
+  // 目前可見的 datasets
+  const effectiveDatasets = allDatasets.filter((d) => activeDatasets.has(d.label))
+
   useEffect(() => {
     if (open) {
       setViewType(getDefaultChartType(data))
       setIsFullscreen(false)
+      setActiveDatasets(computeDefaultActiveDatasets(allDatasets))
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, data])
 
   const handleClose = useCallback(() => {
@@ -190,11 +219,13 @@ export default function ChartModal({ open, data, onClose }: ChartModalProps) {
   const barLineData = transformToBarLineData(data)
   const pieData = transformToPieData(data)
 
+  const allColorMap = Object.fromEntries(allDatasets.map((d, i) => [d.label, colors[i % colors.length]]))
+
   /** Recharts Legend payload：pie 或 bar(pie-as-bar) 用 labels；否則用 datasets */
   const legendPayload =
     viewType === 'pie' || (viewType === 'bar' && isFromPieData)
       ? data.labels.map((l, i) => ({ value: l, color: colors[i % colors.length] }))
-      : effectiveDatasets.map((ds, i) => ({ value: ds.label, color: colors[i % colors.length] }))
+      : effectiveDatasets.map((ds) => ({ value: ds.label, color: allColorMap[ds.label] ?? colors[0] }))
 
   const isSingleSeries = effectiveDatasets.length === 1
   const barDataKeys = effectiveDatasets.map((d) => d.label)
@@ -260,8 +291,8 @@ export default function ChartModal({ open, data, onClose }: ChartModalProps) {
               ))}
             </Bar>
           ) : (
-            barDataKeys.map((key, i) => (
-              <Bar key={key} dataKey={key} fill={colors[i % colors.length]} radius={[4, 4, 0, 0]} animationDuration={ANIMATION_DURATION} />
+            barDataKeys.map((key) => (
+              <Bar key={key} dataKey={key} fill={allColorMap[key] ?? colors[0]} radius={[4, 4, 0, 0]} animationDuration={ANIMATION_DURATION} />
             ))
           )}
         </BarChart>
@@ -354,14 +385,14 @@ export default function ChartModal({ open, data, onClose }: ChartModalProps) {
             content={(props) => <DefaultLegendContent {...props} payload={legendPayload} align="center" verticalAlign="bottom" labelStyle={{ fontSize: FONT_SIZE }} />}
             wrapperStyle={{ paddingTop: 16, fontSize: FONT_SIZE }}
           />
-          {barDataKeys.map((key, i) => (
+          {barDataKeys.map((key) => (
             <Line
               key={key}
               type="monotone"
               dataKey={key}
-              stroke={colors[i % colors.length]}
+              stroke={allColorMap[key] ?? colors[0]}
               strokeWidth={3}
-              dot={{ fill: colors[i % colors.length], strokeWidth: 2, r: 4 }}
+              dot={{ fill: allColorMap[key] ?? colors[0], strokeWidth: 2, r: 4 }}
               activeDot={{ r: 6 }}
               animationDuration={ANIMATION_DURATION}
             />
@@ -388,35 +419,68 @@ export default function ChartModal({ open, data, onClose }: ChartModalProps) {
         }`}
         onClick={(e) => e.stopPropagation()}
       >
-        <header className="flex flex-shrink-0 items-center justify-between border-b border-slate-200 bg-slate-100 px-6 py-4">
-          <h2 className="text-[16px] font-semibold text-slate-800">{data.title ?? '圖表'}</h2>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setIsFullscreen(!isFullscreen)}
-              className="rounded-2xl p-2 text-slate-600 transition-colors hover:bg-slate-200 hover:text-slate-800"
-              title={isFullscreen ? '縮小' : '放大至全螢幕'}
-              aria-label={isFullscreen ? '縮小' : '放大至全螢幕'}
-            >
-              {isFullscreen ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
-            </button>
-            {availableTypes.length > 1 && (
-              <div className="flex gap-1 rounded-2xl bg-slate-200/80 p-1.5">
-                {availableTypes.map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => setViewType(t)}
-                    className={`rounded-2xl px-4 py-2 text-[16px] font-medium transition-all ${
-                      viewType === t ? 'bg-white text-slate-800 shadow-md' : 'text-slate-600 hover:text-slate-800 hover:bg-white/60'
-                    }`}
-                  >
-                    {CHART_TYPE_LABELS[t]}
-                  </button>
-                ))}
-              </div>
-            )}
+        <header className="flex flex-shrink-0 flex-col gap-2 border-b border-slate-200 bg-slate-100 px-6 py-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-[16px] font-semibold text-slate-800">{data.title ?? '圖表'}</h2>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setIsFullscreen(!isFullscreen)}
+                className="rounded-2xl p-2 text-slate-600 transition-colors hover:bg-slate-200 hover:text-slate-800"
+                title={isFullscreen ? '縮小' : '放大至全螢幕'}
+                aria-label={isFullscreen ? '縮小' : '放大至全螢幕'}
+              >
+                {isFullscreen ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
+              </button>
+              {availableTypes.length > 1 && (
+                <div className="flex gap-1 rounded-2xl bg-slate-200/80 p-1.5">
+                  {availableTypes.map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setViewType(t)}
+                      className={`rounded-2xl px-4 py-2 text-[16px] font-medium transition-all ${
+                        viewType === t ? 'bg-white text-slate-800 shadow-md' : 'text-slate-600 hover:text-slate-800 hover:bg-white/60'
+                      }`}
+                    >
+                      {CHART_TYPE_LABELS[t]}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
+          {/* 多 dataset 時顯示切換 chips */}
+          {allDatasets.length > 1 && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {allDatasets.map((ds, i) => {
+                const active = activeDatasets.has(ds.label)
+                return (
+                  <button
+                    key={ds.label}
+                    type="button"
+                    onClick={() => {
+                      setActiveDatasets((prev) => {
+                        const next = new Set(prev)
+                        if (active && next.size > 1) next.delete(ds.label)
+                        else next.add(ds.label)
+                        return next
+                      })
+                    }}
+                    className={`flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[13px] font-medium transition-all ${
+                      active
+                        ? 'border-transparent text-white'
+                        : 'border-slate-300 bg-white text-slate-400 line-through'
+                    }`}
+                    style={active ? { backgroundColor: colors[i % colors.length], borderColor: colors[i % colors.length] } : undefined}
+                    title={active ? '點擊隱藏' : '點擊顯示'}
+                  >
+                    {ds.label}
+                  </button>
+                )
+              })}
+            </div>
+          )}
         </header>
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-6">
           <div className={`flex min-h-0 flex-1 items-center justify-center overflow-auto ${isFullscreen ? 'min-h-[320px]' : 'min-h-[240px]'}`}>
