@@ -1,15 +1,16 @@
 /** 管理頁面：admin 專用，含 sidebar 導航 */
 import { useEffect, useState } from 'react'
 import { Link, NavLink, Outlet } from 'react-router-dom'
-import { ArrowLeft, Building2, Building, ShieldCheck, Users } from 'lucide-react'
+import { ArrowLeft, Building2, Building, LayoutGrid, ShieldCheck, Users } from 'lucide-react'
 import { getMe } from '@/api/users'
 import type { User } from '@/types'
 
 const SIDEBAR_ITEMS = [
+  { to: '/admin/agents', label: 'REAS-系統 Agents 設定', icon: LayoutGrid, superAdminOnly: true },
+  { to: '/admin/tenant-settings', label: 'REAS-系統 Tenants 設定', icon: Building2, superAdminOnly: true },
   { to: '/admin/agent-permissions', label: 'Agent 權限設定', icon: ShieldCheck, superAdminOnly: false },
   { to: '/admin/companies', label: '公司資訊', icon: Building, superAdminOnly: false },
   { to: '/admin/users', label: '會員管理', icon: Users, superAdminOnly: false },
-  { to: '/admin/tenant-settings', label: 'Tenant 設定', icon: Building2, superAdminOnly: true },
 ] as const
 
 export default function AdminPage() {
@@ -47,7 +48,7 @@ export default function AdminPage() {
       <div className="mt-4 flex flex-1 min-h-0 overflow-hidden">
         {/* Sidebar - 與 header 同色系 */}
         <aside
-          className="flex-shrink-0 w-56 rounded-l-lg border-2 border-r-0 border-gray-200 shadow-sm"
+          className="flex-shrink-0 w-72 rounded-l-lg border-2 border-r-0 border-gray-200 shadow-sm"
           style={{ backgroundColor: '#4b5563' }}
         >
           <nav className="flex flex-col py-4">

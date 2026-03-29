@@ -24,14 +24,14 @@ class AgentResponse(BaseModel):
 
     @classmethod
     def from_catalog(cls, catalog: AgentCatalog, tenant_id: str) -> "AgentResponse":
-        """從 AgentCatalog 建立，id 為 tenant_id:id"""
+        """從 AgentCatalog 建立，id 為 tenant_id:agent_id"""
         return cls(
-            id=_agent_composite_id(tenant_id, catalog.id),
+            id=_agent_composite_id(tenant_id, catalog.agent_id),
             group_id=catalog.group_id,
             group_name=catalog.group_name,
             agent_id=catalog.agent_id,
             agent_name=catalog.agent_name,
             icon_name=catalog.icon_name,
-            is_purchased=True,  # 從 tenant_agents 取得者皆為已購買
+            is_purchased=True,
             tenant_id=tenant_id,
         )

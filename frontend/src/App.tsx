@@ -10,6 +10,7 @@ import HomePage from './pages/HomePage'
 import AgentPage from './pages/AgentPage'
 import AdminPage from './pages/AdminPage'
 import AdminAgentPermissions from './pages/admin/AdminAgentPermissions'
+import AdminAgentCatalog from './pages/admin/AdminAgentCatalog'
 import AdminCompanies from './pages/admin/AdminCompanies'
 import AdminTenantSettings from './pages/admin/AdminTenantSettings'
 import AdminUsers from './pages/admin/AdminUsers'
@@ -63,6 +64,7 @@ function App() {
                 }
               >
                 <Route index element={<Navigate to="agent-permissions" replace />} />
+                <Route path="agents" element={<SuperAdminRoute><AdminAgentCatalog /></SuperAdminRoute>} />
                 <Route path="agent-permissions" element={<AdminAgentPermissions />} />
                 <Route path="companies" element={<AdminCompanies />} />
                 <Route path="tenant-settings" element={<SuperAdminRoute><AdminTenantSettings /></SuperAdminRoute>} />

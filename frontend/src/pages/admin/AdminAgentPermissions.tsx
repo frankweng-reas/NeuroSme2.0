@@ -18,12 +18,13 @@ const GROUP_COLORS = [
 export default function AdminAgentPermissions() {
   const [users, setUsers] = useState<User[]>([])
   const [agents, setAgents] = useState<Agent[]>([])
+  const [agentsLoading, setAgentsLoading] = useState(false)
   const [selectedUserId, setSelectedUserId] = useState<number | null>(null)
   const [userAgentIds, setUserAgentIds] = useState<Set<string>>(new Set())
   const [userRole, setUserRole] = useState<UserRole>('member')
   const [search, setSearch] = useState('')
   const [isLoadingUsers, setIsLoadingUsers] = useState(true)
-  const [isLoadingAgents, setIsLoadingAgents] = useState(true)
+  const [isLoadingAgents, setIsLoadingAgents] = useState(false)
   const [isLoadingUserAgents, setIsLoadingUserAgents] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [usersError, setUsersError] = useState<string | null>(null)
@@ -44,20 +45,22 @@ export default function AdminAgentPermissions() {
   }, [])
 
   useEffect(() => {
-    getAgents(true)
-      .then(setAgents)
-      .catch(() => setAgents([]))
-      .finally(() => setIsLoadingAgents(false))
-  }, [])
-
-  useEffect(() => {
     if (selectedUserId == null) {
       setUserAgentIds(new Set())
       setUserRole('member')
+      setAgents([])
       return
     }
     const u = users.find((x) => x.id === selectedUserId)
     setUserRole(u?.role ?? 'member')
+
+    // 依選中使用者的 tenant_id 載入該 tenant 已購買的 agents
+    setAgentsLoading(true)
+    getAgents(true, u?.tenant_id)
+      .then(setAgents)
+      .catch(() => setAgents([]))
+      .finally(() => setAgentsLoading(false))
+
     setIsLoadingUserAgents(true)
     getUserAgentIds(selectedUserId)
       .then((ids) => setUserAgentIds(new Set(ids)))
@@ -169,9 +172,14 @@ export default function AdminAgentPermissions() {
         ) : (
           <>
             <div className="mb-4 flex items-center justify-between gap-4">
-              <h2 className="text-lg font-semibold text-gray-800">
-                {selectedUser?.username ?? selectedUser?.email} 可存取的 Agent
-              </h2>
+              <div className="flex flex-col gap-0.5">
+                <p className="text-xs text-gray-500">
+                  Tenant：<span className="font-medium text-gray-700">{selectedUser?.tenant_id}</span>
+                </p>
+                <p className="text-lg font-semibold text-gray-800">
+                  User：{selectedUser?.username ?? selectedUser?.email}
+                </p>
+              </div>
               <div className="flex items-center gap-3">
                 <label className="flex items-center gap-2 text-sm text-gray-700">
                   <span>角色</span>

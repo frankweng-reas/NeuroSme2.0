@@ -38,11 +38,11 @@ def _check_agent_access(db: Session, user: User, agent_id: str) -> tuple[str, st
     tenant_id, aid = _parse_agent_id(agent_id, user.tenant_id)
     if tenant_id != user.tenant_id:
         raise HTTPException(status_code=403, detail="無權限存取此助理")
-    catalog = db.query(AgentCatalog).filter(AgentCatalog.id == aid).first()
+    catalog = db.query(AgentCatalog).filter(AgentCatalog.agent_id == aid).first()
     if not catalog:
         raise HTTPException(status_code=404, detail="Agent not found")
     allowed = get_agent_ids_for_user(db, user.id)
-    if catalog.id not in allowed:
+    if catalog.agent_id not in allowed:
         raise HTTPException(status_code=403, detail="無權限存取此助理")
     return tenant_id, aid
 

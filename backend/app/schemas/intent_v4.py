@@ -117,6 +117,111 @@ _RAW_AGG_IN_FORMULA_RE = _re.compile(
 )
 _METRIC_REF_RE = _re.compile(r"\bm\d+\b", _re.IGNORECASE)
 
+# 用於 auto_repair_intent()：在運算式中找出所有 AGG(col_x) / COUNT(DISTINCT col_x) 呼叫
+_AGG_CALL_IN_EXPR_RE = _re.compile(
+    r"COUNT\s*\(\s*DISTINCT\s+col_[a-zA-Z0-9_]+\s*\)"
+    r"|[A-Za-z_][A-Za-z0-9_]*\s*\(\s*col_[a-zA-Z0-9_]+\s*\)",
+    _re.IGNORECASE,
+)
+
+
+def auto_repair_intent(intent_dict: dict[str, Any]) -> dict[str, Any]:
+    """
+    Pydantic 驗證**前**的前處理：偵測 metric formula 中包含多個聚合呼叫的複合公式
+    （如 SUM(col_9) / SUM(col_8)），自動拆解成 atomic metrics + derived metric。
+
+    適用場景：LLM 把「毛利率」「達成率」等比率直接寫成複合 formula，
+    後端自動修正，避免 ValidationError 返回給使用者。
+
+    拆解規則：
+    - 找出 formula 中所有唯一的 AGG(col_x) 呼叫，各建立新 atomic metric
+    - 原 metric 改為 derived，formula 以新 metric id 取代各 AGG 呼叫
+    - atomic metrics 繼承原 metric 的 filters；derived metric filters 設為 []
+    - 若 formula 已是 atomic / 已含 mN 引用 → 不處理
+    """
+    metrics = intent_dict.get("metrics")
+    if not isinstance(metrics, list) or not metrics:
+        return intent_dict
+
+    # 找出現有 metric id 中最大的數字，避免 id 衝突
+    max_n = 0
+    for m in metrics:
+        mid = _re.match(r"^m(\d+)$", str(m.get("id", "")).strip().lower())
+        if mid:
+            max_n = max(max_n, int(mid.group(1)))
+
+    counter = [max_n]
+    new_metrics: list[dict] = []
+    changed = False
+
+    for m in metrics:
+        if not isinstance(m, dict):
+            new_metrics.append(m)
+            continue
+
+        formula = str(m.get("formula", "")).strip()
+
+        # 已是合法 atomic → 不處理
+        if _ATOMIC_FORMULA_RE.match(formula) or _COUNT_DISTINCT_FORMULA_RE.match(formula):
+            new_metrics.append(m)
+            continue
+
+        # 已是 derived（含 mN 引用）→ 不處理
+        if _METRIC_REF_RE.search(formula):
+            new_metrics.append(m)
+            continue
+
+        # 找出所有 AGG 呼叫
+        agg_calls = _AGG_CALL_IN_EXPR_RE.findall(formula)
+        if len(agg_calls) < 2:
+            new_metrics.append(m)
+            continue
+
+        # 去重（保留順序）；以 normalize（去空白、大寫）作為去重 key
+        seen: dict[str, str] = {}
+        unique_aggs: list[str] = []
+        for agg in agg_calls:
+            norm = _re.sub(r"\s+", "", agg).upper()
+            if norm not in seen:
+                seen[norm] = agg
+                unique_aggs.append(agg)
+
+        changed = True
+        original_filters = m.get("filters", [])
+        derived_formula = formula
+
+        for agg in unique_aggs:
+            counter[0] += 1
+            new_id = f"m{counter[0]}"
+            new_alias = f"_auto_{counter[0]}"
+            norm = _re.sub(r"\s+", "", agg).upper()
+
+            # 在 derived formula 中，將此 AGG 呼叫（所有出現處）替換為 new_id
+            # 用 re.sub + re.escape 支援空白變化
+            pat = _re.compile(_re.escape(agg), _re.IGNORECASE)
+            derived_formula = pat.sub(new_id, derived_formula)
+
+            new_metrics.append({
+                "id": new_id,
+                "alias": new_alias,
+                "label": None,
+                "formula": agg,
+                "filters": list(original_filters),
+            })
+
+        # 原 metric 改為 derived（保留 id / alias / label / group_override）
+        derived_metric = {k: v for k, v in m.items()}
+        derived_metric["formula"] = derived_formula
+        derived_metric["filters"] = []
+        new_metrics.append(derived_metric)
+
+    if not changed:
+        return intent_dict
+
+    result = dict(intent_dict)
+    result["metrics"] = new_metrics
+    return result
+
 
 class MetricV4(BaseModel):
     model_config = ConfigDict(extra="forbid")

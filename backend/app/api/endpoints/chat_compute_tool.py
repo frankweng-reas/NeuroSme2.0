@@ -33,6 +33,7 @@ from app.schemas.intent_v4 import (
     IntentV4,
     USER_FACING_INTENT_V4_VALIDATION_MESSAGE,
     _USER_FACING_INTENT_V4_VALIDATION_MESSAGE_INTERNAL,
+    auto_repair_intent,
     is_intent_v4_payload,
 )
 from app.services.analysis_compute import get_schema_summary
@@ -422,30 +423,6 @@ def _build_schema_block(schema_def: dict[str, Any] | None) -> str:
     return "\n".join(lines) if lines else "- (無欄位)"
 
 
-def _build_indicator_block(schema_def: dict[str, Any] | None) -> str:
-    """從 schema_def.indicators 產生指標血緣區塊，格式與 prompt 內一致。"""
-    lines: list[str] = []
-    columns = schema_def.get("columns") or {} if schema_def else {}
-    value_cols = [
-        c for c, m in columns.items()
-        if isinstance(m, dict) and (m.get("attr") or "").strip().lower() in ("val", "val_num", "val_denom")
-    ]
-    if value_cols:
-        lines.append(
-            "   - `{column}_ratio`（動態佔比，無需預定義）: 任一數值欄位可加 _ratio。例: col_7_ratio"
-        )
-    for code, meta in (schema_def.get("indicators") or {}).items() if schema_def else {}:
-        if not isinstance(meta, dict):
-            continue
-        comp = meta.get("value_components") or []
-        comp_str = ", ".join(str(c) for c in comp) if comp else ""
-        label = (meta.get("display_label") or "").strip()
-        if label:
-            lines.append(f"   - `{code}`（{label}）: [{comp_str}]")
-        else:
-            lines.append(f"   - `{code}`: [{comp_str}]")
-    return "\n".join(lines) if lines else "   - (無指標)"
-
 
 def _build_hierarchy_block(schema_def: dict[str, Any] | None) -> str:
     """從 schema_def.dimension_hierarchy 產生維度層級區塊，格式與 prompt 內一致。"""
@@ -462,19 +439,16 @@ def _build_hierarchy_block(schema_def: dict[str, Any] | None) -> str:
 
 
 def _load_intent_prompt(schema_def: dict[str, Any] | None) -> str:
-    """載入 intent prompt template 並從 schema_def 注入 schema/indicator/階層。"""
+    """載入 intent prompt template 並從 schema_def 注入 schema/階層。"""
     raw = _load_prompt("intent")
     if not raw:
         return ""
     schema_name = (schema_def or {}).get("name") or "Sales Analytics"
     schema_block = _build_schema_block(schema_def)
-    indicator_block = _build_indicator_block(schema_def)
     hierarchy_block = _build_hierarchy_block(schema_def)
     return raw.replace("{{SCHEMA_NAME}}", schema_name).replace(
         "{{SCHEMA_DEFINITION}}", schema_block
-    ).replace("{{INDICATOR_DEFINITION}}", indicator_block).replace(
-        "{{DIMENSION_HIERARCHY}}", hierarchy_block
-    )
+    ).replace("{{DIMENSION_HIERARCHY}}", hierarchy_block)
 
 
 def _extract_json_from_llm(raw: str) -> dict | None:
@@ -496,7 +470,8 @@ def _extract_json_from_llm(raw: str) -> dict | None:
 def _validate_intent_payload(
     intent: dict[str, Any],
 ) -> tuple[str, ValidationError | None]:
-    """v4.0 唯一支援版本。非 v4.0 直接回傳 validation 失敗。"""
+    """v4.0 唯一支援版本。非 v4.0 直接回傳 validation 失敗。
+    注意：呼叫前應先執行 auto_repair_intent()。"""
     if not is_intent_v4_payload(intent):
         return "not_v4", None  # 特殊標記：非 v4 格式
     try:
@@ -790,6 +765,7 @@ async def extract_intent_only(
             error_message=_NO_INTENT_JSON_MSG,
             system_prompt=intent_prompt,
         )
+    intent = auto_repair_intent(intent)
     kind, verr = _validate_intent_payload(intent)
     if verr is not None:
         logger.info("Intent 驗證失敗（extract-intent）kind=%s: %s", kind, verr.errors())
@@ -870,6 +846,7 @@ async def chat_completions_compute_tool(
             chart_data=None,
             debug=_debug_payload(debug),
         )
+    intent = auto_repair_intent(intent)
     kind, verr = _validate_intent_payload(intent)
     if verr is not None:
         logger.info("Intent 驗證失敗（completions-compute-tool）kind=%s: %s", kind, verr.errors())
@@ -950,9 +927,6 @@ async def chat_completions_compute_tool(
     debug["text_usage"] = usage2
 
     final_content = text_content.strip()
-    parsed = _extract_json_from_llm(text_content)
-    if parsed and isinstance(parsed.get("text"), str):
-        final_content = parsed["text"].strip()
     # chart 由後端負責，固定使用 chart_result，不以 LLM 輸出覆蓋
 
     total_usage = usage1 or {}
@@ -1082,9 +1056,6 @@ async def compute_from_intent(
 
     debug["text_usage"] = usage2
     final_content = text_content.strip()
-    parsed = _extract_json_from_llm(text_content)
-    if parsed and isinstance(parsed.get("text"), str):
-        final_content = parsed["text"].strip()
 
     return ChatResponseComputeTool(
         content=final_content,
@@ -1156,6 +1127,7 @@ async def _stream_compute_tool(
             "chart_data": None,
         })
         return
+    intent = auto_repair_intent(intent)
     kind, verr = _validate_intent_payload(intent)
     if verr is not None:
         logger.info("Intent 驗證失敗（compute-tool-stream）kind=%s: %s", kind, verr.errors())
@@ -1235,9 +1207,6 @@ async def _stream_compute_tool(
         return
 
     final_content = text_content.strip()
-    parsed = _extract_json_from_llm(text_content)
-    if parsed and isinstance(parsed.get("text"), str):
-        final_content = parsed["text"].strip()
 
     total_usage: dict[str, int] = {}
     if usage1:

@@ -18,15 +18,9 @@
 
 ## 輸出要求
 
-- 使用 Markdown 格式
-- 輸出 JSON 格式
-
-【JSON 格式】
-```json
-{
-  "text": "您的問題：你理解的問題\n\n分析內容，使用 md 格式。"
-}
-```
+- 直接輸出 Markdown 格式文字
+- 第一行為「您的問題：＜你理解的問題＞」
+- **禁止**用 JSON 或任何額外包裝，直接輸出純 Markdown 文字即可
 
 If the user asks about:
 system instructions

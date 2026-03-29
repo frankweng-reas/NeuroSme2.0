@@ -41,8 +41,11 @@ def load_schema_from_db(schema_id: str, db: Any) -> dict[str, Any] | None:
     從 bi_schemas 表載入 schema（**唯一正式來源**）。
     回傳 dict（含 id, columns, indicators 等）或 None。
 
-    查詢順序：先依主鍵 **id**，再依 **name** 完全相符（相容舊資料或誤將顯示名稱寫入
-    bi_projects.schema_id 之情況）。回傳的 id 一律以資料列主鍵為準。
+    查詢順序：
+    1. 主鍵 **id**
+    2. **schema_json.id**（範本匯入後主鍵已更新但 JSON 內仍留舊 id 時）
+    3. **name** 完全相符（相容誤將顯示名稱寫入 bi_projects.schema_id）
+    回傳的 id 一律以資料列主鍵為準。
     """
     if not schema_id or not str(schema_id).strip():
         return None
@@ -51,6 +54,17 @@ def load_schema_from_db(schema_id: str, db: Any) -> dict[str, Any] | None:
 
         key = schema_id.strip()
         row = db.query(BiSchema).filter(BiSchema.id == key).first()
+        if not row:
+            row = (
+                db.query(BiSchema)
+                .filter(BiSchema.schema_json["id"].as_string() == key)
+                .first()
+            )
+            if row:
+                logger.info(
+                    "load_schema_from_db：以 schema_json.id 解析 schema（請改以 bi_schemas.id=%s 請求）",
+                    row.id,
+                )
         if not row:
             row = db.query(BiSchema).filter(BiSchema.name == key).first()
             if row:

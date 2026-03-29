@@ -5,14 +5,16 @@ export interface BiSchemaItem {
   name: string
   desc?: string | null
   is_template: boolean
+  agent_id?: string | null
 }
 
 export interface BiSchemaDetail extends BiSchemaItem {
   schema_json: Record<string, unknown>
 }
 
-export async function listBiSchemas(): Promise<BiSchemaItem[]> {
-  return apiFetch<BiSchemaItem[]>('/bi-schemas/')
+export async function listBiSchemas(agentId?: string): Promise<BiSchemaItem[]> {
+  const qs = agentId ? `?agent_id=${encodeURIComponent(agentId)}` : ''
+  return apiFetch<BiSchemaItem[]>(`/bi-schemas/${qs}`)
 }
 
 export async function getBiSchema(schemaId: string): Promise<BiSchemaDetail> {
@@ -23,6 +25,7 @@ export async function createBiSchema(body: {
   id?: string
   name: string
   desc?: string
+  agent_id?: string
   schema_json: Record<string, unknown>
 }): Promise<{ id: string; name: string }> {
   return apiFetch<{ id: string; name: string }>('/bi-schemas/', {

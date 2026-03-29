@@ -34,20 +34,24 @@ def list_agents(
     db: Session = Depends(get_db),
     current: Annotated[User, Depends(get_current_user)] = ...,
     is_purchased: str | None = Query(None, description="傳 'true' 則只回傳 tenant 已購買的 agents（供 admin 權限設定用）"),
+    target_tenant_id: str | None = Query(None, description="admin 指定查詢的 tenant（不傳則用自己的 tenant）"),
 ):
-    """取得 agents 列表。admin 且 is_purchased 時回傳 tenant 內所有已購買的 agents；否則依 user_agents ∩ tenant_agents 過濾"""
+    """取得 agents 列表。admin 且 is_purchased 時回傳指定 tenant 已購買的 agents；否則依 user_agents ∩ tenant_agents 過濾"""
     user = current
     if is_purchased and str(is_purchased).lower() == "true" and user.role in ("admin", "super_admin"):
-        # admin 權限設定：回傳 tenant 已購買的 agents
-        purchased_ids = _get_tenant_purchased_agent_ids(db, user.tenant_id)
-        catalogs = db.query(AgentCatalog).filter(AgentCatalog.id.in_(purchased_ids)).order_by(
+        # admin 權限設定：依指定的 tenant_id（或自己的 tenant）查詢已購買 agents
+        lookup_tenant_id = target_tenant_id if target_tenant_id else user.tenant_id
+        purchased_ids = _get_tenant_purchased_agent_ids(db, lookup_tenant_id)
+        catalogs = db.query(AgentCatalog).filter(
+            AgentCatalog.agent_id.in_(purchased_ids)
+        ).order_by(
             AgentCatalog.sort_id.asc().nulls_last(),
             AgentCatalog.id.asc(),
         ).all()
-        return [AgentResponse.from_catalog(c, user.tenant_id) for c in catalogs]
+        return [AgentResponse.from_catalog(c, lookup_tenant_id) for c in catalogs]
     # 一般：回傳 user 有權限的 agents（user_agents ∩ tenant_agents）
     allowed_ids = get_agent_ids_for_user(db, user.id)
-    catalogs = db.query(AgentCatalog).filter(AgentCatalog.id.in_(allowed_ids)).order_by(
+    catalogs = db.query(AgentCatalog).filter(AgentCatalog.agent_id.in_(allowed_ids)).order_by(
             AgentCatalog.sort_id.asc().nulls_last(),
             AgentCatalog.id.asc(),
         ).all()
@@ -64,10 +68,10 @@ def get_agent(
     tenant_id, aid = _parse_agent_id(agent_id, current.tenant_id)
     if tenant_id != current.tenant_id:
         raise HTTPException(status_code=403, detail="無權限存取此助理")
-    catalog = db.query(AgentCatalog).filter(AgentCatalog.id == aid).first()
+    catalog = db.query(AgentCatalog).filter(AgentCatalog.agent_id == aid).first()
     if not catalog:
         raise HTTPException(status_code=404, detail="Agent not found")
     allowed_ids = get_agent_ids_for_user(db, current.id)
-    if catalog.id not in allowed_ids:
+    if catalog.agent_id not in allowed_ids:
         raise HTTPException(status_code=403, detail="無權限存取此助理")
     return AgentResponse.from_catalog(catalog, current.tenant_id)

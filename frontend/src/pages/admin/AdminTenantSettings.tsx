@@ -1,10 +1,7 @@
 /** Admin：Tenant 設定區塊（僅 super_admin 可見） */
 import { useCallback, useEffect, useState } from 'react'
 import {
-  createAgentCatalog,
-  deleteAgentCatalog,
   listAgentCatalog,
-  updateAgentCatalog,
 } from '@/api/agentCatalog'
 import {
   createTenant,
@@ -21,11 +18,10 @@ import InputModal from '@/components/InputModal'
 import { useToast } from '@/contexts/ToastContext'
 import type { AgentCatalog, Tenant } from '@/types'
 
-type TabId = 'tenants' | 'agents' | 'tenant-agents'
+type TabId = 'tenants' | 'tenant-agents'
 
 const TABS: { id: TabId; label: string }[] = [
   { id: 'tenants', label: 'Tenants' },
-  { id: 'agents', label: 'Agents' },
   { id: 'tenant-agents', label: 'Tenant Agents' },
 ]
 
@@ -42,23 +38,8 @@ export default function AdminTenantSettings() {
   const [deleteConfirm, setDeleteConfirm] = useState<{ tenantId: string } | null>(null)
   const [tenantFormOpen, setTenantFormOpen] = useState(false)
 
-  // Agents tab
+  // Agents data (used by Tenant Agents tab)
   const [agents, setAgents] = useState<AgentCatalog[]>([])
-  const [agentsLoading, setAgentsLoading] = useState(false)
-  const [agentsError, setAgentsError] = useState<string | null>(null)
-  const [agentForm, setAgentForm] = useState({
-    id: '',
-    sort_id: '',
-    group_id: '',
-    group_name: '',
-    agent_id: '',
-    agent_name: '',
-    icon_name: '',
-  })
-  const [editingAgentId, setEditingAgentId] = useState<string | null>(null)
-  const [agentsSaving, setAgentsSaving] = useState(false)
-  const [deleteAgentConfirm, setDeleteAgentConfirm] = useState<{ agentId: string } | null>(null)
-  const [agentFormOpen, setAgentFormOpen] = useState(false)
 
   // Tenant Agents tab
   const [selectedTenantIdForAgents, setSelectedTenantIdForAgents] = useState<string | null>(null)
@@ -81,24 +62,14 @@ export default function AdminTenantSettings() {
   }, [])
 
   const loadAgents = useCallback(() => {
-    setAgentsError(null)
-    setAgentsLoading(true)
     listAgentCatalog()
       .then(setAgents)
-      .catch((err) => {
-        setAgents([])
-        setAgentsError(err instanceof ApiError && err.status === 403 ? '需 super_admin 權限' : '無法載入 agents')
-      })
-      .finally(() => setAgentsLoading(false))
+      .catch(() => setAgents([]))
   }, [])
 
   useEffect(() => {
     if (activeTab === 'tenants') loadTenants()
   }, [activeTab, loadTenants])
-
-  useEffect(() => {
-    if (activeTab === 'agents') loadAgents()
-  }, [activeTab, loadAgents])
 
   useEffect(() => {
     if (activeTab === 'tenant-agents') {
@@ -193,112 +164,6 @@ export default function AdminTenantSettings() {
     setDeleteConfirm(null)
   }, [])
 
-  // Agents handlers
-  const handleAgentAddClick = useCallback(() => {
-    setEditingAgentId(null)
-    setAgentForm({ id: '', sort_id: '', group_id: '', group_name: '', agent_id: '', agent_name: '', icon_name: '' })
-    setAgentFormOpen(true)
-  }, [])
-
-  const handleAgentStartEdit = useCallback((a: AgentCatalog) => {
-    setEditingAgentId(a.id)
-    setAgentForm({
-      id: a.id,
-      sort_id: a.sort_id ?? '',
-      group_id: a.group_id,
-      group_name: a.group_name,
-      agent_id: a.agent_id,
-      agent_name: a.agent_name,
-      icon_name: a.icon_name ?? '',
-    })
-    setAgentFormOpen(true)
-  }, [])
-
-  const handleAgentCancelEdit = useCallback(() => {
-    setEditingAgentId(null)
-    setAgentForm({ id: '', sort_id: '', group_id: '', group_name: '', agent_id: '', agent_name: '', icon_name: '' })
-    setAgentFormOpen(false)
-  }, [])
-
-  const handleAgentSubmit = useCallback(async () => {
-    const { id, sort_id, group_id, group_name, agent_id, agent_name, icon_name } = agentForm
-    const gid = group_id.trim()
-    const gname = group_name.trim()
-    const aid = agent_id.trim()
-    const aname = agent_name.trim()
-    if (!gid || !gname || !aid || !aname) {
-      showToast('請填寫必填欄位（group_id, group_name, agent_id, agent_name）', 'error')
-      return
-    }
-    if (!editingAgentId && !id.trim()) {
-      showToast('新增時請填寫 ID', 'error')
-      return
-    }
-    setAgentsSaving(true)
-    try {
-      if (editingAgentId) {
-        const updated = await updateAgentCatalog(editingAgentId, {
-          sort_id: sort_id.trim() || null,
-          group_id: gid,
-          group_name: gname,
-          agent_id: aid,
-          agent_name: aname,
-          icon_name: icon_name.trim() || null,
-        })
-        setAgents((prev) => {
-          const filtered = prev.filter((a) => a.id !== editingAgentId)
-          return [...filtered, updated].sort((a, b) => (a.sort_id ?? a.id).localeCompare(b.sort_id ?? b.id))
-        })
-        showToast('已更新')
-      } else {
-        const newId = id.trim()
-        await createAgentCatalog({
-          id: newId,
-          sort_id: sort_id.trim() || null,
-          group_id: gid,
-          group_name: gname,
-          agent_id: aid,
-          agent_name: aname,
-          icon_name: icon_name.trim() || null,
-        })
-        setAgents((prev) =>
-          [...prev, { id: newId, sort_id: sort_id.trim() || null, group_id: gid, group_name: gname, agent_id: aid, agent_name: aname, icon_name: icon_name.trim() || null }].sort(
-            (a, b) => (a.sort_id ?? a.id).localeCompare(b.sort_id ?? b.id)
-          )
-        )
-        showToast('已新增')
-      }
-      handleAgentCancelEdit()
-    } catch (err) {
-      const msg = err instanceof ApiError && err.detail ? err.detail : '儲存失敗'
-      showToast(msg, 'error')
-    } finally {
-      setAgentsSaving(false)
-    }
-  }, [editingAgentId, agentForm, handleAgentCancelEdit, showToast])
-
-  const handleAgentDeleteClick = useCallback((id: string) => {
-    setDeleteAgentConfirm({ agentId: id })
-  }, [])
-
-  const handleAgentDeleteConfirm = useCallback(async () => {
-    if (!deleteAgentConfirm) return
-    const { agentId } = deleteAgentConfirm
-    setDeleteAgentConfirm(null)
-    try {
-      await deleteAgentCatalog(agentId)
-      setAgents((prev) => prev.filter((a) => a.id !== agentId))
-      showToast('已刪除')
-    } catch (err) {
-      const msg = err instanceof ApiError && err.detail ? err.detail : '刪除失敗'
-      showToast(msg, 'error')
-    }
-  }, [deleteAgentConfirm, showToast])
-
-  const handleAgentDeleteCancel = useCallback(() => {
-    setDeleteAgentConfirm(null)
-  }, [])
-
   // Tenant Agents handlers
   const toggleTenantAgent = useCallback((agentId: string) => {
     setTenantAgentIds((prev) => {
@@ -310,7 +175,7 @@ export default function AdminTenantSettings() {
   }, [])
 
   const selectAllTenantAgents = useCallback(() => {
-    setTenantAgentIds(new Set(agents.map((a) => a.id)))
+    setTenantAgentIds(new Set(agents.map((a) => a.agent_id)))
   }, [agents])
 
   const deselectAllTenantAgents = useCallback(() => {
@@ -341,9 +206,9 @@ export default function AdminTenantSettings() {
   const selectedTenantForAgents = tenantAgentsTenants.find((t) => t.id === selectedTenantIdForAgents)
 
   return (
-    <div className="text-[18px]">
-      {/* Tab 導航 - 現代感、區分明顯 */}
-      <div className="mb-8">
+    <div className="flex h-full flex-col">
+      {/* Tab 導航 */}
+      <div className="mb-6 flex-shrink-0 text-[18px]">
         <div
           className="inline-flex gap-1 rounded-xl border-2 border-gray-200 bg-gray-100 p-1.5 shadow-sm"
           role="tablist"
@@ -371,8 +236,8 @@ export default function AdminTenantSettings() {
         </div>
       </div>
 
-      {/* Tab 內容區 - 僅渲染當前 tab */}
-      <div className="min-h-0 flex-1 overflow-hidden">
+      {/* Tab 內容區 - 此區捲動，tab 不動 */}
+      <div className="min-h-0 flex-1 overflow-y-auto text-[18px]">
         {activeTab === 'tenants' && (
       <div
         id="panel-tenants"
@@ -426,84 +291,6 @@ export default function AdminTenantSettings() {
                       <button
                         type="button"
                         onClick={() => handleDeleteClick(t.id)}
-                        className="text-[18px] text-red-600 hover:underline"
-                      >
-                        刪除
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-        )}
-
-        {activeTab === 'agents' && (
-      <div
-        id="panel-agents"
-        role="tabpanel"
-        aria-labelledby="tab-agents"
-        className="rounded-xl border border-gray-200 bg-gray-50/50 p-6"
-      >
-        <div className="mb-4 flex items-center gap-4">
-          <button
-            type="button"
-            onClick={handleAgentAddClick}
-            className="rounded-lg px-4 py-2 text-[18px] font-medium text-white shadow-sm"
-            style={{ backgroundColor: '#4b5563' }}
-          >
-            新增
-          </button>
-          <span className="text-[18px] text-gray-600">注意，sort_id 影響畫面上的排序</span>
-        </div>
-
-        {/* 表格 */}
-        {agentsLoading ? (
-          <div className="flex items-center justify-center py-12">
-            <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-400 border-t-transparent" />
-          </div>
-        ) : agentsError ? (
-          <p className="text-[18px] text-red-600">{agentsError}</p>
-        ) : agents.length === 0 ? (
-          <p className="text-[18px] text-gray-500">尚無 agent 資料</p>
-        ) : (
-          <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
-            <table className="min-w-full border-collapse text-[18px]">
-              <thead>
-                <tr className="border-b border-gray-200 bg-gray-100">
-                  <th className="px-4 py-3 text-left font-semibold text-gray-800">ID</th>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-800">sort_id</th>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-800">group_id</th>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-800">group_name</th>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-800">agent_id</th>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-800">agent_name</th>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-800">icon_name</th>
-                  <th className="px-4 py-3 text-right font-semibold text-gray-800">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {agents.map((a) => (
-                  <tr key={a.id} className="border-b border-gray-100 hover:bg-gray-50/50">
-                    <td className="px-4 py-3 font-mono text-gray-900">{a.id}</td>
-                    <td className="px-4 py-3 text-gray-500">{a.sort_id ?? '-'}</td>
-                    <td className="px-4 py-3 text-gray-900">{a.group_id}</td>
-                    <td className="px-4 py-3 text-gray-900">{a.group_name}</td>
-                    <td className="px-4 py-3 font-mono text-gray-900">{a.agent_id}</td>
-                    <td className="px-4 py-3 text-gray-900">{a.agent_name}</td>
-                    <td className="px-4 py-3 text-gray-500">{a.icon_name ?? '-'}</td>
-                    <td className="px-4 py-3 text-right">
-                      <button
-                        type="button"
-                        onClick={() => handleAgentStartEdit(a)}
-                        className="mr-2 text-[18px] text-blue-600 hover:underline"
-                      >
-                        編輯
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleAgentDeleteClick(a.id)}
                         className="text-[18px] text-red-600 hover:underline"
                       >
                         刪除
@@ -584,7 +371,7 @@ export default function AdminTenantSettings() {
                 </div>
               ) : agents.length === 0 ? (
                 <div className="flex flex-1 items-center justify-center rounded-lg border-2 border-dashed border-gray-200 bg-gray-50">
-                  <p className="text-[18px] text-gray-500">尚無 Agent 資料，請先在 Agents tab 新增</p>
+                  <p className="text-[18px] text-gray-500">尚無 Agent 資料</p>
                 </div>
               ) : (
                 <>
@@ -614,8 +401,8 @@ export default function AdminTenantSettings() {
                         >
                           <input
                             type="checkbox"
-                            checked={tenantAgentIds.has(a.id)}
-                            onChange={() => toggleTenantAgent(a.id)}
+                            checked={tenantAgentIds.has(a.agent_id)}
+                            onChange={() => toggleTenantAgent(a.agent_id)}
                             className="h-4 w-4 rounded border-gray-300 text-gray-600 focus:ring-gray-500"
                           />
                           <div
@@ -688,102 +475,6 @@ export default function AdminTenantSettings() {
         onConfirm={handleDeleteConfirm}
         onCancel={handleDeleteCancel}
       />
-      <ConfirmModal
-        open={!!deleteAgentConfirm}
-        title="刪除 Agent"
-        message={
-          deleteAgentConfirm
-            ? `確定要刪除 agent「${deleteAgentConfirm.agentId}」？若有關聯資料將無法刪除。`
-            : ''
-        }
-        confirmText="刪除"
-        variant="danger"
-        onConfirm={handleAgentDeleteConfirm}
-        onCancel={handleAgentDeleteCancel}
-      />
-
-      <InputModal
-        open={agentFormOpen}
-        title={editingAgentId ? '編輯 Agent' : '新增 Agent'}
-        submitLabel={editingAgentId ? '更新' : '新增'}
-        loading={agentsSaving}
-        onSubmit={handleAgentSubmit}
-        onClose={handleAgentCancelEdit}
-      >
-        <div className="space-y-4">
-          <div>
-            <label className="mb-1 block text-[18px] text-gray-700">ID</label>
-            <input
-              type="text"
-              value={agentForm.id}
-              onChange={(e) => setAgentForm((f) => ({ ...f, id: e.target.value }))}
-              disabled={!!editingAgentId}
-              placeholder="例：agent_01"
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-[18px] focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400 disabled:bg-gray-100 disabled:text-gray-500"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-[18px] text-gray-700">sort_id</label>
-            <input
-              type="text"
-              value={agentForm.sort_id}
-              onChange={(e) => setAgentForm((f) => ({ ...f, sort_id: e.target.value }))}
-              placeholder="例：001（影響排序，選填）"
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-[18px] focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-[18px] text-gray-700">group_id</label>
-            <input
-              type="text"
-              value={agentForm.group_id}
-              onChange={(e) => setAgentForm((f) => ({ ...f, group_id: e.target.value }))}
-              placeholder="例：group_1"
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-[18px] focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-[18px] text-gray-700">group_name</label>
-            <input
-              type="text"
-              value={agentForm.group_name}
-              onChange={(e) => setAgentForm((f) => ({ ...f, group_name: e.target.value }))}
-              placeholder="例：業務助理"
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-[18px] focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-[18px] text-gray-700">agent_id</label>
-            <input
-              type="text"
-              value={agentForm.agent_id}
-              onChange={(e) => setAgentForm((f) => ({ ...f, agent_id: e.target.value }))}
-              placeholder="例：agent_01"
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-[18px] focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-[18px] text-gray-700">agent_name</label>
-            <input
-              type="text"
-              value={agentForm.agent_name}
-              onChange={(e) => setAgentForm((f) => ({ ...f, agent_name: e.target.value }))}
-              placeholder="例：銷售助理"
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-[18px] focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-[18px] text-gray-700">icon_name</label>
-            <input
-              type="text"
-              value={agentForm.icon_name}
-              onChange={(e) => setAgentForm((f) => ({ ...f, icon_name: e.target.value }))}
-              placeholder="選填"
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-[18px] focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400"
-            />
-          </div>
-        </div>
-      </InputModal>
     </div>
   )
 }

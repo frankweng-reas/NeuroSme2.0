@@ -20,11 +20,15 @@ interface AgentHeaderProps {
   className?: string
   /** 是否顯示主管工具（僅報價型 agent 使用，其他 agent 不顯示） */
   showManagerTools?: boolean
+  /** 是否顯示 Schema 管理按鈕（manager 以上角色才顯示） */
+  showSchemaManager?: boolean
+  /** 點擊 Schema 管理按鈕的 callback */
+  onSchemaManagerOpen?: () => void
   /** 自訂 header 背景色，未傳則用預設 #4b5563 */
   headerBackgroundColor?: string
 }
 
-export default function AgentHeader({ agent, className = '', showManagerTools: showManagerToolsProp = false, headerBackgroundColor = '#4b5563' }: AgentHeaderProps) {
+export default function AgentHeader({ agent, className = '', showManagerTools: showManagerToolsProp = false, showSchemaManager = false, onSchemaManagerOpen, headerBackgroundColor = '#4b5563' }: AgentHeaderProps) {
   const { user: authUser } = useAuth()
   const [user, setUser] = useState<User | null>(null)
   const [managerToolsOpen, setManagerToolsOpen] = useState(false)
@@ -53,6 +57,7 @@ export default function AgentHeader({ agent, className = '', showManagerTools: s
   }, [authUser])
 
   const showManagerTools = showManagerToolsProp && (user?.role === 'admin' || user?.role === 'manager')
+  const canManageSchema = showSchemaManager && (user?.role === 'manager' || user?.role === 'admin' || user?.role === 'super_admin')
 
   const handleCatalogFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]
@@ -133,6 +138,15 @@ export default function AgentHeader({ agent, className = '', showManagerTools: s
             </div>
           </div>
           <div className="flex items-center gap-3">
+            {canManageSchema && (
+              <button
+                type="button"
+                onClick={onSchemaManagerOpen}
+                className="rounded-3xl border border-white/30 bg-white/10 px-4 py-2 text-sm font-medium text-white transition-opacity hover:bg-white/20"
+              >
+                Schema 管理
+              </button>
+            )}
             {showManagerTools && (
               <button
                 type="button"

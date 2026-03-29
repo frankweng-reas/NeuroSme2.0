@@ -15,6 +15,7 @@ import HelpModal from '@/components/HelpModal'
 import AgentHeader from '@/components/AgentHeader'
 import ConfirmModal from '@/components/ConfirmModal'
 import InputModal from '@/components/InputModal'
+import SchemaManagerOverlay from '@/components/SchemaManagerOverlayV2'
 import { createBiProject, deleteBiProject, getDuckdbStatus, importCsvToDuckdb, listBiProjects, updateBiProject, type BiProjectItem, type MessageStored } from '@/api/biProjects'
 import { getBiSchema, listBiSchemas, type BiSchemaItem } from '@/api/biSchemas'
 import { DETAIL_OPTIONS, LANGUAGE_OPTIONS, ROLE_OPTIONS } from '@/constants/aiOptions'
@@ -485,12 +486,13 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
   const [schemas, setSchemas] = useState<BiSchemaItem[]>([])
   const [csvAdapterToast, setCsvAdapterToast] = useState<string | null>(null)
   const [duckdbRowCount, setDuckdbRowCount] = useState<number | null>(null)
+  const [schemaManagerOpen, setSchemaManagerOpen] = useState(false)
 
   const loadSchemas = useCallback(() => {
-    listBiSchemas()
+    listBiSchemas(agent.agent_id)
       .then(setSchemas)
       .catch(() => setSchemas([]))
-  }, [])
+  }, [agent.agent_id])
 
   // 切換專案時，用已儲存的 schema_id 預填 blocks
   useEffect(() => {
@@ -1159,7 +1161,20 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
           )}
         </div>
       </InputModal>
-      <AgentHeader agent={agent} headerBackgroundColor="#1C3939" />
+      <AgentHeader
+        agent={agent}
+        headerBackgroundColor="#1C3939"
+        showSchemaManager
+        onSchemaManagerOpen={() => setSchemaManagerOpen(true)}
+      />
+      {schemaManagerOpen && (
+        <SchemaManagerOverlay
+          agentId={agent.agent_id}
+          agentName={agent.agent_name}
+          onClose={() => setSchemaManagerOpen(false)}
+          onSchemaChanged={loadSchemas}
+        />
+      )}
 
       <div className="mt-4 flex min-h-0 flex-1 gap-4 overflow-hidden">
         {/* 左側：專案 sidebar（可折疊，與 AgentQuotationUI 一致） */}
@@ -1393,8 +1408,8 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
             className="absolute inset-0 bg-black/40 backdrop-blur-sm"
             onClick={() => setImportDrawerOpen(false)}
           />
-          {/* 抽屜本體 */}
-          <div className="relative z-50 flex h-full w-80 flex-col bg-white shadow-2xl">
+          {/* 抽屜本體（靠左全高，右側大圓角） */}
+          <div className="relative z-50 flex h-full w-80 flex-col overflow-hidden rounded-r-3xl bg-white shadow-2xl ring-1 ring-gray-200/60">
             {/* 抽屜 Header */}
             <div className="flex shrink-0 items-center justify-between border-b border-gray-200 px-4 py-3">
               <div className="flex items-center gap-2">

@@ -15,7 +15,6 @@ Failure to follow ANY rule is considered incorrect.
 {{SCHEMA_DEFINITION}}
 
 **層級** {{DIMENSION_HIERARCHY}}
-**指標** {{INDICATOR_DEFINITION}}
 
 # v4.0 語義規則
 

@@ -121,8 +121,8 @@ def update_tenant_agents(
     tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
-    # 驗證 agent_ids 皆存在於 agent_catalog
-    catalog_ids = {r.id for r in db.query(AgentCatalog.id).filter(AgentCatalog.id.in_(body.agent_ids)).all()}
+    # 驗證 agent_ids 皆存在於 agent_catalog（以 agent_catalog.agent_id 比對）
+    catalog_ids = {r.agent_id for r in db.query(AgentCatalog.agent_id).filter(AgentCatalog.agent_id.in_(body.agent_ids)).all()}
     invalid = set(body.agent_ids) - catalog_ids
     if invalid:
         raise HTTPException(status_code=400, detail=f"無效的 agent_id: {sorted(invalid)}")

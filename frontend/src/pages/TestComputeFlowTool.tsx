@@ -26,10 +26,10 @@ const STORAGE_KEY_PROJECT_LEGACY = 'bi_compute_project_id'
 const STORAGE_KEY_SCHEMA = 'bi_compute_schema_id'
 const STORAGE_KEY_PROMPT_WIDTH = 'bi_compute_prompt_width'
 
-/** 固定使用 Business insight agent（不讀 DB）。id 須與 agent_catalog.id 一致 */
+/** 固定使用 Business insight agent（不讀 DB）。agent_id 須與 agent_catalog.agent_id 一致 */
 const BUSINESS_INSIGHT_AGENT: Agent = {
-  id: '22',
-  agent_id: '22',
+  id: 'business',
+  agent_id: 'business',
   agent_name: 'Business Insight Agent',
   group_id: '',
   group_name: '',
@@ -132,6 +132,15 @@ export default function TestComputeFlowTool() {
       .catch(() => setSchemas([]))
       .finally(() => setSchemasLoading(false))
   }, [])
+
+  /** localStorage 可能留有已刪除列或誤存的 schema_json.id；若不在清單內則清除以免請求錯 id */
+  useEffect(() => {
+    if (schemasLoading) return
+    if (!selectedSchemaId) return
+    if (schemas.some((s) => s.id === selectedSchemaId)) return
+    setSelectedSchemaId('')
+    localStorage.removeItem(STORAGE_KEY_SCHEMA)
+  }, [schemas, schemasLoading, selectedSchemaId])
 
   function toChartData(cd: NonNullable<ComputeResult['chartData']>): ChartData {
     if (!cd || typeof cd !== 'object' || !('labels' in cd)) return cd as ChartData

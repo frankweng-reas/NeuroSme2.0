@@ -13,6 +13,7 @@ class BiSchema(Base):
     desc = Column(Text, nullable=True)  # 描述
     schema_json = Column(JSONB, nullable=False)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    agent_id = Column(String(100), nullable=True, index=True)
     is_template = Column(Boolean, nullable=False, server_default="false")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
