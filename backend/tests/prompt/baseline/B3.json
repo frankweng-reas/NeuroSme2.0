@@ -1,0 +1,25 @@
+{
+  "version": "4.0",
+  "dims": {
+    "groups": []
+  },
+  "filters": [],
+  "metrics": [
+    {
+      "id": "m1",
+      "alias": "brand_sales",
+      "label": "品牌銷售額",
+      "formula": "SUM(col_11)",
+      "filters": [
+        {
+          "col": "col_4",
+          "op": "in",
+          "val": [
+            "鮮乳坊",
+            "牧場直送"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "version": "4.0",
+  "dims": {
+    "groups": [
+      "col_1"
+    ]
+  },
+  "filters": [],
+  "metrics": [
+    {
+      "id": "m1",
+      "alias": "average_daily_sales",
+      "label": "每日平均銷售額",
+      "formula": "AVG(col_11)",
+      "filters": [
+        {
+          "col": "col_1",
+          "op": "between",
+          "val": [
+            "2026-03-23",
+            "2026-03-30"
+          ]
+        }
+      ]
+    }
+  ]
+}

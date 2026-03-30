@@ -161,6 +161,8 @@ def _user_message_for_compute_errors(
         return msg
     if "_resolve_columns" in msg or "rows 為空" in msg:
         return _append_technical_lines("無法解析欄位對應，請確認問題描述與資料 schema。")
+    if "不存在於此資料集的欄位" in msg:
+        return _append_technical_lines("資料欄位 AI 對應失敗，請換個方式描述您的問題或稍後再試一次。")
     if detail and msg:
         tail = f"\n\n【SQL】{(sql_debug or '').strip()}" if (sql_debug or "").strip() else ""
         return f"後端計算失敗：{msg}{tail}"
@@ -408,19 +410,33 @@ def _load_prompt(prompt_key: str) -> str:
 
 
 def _build_schema_block(schema_def: dict[str, Any] | None) -> str:
-    """從 schema_def.columns 產生 Data Schema 區塊，格式與 prompt 內一致。"""
+    """從 schema_def.columns 產生 Data Schema 區塊，按維度／數值分群。"""
     if not schema_def or not schema_def.get("columns"):
         return "- (無 schema 定義)"
-    lines: list[str] = []
-    for field, meta in (schema_def.get("columns") or {}).items():
+    columns = schema_def.get("columns") or {}
+
+    dim_lines: list[str] = []
+    val_lines: list[str] = []
+
+    for field, meta in columns.items():
         if not isinstance(meta, dict):
             continue
-        t = meta.get("type") or "str"
-        a = meta.get("attr") or "dim"
+        a = (meta.get("attr") or "dim").strip().lower()
         aliases = meta.get("aliases") or []
-        alias_str = ", ".join(str(x) for x in aliases) if aliases else ""
-        lines.append(f"- {field}: [{t}, {a}] {alias_str}".strip())
-    return "\n".join(lines) if lines else "- (無欄位)"
+        display = ", ".join(str(x) for x in aliases) if aliases else field
+        if a == "dim_time":
+            dim_lines.append(f"- {field}: {display}（時間，可用 MONTH/QUARTER/YEAR 分組）")
+        elif a in ("dim", "dim_text"):
+            dim_lines.append(f"- {field}: {display}")
+        else:  # val, val_num, val_denom ...
+            val_lines.append(f"- {field}: {display}")
+
+    parts: list[str] = []
+    if dim_lines:
+        parts.append("【維度欄位 — 可用於 dims.groups 及 filters】\n" + "\n".join(dim_lines))
+    if val_lines:
+        parts.append("【數值欄位 — 可用於 formula 聚合（SUM/AVG/COUNT）】\n" + "\n".join(val_lines))
+    return "\n\n".join(parts) if parts else "- (無欄位)"
 
 
 

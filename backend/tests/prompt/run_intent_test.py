@@ -83,7 +83,7 @@ def call_llm(model: str, system_prompt: str, user_content: str) -> str:
         ],
         temperature=0,
     )
-    return resp.choices[0].message.content or ""
+    return resp.choices[0].message.content or ""  # type: ignore[union-attr]
 
 
 def validate_intent(raw_output: str) -> tuple[dict | None, str | None]:
@@ -117,8 +117,34 @@ def save_baseline(case_id: str, intent: dict) -> None:
     path.write_text(json.dumps(intent, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _normalize_for_compare(intent: dict) -> dict:
+    """
+    比對前正規化：移除 metrics 的 label/alias（允許自由命名，不影響功能）。
+    post_process 中引用 alias 的欄位同步改為 metric id，避免誤報。
+    """
+    import copy
+    d = copy.deepcopy(intent)
+    # alias → id 對照表
+    alias_to_id: dict[str, str] = {}
+    for m in d.get("metrics", []):
+        if "alias" in m and "id" in m:
+            alias_to_id[m["alias"]] = m["id"]
+    # 移除 label、alias
+    for m in d.get("metrics", []):
+        m.pop("label", None)
+        m.pop("alias", None)
+    # post_process 裡的 alias 引用 → 換成 metric id
+    pp = d.get("post_process") or {}
+    if pp.get("where") and pp["where"].get("col") in alias_to_id:
+        pp["where"]["col"] = alias_to_id[pp["where"]["col"]]
+    for s in pp.get("sort", []):
+        if s.get("col") in alias_to_id:
+            s["col"] = alias_to_id[s["col"]]
+    return d
+
+
 def diff_summary(old: dict, new: dict) -> list[str]:
-    """簡單的一層 key diff，回傳有差異的說明。"""
+    """簡單的一層 key diff，回傳有差異的說明。label/alias 已在呼叫前正規化。"""
     diffs = []
     all_keys = set(old) | set(new)
     for k in sorted(all_keys):
@@ -195,6 +221,7 @@ def run(
             continue
 
         if save_baseline_mode:
+            assert intent is not None
             save_baseline(cid, intent)
             print(f"{GREEN}✅ 已儲存 baseline{RESET}")
             results["new"].append((cid, label))
@@ -206,7 +233,11 @@ def run(
             results["warn"].append((cid, label, "無 baseline"))
             continue
 
-        diffs = diff_summary(baseline, intent)
+        assert intent is not None
+        diffs = diff_summary(
+            _normalize_for_compare(baseline),
+            _normalize_for_compare(intent),
+        )
         if not diffs:
             print(f"{GREEN}✅ 通過{RESET}")
             results["pass"].append((cid, label))

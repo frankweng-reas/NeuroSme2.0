@@ -1,0 +1,34 @@
+{
+  "version": "4.0",
+  "mode": "list",
+  "select": [
+    "col_2",
+    "col_1",
+    "col_11"
+  ],
+  "dims": {
+    "groups": []
+  },
+  "filters": [
+    {
+      "col": "col_5",
+      "op": "eq",
+      "val": "乳品"
+    }
+  ],
+  "metrics": [],
+  "post_process": {
+    "where": {
+      "col": "col_11",
+      "op": "gt",
+      "val": 1000
+    },
+    "sort": [
+      {
+        "col": "col_11",
+        "order": "desc"
+      }
+    ],
+    "limit": 5
+  }
+}

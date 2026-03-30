@@ -264,7 +264,9 @@ export default function ChartModal({ open, data, onClose }: ChartModalProps) {
   }, [open, handleClose, isFullscreen])
 
   const barLineData = transformToBarLineData(data)
-  const pieSource = chartDataForPieView(data)
+  const effectiveDataForPie =
+    data.datasets && data.datasets.length > 0 ? { ...data, datasets: effectiveDatasets } : data
+  const pieSource = chartDataForPieView(effectiveDataForPie)
   const pieData = transformToPieData(pieSource)
   const valueSuffixForPie =
     (pieSource.datasets?.[0] as { valueSuffix?: string } | undefined)?.valueSuffix ?? data.valueSuffix ?? ''

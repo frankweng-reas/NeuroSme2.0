@@ -1,0 +1,45 @@
+{
+  "version": "4.0",
+  "dims": {
+    "groups": [
+      "col_4"
+    ]
+  },
+  "filters": [],
+  "metrics": [
+    {
+      "id": "m1",
+      "alias": "brand_sales",
+      "label": "品牌銷售額",
+      "formula": "SUM(col_11)",
+      "filters": [
+        {
+          "col": "col_5",
+          "op": "eq",
+          "val": "乳品"
+        }
+      ]
+    },
+    {
+      "id": "m2",
+      "alias": "total_dairy_sales",
+      "label": "乳品總銷售額",
+      "formula": "SUM(col_11)",
+      "group_override": [],
+      "filters": [
+        {
+          "col": "col_5",
+          "op": "eq",
+          "val": "乳品"
+        }
+      ]
+    },
+    {
+      "id": "m3",
+      "alias": "ratio",
+      "label": "佔比",
+      "formula": "m1 / m2",
+      "filters": []
+    }
+  ]
+}

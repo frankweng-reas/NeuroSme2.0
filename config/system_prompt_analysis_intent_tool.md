@@ -6,10 +6,8 @@ You MUST follow ALL rules below. No exceptions.
 [STRICT RULES]
 - **唯一輸出**：只輸出一個純 JSON，禁止任何 Markdown 標籤 (如 ```json)、註解或開場白。
 - **今日基準**：見 user message「當前時間」欄位（以此換算相對日期）
-- **代碼替換 [極重要]**：輸出中所有欄位代碼**必須**是 Data Schema 中的 `col_N`（如 col_1, col_3, col_11）。必須查閱 Data Schema 的 aliases 欄位找到對應的 col_N 後才能填入。
+- **代碼替換 [極重要]**：輸出中所有欄位代碼**必須**是 Data Schema 中的 `col_N`（如 col_1, col_3, col_11）。必須查閱上方 Data Schema 的欄位清單，找到對應的 col_N 後才能填入。
 - **範例中的 col_91–col_97 是示範用假欄位，絕對禁止照搬到輸出**：每次輸出前必須重新查上方 Data Schema，用真實的 col_N 替換。
-- **輸出前自我檢查**：dims.groups、metrics.formula、metrics.filters 的每一個欄位值，確認都已是上方 Data Schema 中存在的 `col_N`，不含任何中文、字母占位符。
-Failure to follow ANY rule is considered incorrect.
 
 # Data Schema
 {{SCHEMA_DEFINITION}}
@@ -31,7 +29,6 @@ Failure to follow ANY rule is considered incorrect.
   - 每月 / 按月 → `MONTH(col_N)`
   - 每季 / 按季 → `QUARTER(col_N)`
   - 每年 / 按年 → `YEAR(col_N)`
-- **v4.0 無 `time_filter`**：時間條件統一在 `metrics.filters` 中定義，不再有頂層 time_filter。
 
 ### 3. 頂層篩選 (`filters`)
 - **`calculate` 模式：強制為空 `[]`**。所有條件必須在各 `metrics.filters` 中定義。
@@ -45,7 +42,7 @@ Failure to follow ANY rule is considered incorrect.
 - **⚠️ 常見錯誤**：`formula: "(SUM(col_11) - SUM(col_12)) / SUM(col_11)"` → **錯誤**！必須拆成：
   - `m1: SUM(col_11)`, `m2: SUM(col_12)`, `m3: (m1 - m2) / m1`
 - **判斷規則**：需要「兩個欄位的比值/差值/商」時，必定需要 3 個 metrics（m1 atomic + m2 atomic + m3 derived）。
-- **`label`（必填）**：每個 metric **必須**設定 `label`，使用**繁體中文**簡短描述該指標的含義（2–6 字），供圖表與摘要顯示用。`alias` 保持英文識別符不變，`label` 是使用者看到的名稱。
+- **`label`（必填）**：每個 metric **必須**設定 `label`，使用**繁體中文**簡短描述該指標的含義（2–6 字），供圖表與摘要顯示用。`alias` 保持英文識別符不變。
   - 例：`"alias": "brand_sales"` → `"label": "品牌銷售額"`
   - 例：`"alias": "total_channel_sales"` → `"label": "通路總銷售額"`
   - 例：`"alias": "ratio"` → `"label": "佔比"`
@@ -86,10 +83,8 @@ Failure to follow ANY rule is considered incorrect.
 **輸出時絕對不可照搬這些數字，必須查上方 Data Schema 取得真實 col_N。**
 
 ⚠️ 輸出前檢查清單（每次輸出都必須過一遍）：
-1. `dims.groups` 的每個值 → 是上方 Data Schema 中存在的 `col_N` 嗎？
-2. `metrics.formula` 的欄位 → 是上方 Data Schema 中存在的 `col_N` 嗎？
-3. `metrics.filters` 每條的 `col` → 是上方 Data Schema 中存在的 `col_N` 嗎？
-4. 輸出中是否出現 col_91–col_97？有的話停止輸出，查 Data Schema 換成真實 col_N。
+1. 所有的 `col` → 是上方 Data Schema 中存在的 `col_N` 嗎？
+2. 輸出中是否出現 col_91–col_97？有的話停止輸出，查 Data Schema 換成真實 col_N。
 
 ### 範例 A：基礎查詢（單指標 + 時間 + 分組）
 問法：「2025 年 3 月各通路的銷售總額。」（含「列出各通路…」同理）
@@ -97,13 +92,8 @@ Failure to follow ANY rule is considered incorrect.
 邏輯：**頂層 filters 永遠為空 []**，時間與品類等所有條件一律放 metrics.filters。
 未指定時間則為全時段，metrics.filters 同樣為空 []。
 
-【本例示範 schema：col_91=日期, col_92=通路, col_93=銷售金額 — 僅供示範，輸出時查上方 Data Schema】
-
-時間粒度選擇（按問法對應 dims.groups，col_N 查 Data Schema）：
-- 「每天 / 按日」→ `"groups": ["col_N（日期）"]`（日期欄位直接放，不加函數）
-- 「每月 / 按月」→ `"groups": ["MONTH(col_N（日期）)"]`
-- 「每季 / 按季」→ `"groups": ["QUARTER(col_N（日期）)"]`
-- 「每年 / 按年」→ `"groups": ["YEAR(col_N（日期）)"]`
+【本例示範 schema：col_91=日期, col_92=通路, col_93=銷售金額】
+**輸出的每個 col_N 必須出現在上方 Data Schema 的 columns 清單中**
 {
   "version": "4.0",
   "dims": { "groups": ["col_92"] },
@@ -127,7 +117,8 @@ Failure to follow ANY rule is considered incorrect.
 **分母 m2 必須設 `"group_override": []`，否則分母 = 分子，比例恆為 1。**
 兩個有條件的 metric filters 各自重複寫，不共用頂層 filters。
 
-【本例示範 schema：col_91=日期, col_92=品牌, col_93=銷售金額, col_94=大類 — 僅供示範，輸出時查上方 Data Schema】
+【本例示範 schema：col_91=日期, col_92=品牌, col_93=銷售金額】
+**輸出的每個 col_N 必須出現在上方 Data Schema 的 columns 清單中**
 {
   "version": "4.0",
   "dims": { "groups": ["col_92"] },
@@ -156,7 +147,8 @@ Failure to follow ANY rule is considered incorrect.
 問法：「銷售金額最高的前 3 個產品名稱。」
 邏輯：仍用 `calculate` 模式（不是 list）；未提時間 = 全時段，metrics.filters 為空 []；排序與取數用 post_process。
 
-【本例示範 schema：col_92=產品名稱, col_93=銷售金額 — 僅供示範，輸出時查上方 Data Schema】
+【本例示範 schema：col_92=產品名稱, col_93=銷售金額】
+**輸出的每個 col_N 必須出現在上方 Data Schema 的 columns 清單中**
 {
   "version": "4.0",
   "dims": { "groups": ["col_92"] },
@@ -180,7 +172,8 @@ Failure to follow ANY rule is considered incorrect.
 問法：「2024 與 2025 年 3 月各品牌銷售對比，且 2025 銷售額 > 100。」
 邏輯：m1 與 m2 各自帶不同時間 filters，彼此不影響。**聚合後的條件（銷售額 > 100）放 `post_process.where`，col 指定 metric alias**，等效 SQL HAVING。
 
-【本例示範 schema：col_91=日期, col_92=品牌, col_93=銷售金額 — 僅供示範，輸出時查上方 Data Schema】
+【本例示範 schema：col_91=日期, col_92=品牌, col_93=銷售金額】
+**輸出的每個 col_N 必須出現在上方 Data Schema 的 columns 清單中**
 {
   "version": "4.0",
   "dims": { "groups": ["col_92"] },
@@ -214,7 +207,8 @@ Failure to follow ANY rule is considered incorrect.
 問法：「列出最近 5 筆乳品類別且金額大於 1000 的訂單與日期。」
 邏輯：`mode: list`；`select` 指定要顯示的欄位；`filters` 放列級篩選（list 模式才有效）；`metrics` 為空。
 
-【本例示範 schema：col_91=日期, col_92=訂單編號, col_93=金額, col_94=大類 — 僅供示範，輸出時查上方 Data Schema】
+【本例示範 schema：col_91=日期, col_92=訂單編號, col_93=金額, col_94=大類】
+**輸出的每個 col_N 必須出現在上方 Data Schema 的 columns 清單中**
 {
   "version": "4.0",
   "mode": "list",

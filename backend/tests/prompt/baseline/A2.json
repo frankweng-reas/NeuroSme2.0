@@ -1,0 +1,19 @@
+{
+  "version": "4.0",
+  "dims": {
+    "groups": [
+      "col_3",
+      "col_4"
+    ]
+  },
+  "filters": [],
+  "metrics": [
+    {
+      "id": "m1",
+      "alias": "total_sales",
+      "label": "銷售總額",
+      "formula": "SUM(col_11)",
+      "filters": []
+    }
+  ]
+}

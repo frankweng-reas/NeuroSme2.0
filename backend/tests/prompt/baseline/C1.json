@@ -1,0 +1,48 @@
+{
+  "version": "4.0",
+  "dims": {
+    "groups": []
+  },
+  "filters": [],
+  "metrics": [
+    {
+      "id": "m1",
+      "alias": "total_sales",
+      "label": "銷售總額",
+      "formula": "SUM(col_11)",
+      "filters": [
+        {
+          "col": "col_5",
+          "op": "eq",
+          "val": "穀物"
+        }
+      ]
+    },
+    {
+      "id": "m2",
+      "alias": "average_price",
+      "label": "平均單價",
+      "formula": "AVG(col_8)",
+      "filters": [
+        {
+          "col": "col_5",
+          "op": "eq",
+          "val": "穀物"
+        }
+      ]
+    },
+    {
+      "id": "m3",
+      "alias": "order_count",
+      "label": "訂單數量",
+      "formula": "COUNT(col_2)",
+      "filters": [
+        {
+          "col": "col_5",
+          "op": "eq",
+          "val": "穀物"
+        }
+      ]
+    }
+  ]
+}

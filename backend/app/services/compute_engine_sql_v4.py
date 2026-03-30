@@ -312,6 +312,42 @@ def _subset_dim_indices(metric: MetricV4, group_raw: list[str]) -> list[int]:
     return sorted(indices)
 
 
+def _collect_col_refs(intent: IntentV4) -> set[str]:
+    """收集 intent 中所有 col_* 欄位引用（不含 metric alias / id）。"""
+    _COL_RE = re.compile(r"\bcol_[a-zA-Z0-9_]+\b")
+    cols: set[str] = set()
+
+    for g in intent.dims.groups:
+        cols.update(_COL_RE.findall(g))
+
+    for f in intent.filters:
+        if f.col.startswith("col_"):
+            cols.add(f.col)
+
+    for m in intent.metrics:
+        cols.update(_COL_RE.findall(m.formula))
+        for f in m.filters:
+            if f.col.startswith("col_"):
+                cols.add(f.col)
+        for g in (m.group_override or []):
+            if g.startswith("col_"):
+                cols.add(g)
+
+    for c in (intent.select or []):
+        if c.startswith("col_"):
+            cols.add(c)
+
+    pp = intent.post_process
+    if pp:
+        for s in (pp.sort or []):
+            if s.col.startswith("col_"):
+                cols.add(s.col)
+        if pp.where and pp.where.col.startswith("col_"):
+            cols.add(pp.where.col)
+
+    return cols
+
+
 def try_build_sql_v4(
     intent: IntentV4,
     schema_def: dict[str, Any],
@@ -319,6 +355,14 @@ def try_build_sql_v4(
     allow = column_allowlist_from_schema(schema_def)
     if not allow:
         return None
+
+    unknown = _collect_col_refs(intent) - allow
+    if unknown:
+        raise ValueError(
+            f"intent 包含不存在於此資料集的欄位：{', '.join(sorted(unknown))}。"
+            "請確認欄位代碼是否正確（如 col_1, col_3）；"
+            "範例中的 col_91–col_97 為示範假欄位，不可直接使用。"
+        )
 
     if intent.mode == "list":
         return _build_list_sql(intent, allow, schema_def)

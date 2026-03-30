@@ -1,0 +1,58 @@
+{
+  "version": "4.0",
+  "dims": {
+    "groups": [
+      "QUARTER(col_1)",
+      "col_3"
+    ]
+  },
+  "filters": [],
+  "metrics": [
+    {
+      "id": "m1",
+      "alias": "sales_2025",
+      "label": "2025年銷售額",
+      "formula": "SUM(col_11)",
+      "filters": [
+        {
+          "col": "col_1",
+          "op": "between",
+          "val": [
+            "2025-01-01",
+            "2025-03-31"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "m2",
+      "alias": "sales_2024",
+      "label": "2024年銷售額",
+      "formula": "SUM(col_11)",
+      "filters": [
+        {
+          "col": "col_1",
+          "op": "between",
+          "val": [
+            "2024-01-01",
+            "2024-03-31"
+          ]
+        }
+      ]
+    }
+  ],
+  "post_process": {
+    "where": {
+      "col": "sales_2025",
+      "op": "gt",
+      "val": 1000
+    },
+    "sort": [
+      {
+        "col": "sales_2025",
+        "order": "desc"
+      }
+    ],
+    "limit": 5
+  }
+}

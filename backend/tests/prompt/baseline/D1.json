@@ -1,0 +1,27 @@
+{
+  "version": "4.0",
+  "dims": {
+    "groups": [
+      "col_1"
+    ]
+  },
+  "filters": [],
+  "metrics": [
+    {
+      "id": "m1",
+      "alias": "daily_sales",
+      "label": "每日銷售額",
+      "formula": "SUM(col_11)",
+      "filters": [
+        {
+          "col": "col_1",
+          "op": "between",
+          "val": [
+            "2025-03-01",
+            "2025-03-31"
+          ]
+        }
+      ]
+    }
+  ]
+}

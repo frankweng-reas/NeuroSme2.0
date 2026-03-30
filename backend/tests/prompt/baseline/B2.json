@@ -1,0 +1,24 @@
+{
+  "version": "4.0",
+  "dims": {
+    "groups": [
+      "col_3"
+    ]
+  },
+  "filters": [],
+  "metrics": [
+    {
+      "id": "m1",
+      "alias": "total_sales",
+      "label": "通路銷售額",
+      "formula": "SUM(col_11)",
+      "filters": [
+        {
+          "col": "col_3",
+          "op": "ne",
+          "val": "Momo"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "version": "4.0",
+  "dims": {
+    "groups": [
+      "col_4"
+    ]
+  },
+  "filters": [],
+  "metrics": [
+    {
+      "id": "m1",
+      "alias": "brand_sales",
+      "label": "品牌銷售額",
+      "formula": "SUM(col_11)",
+      "filters": []
+    },
+    {
+      "id": "m2",
+      "alias": "total_sales",
+      "label": "全通路全品牌總銷售額",
+      "formula": "SUM(col_11)",
+      "group_override": [],
+      "filters": []
+    },
+    {
+      "id": "m3",
+      "alias": "ratio",
+      "label": "佔比",
+      "formula": "m1 / m2",
+      "filters": []
+    }
+  ]
+}

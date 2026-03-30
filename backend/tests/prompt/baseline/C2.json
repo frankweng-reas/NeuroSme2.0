@@ -1,0 +1,32 @@
+{
+  "version": "4.0",
+  "dims": {
+    "groups": [
+      "col_4"
+    ]
+  },
+  "filters": [],
+  "metrics": [
+    {
+      "id": "m1",
+      "alias": "total_sales",
+      "label": "銷售總額",
+      "formula": "SUM(col_11)",
+      "filters": []
+    },
+    {
+      "id": "m2",
+      "alias": "total_cost",
+      "label": "總成本",
+      "formula": "SUM(col_12)",
+      "filters": []
+    },
+    {
+      "id": "m3",
+      "alias": "gross_margin_ratio",
+      "label": "毛利率",
+      "formula": "(m1 - m2) / m1",
+      "filters": []
+    }
+  ]
+}

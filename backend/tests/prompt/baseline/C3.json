@@ -1,0 +1,18 @@
+{
+  "version": "4.0",
+  "dims": {
+    "groups": [
+      "col_3"
+    ]
+  },
+  "filters": [],
+  "metrics": [
+    {
+      "id": "m1",
+      "alias": "unique_brands_count",
+      "label": "不重複品牌數",
+      "formula": "COUNT(DISTINCT col_4)",
+      "filters": []
+    }
+  ]
+}
