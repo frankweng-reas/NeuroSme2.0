@@ -1,0 +1,102 @@
+# Intent Prompt 回歸測試題目
+# 對應文件：docs/intent_prompt_test_cases.md
+# 每題只測一個機制，題目 id 與文件對應。
+
+schema_id: "86c362fc-d3a7-41e8-a5c1-615c2c039b7e"
+model: "gpt-4o-mini"
+
+cases:
+  # A. 基礎輸出形式
+  - id: A1
+    label: "單一分群"
+    question: "2025 年 3 月各通路的銷售總額。"
+
+  - id: A2
+    label: "多維度分群"
+    question: "各通路下各品牌的銷售總額。"
+
+  - id: A3
+    label: "全時段無條件"
+    question: "各品牌的總銷售額。"
+
+  # B. Filter 類型
+  - id: B1
+    label: "eq 多條件"
+    question: "「鮮乳坊」在「Momo」通路賣了多少錢？"
+
+  - id: B2
+    label: "ne 排除"
+    question: "除了「Momo」以外，各通路的銷售額。"
+
+  - id: B3
+    label: "in 多值"
+    question: "「鮮乳坊」與「牧場直送」這兩個品牌的銷售總額。"
+
+  - id: B4
+    label: "contains 模糊"
+    question: "產品名稱中包含「鮮乳」字樣的產品銷售額。"
+
+  - id: B5
+    label: "is_not_null"
+    question: "有填寫產品描述的品項，各自的銷售總額。"
+
+  # C. Metrics 類型
+  - id: C1
+    label: "多重聚合"
+    question: "「穀物」大類的銷售總額、平均單價與訂單數量。"
+
+  - id: C2
+    label: "衍生指標"
+    question: "各品牌的毛利率：（銷售額 - 成本）除以銷售額。"
+
+  - id: C3
+    label: "COUNT DISTINCT"
+    question: "每個通路有多少個不重複的品牌在販售？"
+
+  # D. 時間維度
+  - id: D1
+    label: "按日 grain"
+    question: "2025 年 3 月每天的銷售額趨勢。"
+
+  - id: D2
+    label: "相對時間"
+    question: "過去 7 天的每日平均銷售額。"
+
+  - id: D3
+    label: "YoY 對比"
+    question: "對比 2024 年 Q1，2025 年 Q1 各通路的銷售成長率。"
+
+  # E. post_process
+  - id: E1
+    label: "Top N"
+    question: "銷售金額最高的前 3 個產品。"
+
+  - id: E2
+    label: "HAVING"
+    question: "銷售總額超過 500 元的品牌。"
+
+  - id: E3
+    label: "Top N + HAVING 組合"
+    question: "2024 與 2025 年 Q1 各通路銷售對比，且 2025 銷售額大於 1000，取前 5。"
+
+  # F. group_override 佔比
+  - id: F1
+    label: "篩選後全局佔比"
+    question: "「乳品」大類中各品牌的銷售額佔比。"
+
+  - id: F2
+    label: "真全局佔比"
+    question: "各品牌的銷售額佔全通路全品牌總額的比例。"
+
+  - id: F3
+    label: "父維度小計佔比"
+    question: "各通路下，各品牌的銷售額佔本通路總額比例。"
+
+  # G. list 模式
+  - id: G1
+    label: "裸列表"
+    question: "列出所有訂單編號與銷售金額。"
+
+  - id: G2
+    label: "list + filter + sort"
+    question: "列出最近 5 筆乳品類別且金額大於 1000 的訂單編號、日期與金額，依金額由高到低。"
