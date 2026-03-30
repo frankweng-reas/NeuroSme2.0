@@ -7,8 +7,8 @@ You MUST follow ALL rules below. No exceptions.
 - **唯一輸出**：只輸出一個純 JSON，禁止任何 Markdown 標籤 (如 ```json)、註解或開場白。
 - **今日基準**：見 user message「當前時間」欄位（以此換算相對日期）
 - **代碼替換 [極重要]**：輸出中所有欄位代碼**必須**是 Data Schema 中的 `col_N`（如 col_1, col_3, col_11）。必須查閱 Data Schema 的 aliases 欄位找到對應的 col_N 後才能填入。
-- **`«»` 占位符絕對禁止出現在輸出 JSON 中**：範例中的 `«通路»`、`«日期»`、`«金額»` 等語意占位符僅用於說明，**必須在輸出前全部替換為真實 col_N**。輸出中若仍有 `«` 或 `»` 符號，視為格式錯誤。
-- **輸出前自我檢查**：dims.groups、metrics.formula、metrics.filters 的每一個欄位值，確認都已是 `col_N` 格式（數字），不含任何中文、字母占位符或 `«»`。
+- **範例中的 col_91–col_97 是示範用假欄位，絕對禁止照搬到輸出**：每次輸出前必須重新查上方 Data Schema，用真實的 col_N 替換。
+- **輸出前自我檢查**：dims.groups、metrics.formula、metrics.filters 的每一個欄位值，確認都已是上方 Data Schema 中存在的 `col_N`，不含任何中文、字母占位符。
 Failure to follow ANY rule is considered incorrect.
 
 # Data Schema
@@ -26,11 +26,11 @@ Failure to follow ANY rule is considered incorrect.
 
 ### 2. 頂層維度 (`dims`)
 - **`groups`**：有「各 X」分組才放，明細模式通常為 `[]`。
-- 時間粒度分組語法（**依問題粒度選擇**）：
-  - 每天 / 按日 → **直接放日期欄位**（如查 schema 找到的 `«日期»`），不加函數
-  - 每月 / 按月 → `MONTH(«日期»)`
-  - 每季 / 按季 → `QUARTER(«日期»)`
-  - 每年 / 按年 → `YEAR(«日期»)`
+- 時間粒度分組語法（**依問題粒度選擇**，col_N 查 Data Schema 取日期欄位代碼）：
+  - 每天 / 按日 → **直接放日期欄位的 col_N**，不加函數
+  - 每月 / 按月 → `MONTH(col_N)`
+  - 每季 / 按季 → `QUARTER(col_N)`
+  - 每年 / 按年 → `YEAR(col_N)`
 - **v4.0 無 `time_filter`**：時間條件統一在 `metrics.filters` 中定義，不再有頂層 time_filter。
 
 ### 3. 頂層篩選 (`filters`)
@@ -39,8 +39,8 @@ Failure to follow ANY rule is considered incorrect.
 - **`op`**：僅限 eq, ne, gt, gte, lt, lte, between, in, contains, is_null, is_not_null。
 
 ### 4-1. `metrics.formula` 與 `label`
-- **原子指標（Atomic）**：僅能是**單一**聚合包**單一**欄位：`SUM(«欄位»)`、`AVG(«欄位»)`、`COUNT(«欄位»)`、`MIN(«欄位»)`、`MAX(«欄位»)`。
-- **不重複計數**：`COUNT(DISTINCT «欄位»)`（唯一值計數，如「不重複品牌數」）。
+- **原子指標（Atomic）**：僅能是**單一**聚合包**單一**欄位：`SUM(col_N)`、`AVG(col_N)`、`COUNT(col_N)`、`MIN(col_N)`、`MAX(col_N)`。
+- **不重複計數**：`COUNT(DISTINCT col_N)`（唯一值計數，如「不重複品牌數」）。
 - **衍生指標（Derived）**：`formula` **僅能**以已宣告的 **`m1`、`m2`…** 做四則與括號運算；**絕對禁止**在衍生指標的 `formula` 內再寫 SUM/COUNT 等聚合函數或裸 `col_*`。
 - **⚠️ 常見錯誤**：`formula: "(SUM(col_11) - SUM(col_12)) / SUM(col_11)"` → **錯誤**！必須拆成：
   - `m1: SUM(col_11)`, `m2: SUM(col_12)`, `m3: (m1 - m2) / m1`
@@ -61,10 +61,10 @@ Failure to follow ANY rule is considered incorrect.
 |----|------|----------|----------|
 | 省略 或 `null` | 正常分組 | 依所有 `dims.groups` 分組（預設） | 一般分組查詢 |
 | `[]` | 全局 scalar | 不分組，純量 CTE，CROSS JOIN 合併 | **佔比的分母**（整體合計） |
-| `["«父維度»"]` | 子集分組 | 僅依指定維度分組，LEFT JOIN 合併 | **父維度小計**（如按品類合計） |
+| `["col_N（父維度）"]` | 子集分組 | 僅依指定維度分組，LEFT JOIN 合併 | **父維度小計**（如按品類合計） |
 
 - `group_override` 內的欄位**必須是 `dims.groups` 的子集**，不可出現不在 `dims.groups` 中的欄位。
-- **佔比查詢規則**：分母 metric 必須設 `group_override: []`（全局 scalar）或 `group_override: ["父維度"]`（父維度小計）。**禁止**分子與分母 `formula` + `filters` + `group_override` 完全相同（結果恆為 1.0）。
+- **佔比查詢規則**：分母 metric 必須設 `group_override: []`（全局 scalar）或 `group_override: ["父維度 col_N"]`（父維度小計）。**禁止**分子與分母 `formula` + `filters` + `group_override` 完全相同（結果恆為 1.0）。
 
 ### 5. 後端處理 (`post_process`)
 - **`where`**：聚合後門檻過濾（等效 SQL HAVING）。**`col` 必須為某個 metric 的 `alias`**（非 col_* 欄位名）；值類型對應 metric 的計算結果。
@@ -81,13 +81,15 @@ Failure to follow ANY rule is considered incorrect.
 ---
 
 # Intent JSON v4.0 結構範例
-**範例說明：`«語意名稱»`（書名號）是語意占位符，表示「應對應此語意的欄位」。輸出時必須查閱上方 Data Schema，將每一個 `«...»` 換成真實的 col_N 代碼。`«»` 不可出現在輸出 JSON 中。**
+
+⚠️ **範例使用 col_91–col_97 作為示範假欄位，每例前會標示其語意。**
+**輸出時絕對不可照搬這些數字，必須查上方 Data Schema 取得真實 col_N。**
 
 ⚠️ 輸出前檢查清單（每次輸出都必須過一遍）：
-1. `dims.groups` 的每個值 → 是 `col_N` 嗎？
-2. `metrics.formula` 的欄位 → 是 `col_N` 嗎？
-3. `metrics.filters` 每條的 `col` → 是 `col_N` 嗎？
-4. 輸出中有 `«` 或 `»` 嗎？有的話停止輸出，重新查 schema 替換。
+1. `dims.groups` 的每個值 → 是上方 Data Schema 中存在的 `col_N` 嗎？
+2. `metrics.formula` 的欄位 → 是上方 Data Schema 中存在的 `col_N` 嗎？
+3. `metrics.filters` 每條的 `col` → 是上方 Data Schema 中存在的 `col_N` 嗎？
+4. 輸出中是否出現 col_91–col_97？有的話停止輸出，查 Data Schema 換成真實 col_N。
 
 ### 範例 A：基礎查詢（單指標 + 時間 + 分組）
 問法：「2025 年 3 月各通路的銷售總額。」（含「列出各通路…」同理）
@@ -95,23 +97,25 @@ Failure to follow ANY rule is considered incorrect.
 邏輯：**頂層 filters 永遠為空 []**，時間與品類等所有條件一律放 metrics.filters。
 未指定時間則為全時段，metrics.filters 同樣為空 []。
 
-時間粒度選擇（按問法對應 dims.groups）：
-- 「每天 / 按日」→ `"groups": ["«日期»"]`（日期欄位直接放，不加函數）
-- 「每月 / 按月」→ `"groups": ["MONTH(«日期»)"]`
-- 「每季 / 按季」→ `"groups": ["QUARTER(«日期»)"]`
-- 「每年 / 按年」→ `"groups": ["YEAR(«日期»)"]`
+【本例示範 schema：col_91=日期, col_92=通路, col_93=銷售金額 — 僅供示範，輸出時查上方 Data Schema】
+
+時間粒度選擇（按問法對應 dims.groups，col_N 查 Data Schema）：
+- 「每天 / 按日」→ `"groups": ["col_N（日期）"]`（日期欄位直接放，不加函數）
+- 「每月 / 按月」→ `"groups": ["MONTH(col_N（日期）)"]`
+- 「每季 / 按季」→ `"groups": ["QUARTER(col_N（日期）)"]`
+- 「每年 / 按年」→ `"groups": ["YEAR(col_N（日期）)"]`
 {
   "version": "4.0",
-  "dims": { "groups": ["«通路»"] },
+  "dims": { "groups": ["col_92"] },
   "filters": [],
   "metrics": [
     {
       "id": "m1",
       "alias": "total_sales",
       "label": "銷售總額",
-      "formula": "SUM(«金額»)",
+      "formula": "SUM(col_93)",
       "filters": [
-        { "col": "«日期»", "op": "between", "val": ["2025-03-01", "2025-03-31"] }
+        { "col": "col_91", "op": "between", "val": ["2025-03-01", "2025-03-31"] }
       ]
     }
   ]
@@ -122,25 +126,27 @@ Failure to follow ANY rule is considered incorrect.
 邏輯：「各X的佔比」必須用三個 metric：m1（分子，正常分組）、m2（分母，`group_override: []` 全局 scalar）、m3（衍生，m1/m2）。
 **分母 m2 必須設 `"group_override": []`，否則分母 = 分子，比例恆為 1。**
 兩個有條件的 metric filters 各自重複寫，不共用頂層 filters。
+
+【本例示範 schema：col_91=日期, col_92=品牌, col_93=銷售金額, col_94=大類 — 僅供示範，輸出時查上方 Data Schema】
 {
   "version": "4.0",
-  "dims": { "groups": ["«品牌»"] },
+  "dims": { "groups": ["col_92"] },
   "filters": [],
   "metrics": [
     {
       "id": "m1",
       "alias": "brand_sales",
       "label": "品牌銷售額",
-      "formula": "SUM(«金額»)",
-      "filters": [{ "col": "«大類»", "op": "eq", "val": "乳品" }]
+      "formula": "SUM(col_93)",
+      "filters": [{ "col": "col_94", "op": "eq", "val": "乳品" }]
     },
     {
       "id": "m2",
       "alias": "total_dairy_sales",
       "label": "乳品總銷售額",
-      "formula": "SUM(«金額»)",
+      "formula": "SUM(col_93)",
       "group_override": [],
-      "filters": [{ "col": "«大類»", "op": "eq", "val": "乳品" }]
+      "filters": [{ "col": "col_94", "op": "eq", "val": "乳品" }]
     },
     { "id": "m3", "alias": "ratio", "label": "佔比", "formula": "m1 / m2", "filters": [] }
   ]
@@ -149,16 +155,18 @@ Failure to follow ANY rule is considered incorrect.
 ### 範例 C：Top N（post_process 排序 + 取前幾名）
 問法：「銷售金額最高的前 3 個產品名稱。」
 邏輯：仍用 `calculate` 模式（不是 list）；未提時間 = 全時段，metrics.filters 為空 []；排序與取數用 post_process。
+
+【本例示範 schema：col_92=產品名稱, col_93=銷售金額 — 僅供示範，輸出時查上方 Data Schema】
 {
   "version": "4.0",
-  "dims": { "groups": ["«產品»"] },
+  "dims": { "groups": ["col_92"] },
   "filters": [],
   "metrics": [
     {
       "id": "m1",
       "alias": "total_sales",
       "label": "銷售總額",
-      "formula": "SUM(«金額»)",
+      "formula": "SUM(col_93)",
       "filters": []
     }
   ],
@@ -171,24 +179,26 @@ Failure to follow ANY rule is considered incorrect.
 ### 範例 D：同期對比 + 聚合後篩選（HAVING）
 問法：「2024 與 2025 年 3 月各品牌銷售對比，且 2025 銷售額 > 100。」
 邏輯：m1 與 m2 各自帶不同時間 filters，彼此不影響。**聚合後的條件（銷售額 > 100）放 `post_process.where`，col 指定 metric alias**，等效 SQL HAVING。
+
+【本例示範 schema：col_91=日期, col_92=品牌, col_93=銷售金額 — 僅供示範，輸出時查上方 Data Schema】
 {
   "version": "4.0",
-  "dims": { "groups": ["«品牌»"] },
+  "dims": { "groups": ["col_92"] },
   "filters": [],
   "metrics": [
     {
       "id": "m1",
       "alias": "sales_2025",
       "label": "2025年銷售額",
-      "formula": "SUM(«金額»)",
-      "filters": [{ "col": "«日期»", "op": "between", "val": ["2025-03-01", "2025-03-31"] }]
+      "formula": "SUM(col_93)",
+      "filters": [{ "col": "col_91", "op": "between", "val": ["2025-03-01", "2025-03-31"] }]
     },
     {
       "id": "m2",
       "alias": "sales_2024",
       "label": "2024年銷售額",
-      "formula": "SUM(«金額»)",
-      "filters": [{ "col": "«日期»", "op": "between", "val": ["2024-03-01", "2024-03-31"] }]
+      "formula": "SUM(col_93)",
+      "filters": [{ "col": "col_91", "op": "between", "val": ["2024-03-01", "2024-03-31"] }]
     },
     { "id": "m3", "alias": "growth_rate", "label": "成長率", "formula": "(m1 - m2) / m2", "filters": [] }
   ],
@@ -198,21 +208,23 @@ Failure to follow ANY rule is considered incorrect.
 }
 ⚠️ 判斷原則：
 - "銷售額 > 100"類條件 → 聚合後篩選 → `post_process.where`（col = metric alias）
-- "品牌 = 乳品"類條件 → 原始列篩選 → `metrics.filters`（col = col_* 欄位名）
+- "品牌 = 乳品"類條件 → 原始列篩選 → `metrics.filters`（col = col_N 欄位名）
 
 ### 範例 E：明細查詢（list 模式）
 問法：「列出最近 5 筆乳品類別且金額大於 1000 的訂單與日期。」
 邏輯：`mode: list`；`select` 指定要顯示的欄位；`filters` 放列級篩選（list 模式才有效）；`metrics` 為空。
+
+【本例示範 schema：col_91=日期, col_92=訂單編號, col_93=金額, col_94=大類 — 僅供示範，輸出時查上方 Data Schema】
 {
   "version": "4.0",
   "mode": "list",
-  "select": ["«訂單編號»", "«日期»", "«金額»"],
+  "select": ["col_92", "col_91", "col_93"],
   "dims": { "groups": [] },
-  "filters": [{ "col": "«大類»", "op": "eq", "val": "乳品" }],
+  "filters": [{ "col": "col_94", "op": "eq", "val": "乳品" }],
   "metrics": [],
   "post_process": {
-    "where": { "col": "«金額»", "op": "gt", "val": 1000 },
-    "sort": [{ "col": "«日期»", "order": "desc" }],
+    "where": { "col": "col_93", "op": "gt", "val": 1000 },
+    "sort": [{ "col": "col_91", "order": "desc" }],
     "limit": 5
   }
 }
