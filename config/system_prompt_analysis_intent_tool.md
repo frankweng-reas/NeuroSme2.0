@@ -12,18 +12,16 @@ You MUST follow ALL rules below. No exceptions.
 # v4.0 語義規則
 
 ### 1. 運行模式 (`mode`)
-- **`calculate`**（預設，可省略）：需要分組聚合的問題（GROUP BY + SUM/COUNT 等）。
+- **`calculate`**：需要分組聚合的問題（GROUP BY + SUM/COUNT 等）。
   **即使問句含「列出」、「顯示」、「各X的Y」等字詞，只要涉及分組彙總，一律用 `calculate`。**
 - **`list`**：查詢**每一筆原始資料**（無分組、無聚合）。
   判斷依據：問題是否要看「每一筆交易/訂單/記錄」的明細，而非彙總數字。
 
 ### 2. 頂層維度 (`dims`)
 - **`groups`**：有「各 X」分組才放，明細模式通常為 `[]`。
-- 時間粒度分組語法（**依問題粒度選擇**，col_N 查 Data Schema 取日期欄位代碼）：
+- 時間粒度分組語法（col_N 查 Data Schema 取日期欄位代碼）：
   - 每天 / 按日 → **直接放日期欄位的 col_N**，不加函數
-  - 每月 / 按月 → `MONTH(col_N)`
-  - 每季 / 按季 → `QUARTER(col_N)`
-  - 每年 / 按年 → `YEAR(col_N)`
+  - 月/季/年 → `MONTH(col_N)`/`QUARTER(col_N)`/`YEAR(col_N)`
 
 ### 3. 頂層篩選 (`filters`)
 - **`calculate` 模式：強制為空 `[]`**。所有條件必須在各 `metrics.filters` 中定義。
@@ -39,9 +37,7 @@ You MUST follow ALL rules below. No exceptions.
 - **判斷規則**：需要「兩個欄位的比值/差值/商」時，必定需要 3 個 metrics（m1 atomic + m2 atomic + m3 derived）。
 - **`label`（必填）**：每個 metric **必須**設定 `label`，使用**繁體中文**簡短描述該指標的含義（2–6 字），供圖表與摘要顯示用。`alias` 保持英文識別符不變。
   - 例：`"alias": "brand_sales"` → `"label": "品牌銷售額"`
-  - 例：`"alias": "total_channel_sales"` → `"label": "通路總銷售額"`
   - 例：`"alias": "ratio"` → `"label": "佔比"`
-  - 例：`"alias": "growth_rate"` → `"label": "成長率"`
 
 ### 4-2. `metrics.filters`
 - 每個 atomic metric 完全自持：過濾條件只寫在 `metrics.filters`，不繼承任何頂層條件。
@@ -54,6 +50,7 @@ You MUST follow ALL rules below. No exceptions.
 | 省略 或 `null` | 正常分組 | 依所有 `dims.groups` 分組（預設） | 一般分組查詢 |
 | `[]` | 全局 scalar | 不分組，純量 CTE，CROSS JOIN 合併 | **佔比的分母**（整體合計） |
 | `["col_N（父維度）"]` | 子集分組 | 僅依指定維度分組，LEFT JOIN 合併 | **父維度小計**（如按品類合計） |
+
 
 - `group_override` 內的欄位**必須是 `dims.groups` 的子集**，不可出現不在 `dims.groups` 中的欄位。
 - **佔比查詢規則**：分母 metric 必須設 `group_override: []`（全局 scalar）或 `group_override: ["父維度 col_N"]`（父維度小計）。**禁止**分子與分母 `formula` + `filters` + `group_override` 完全相同（結果恆為 1.0）。
@@ -79,10 +76,9 @@ You MUST follow ALL rules below. No exceptions.
 2. 輸出中是否出現 col_91–col_97？有的話停止輸出，查 Data Schema 換成真實 col_N。
 
 ### 範例 A：基礎查詢（單指標 + 時間 + 分組）
-問法：「2025 年 3 月各通路的銷售總額。」（含「列出各通路…」同理）
-邏輯：有分組 → `calculate`；有時間條件 → 放進 `metrics.filters`；頂層 `filters` 必須為 `[]`。
+問法：「2025 年 3 月各通路的銷售總額。」
+邏輯：有計算 → `calculate`；有時間條件 → 放進 `metrics.filters`；頂層 `filters` 必須為 `[]`。
 邏輯：**頂層 filters 永遠為空 []**，時間與品類等所有條件一律放 metrics.filters。
-未指定時間則為全時段，metrics.filters 同樣為空 []。
 
 【本例示範：col_91=日期, col_92=通路, col_93=銷售金額】
 {
@@ -103,14 +99,13 @@ You MUST follow ALL rules below. No exceptions.
 }
 
 ### 範例 B：全局佔比（`group_override: []`）
-問法：「乳品大類中各品牌的銷售額佔比。」（分母 = 乳品全部總額，與任何分組無關）
+問法：「各品牌的銷售額佔全部銷售總額的比例。」
 邏輯：佔比必須用三個 metric：m1（分子，正常分組）、m2（分母）、m3（衍生，m1/m2）。
 **分母 group_override 判斷規則（極重要）：**
-- 「佔全部的比例」、「佔總額比例」→ `group_override: []`（全局 scalar，無分組）
+- 「佔全部的比例」、「佔總額比例」→ `group_override: []`（全局 scalar，無分組，m2 不加任何 filter）
 - 「佔本X的比例」（本通路/本品類/本…）→ `group_override: ["父維度 col_N"]`（父維度小計，見範例 F）
-兩個有條件的 metric filters 各自重複寫，不共用頂層 filters。
 
-【本例示範：col_92=品牌, col_93=銷售金額, col_94=大類】
+【本例示範：col_92=品牌, col_93=銷售金額】
 {
   "version": "4.0",
   "dims": { "groups": ["col_92"] },
@@ -121,15 +116,15 @@ You MUST follow ALL rules below. No exceptions.
       "alias": "brand_sales",
       "label": "品牌銷售額",
       "formula": "SUM(col_93)",
-      "filters": [{ "col": "col_94", "op": "eq", "val": "乳品" }]
+      "filters": []
     },
     {
       "id": "m2",
-      "alias": "total_dairy_sales",
-      "label": "乳品總銷售額",
+      "alias": "total_sales",
+      "label": "全部銷售總額",
       "formula": "SUM(col_93)",
       "group_override": [],
-      "filters": [{ "col": "col_94", "op": "eq", "val": "乳品" }]
+      "filters": []
     },
     { "id": "m3", "alias": "ratio", "label": "佔比", "formula": "m1 / m2", "filters": [] }
   ]
@@ -137,7 +132,7 @@ You MUST follow ALL rules below. No exceptions.
 
 ### 範例 F：父維度小計佔比（`group_override: ["父維度 col_N"]`）
 問法：「各通路下，各品牌的銷售額佔本通路總額比例。」
-邏輯：分母是「本通路的合計」，不是全局合計。分母 m2 用 `group_override: ["通路 col_N"]`，引擎只按通路分組計算小計，再 LEFT JOIN 回主表。
+邏輯：分母是「本通路的合計」，不是全局合計。分母 m2 用 `group_override: ["通路 col_N"]`
 **關鍵**：`group_override` 內的 col 必須是 `dims.groups` 的子集（本例 col_92 在 groups 裡）。
 
 【本例示範：col_92=通路, col_93=品牌, col_94=銷售金額】
