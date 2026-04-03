@@ -1,6 +1,7 @@
 /** Agent 頁面共用聊天元件：訊息列表、輸入框、loading、捲到底 */
 import { useEffect, useRef, useState } from 'react'
-import { BarChart3, ChevronDown, Copy, FileDown, Loader2 } from 'lucide-react'
+import { BarChart3, ChevronDown, Copy, FileDown, Loader2, X } from 'lucide-react'
+import type { ExamplePromptItem } from '@/types/examplePrompts'
 import ChartModal, { type ChartData } from '@/components/ChartModal'
 import PdfPreviewModal from '@/components/PdfPreviewModal'
 import ReactMarkdown from 'react-markdown'
@@ -123,6 +124,10 @@ const LOADING_STAGE_LABELS: Record<LoadingStage, string> = {
   text: '分析建議…',
 }
 
+export type { ExamplePromptItem }
+
+const MAX_CUSTOM_EXAMPLE_CHARS = 280
+
 interface AgentChatProps {
   messages: Message[]
   onSubmit: (text: string) => void
@@ -132,8 +137,27 @@ interface AgentChatProps {
   onCopySuccess?: () => void
   onCopyError?: () => void
   emptyPlaceholder?: string
+  /** 覆寫空狀態字級／顏色（預設 text-[18px] text-gray-400） */
+  emptyPlaceholderClassName?: string
+  /** 為 true 時無法送出（仍可在輸入框打字） */
+  submitDisabled?: boolean
+  submitDisabledTitle?: string
   headerTitle?: string
   headerActions?: React.ReactNode
+  /** 系統 + 使用者範例（點選帶入輸入框） */
+  examplePrompts?: readonly ExamplePromptItem[]
+  /** 刪除一則使用者範例（系統範例 id 父層應忽略） */
+  onExamplePromptRemove?: (id: string) => void
+  /** 新增一則使用者範例 */
+  onExamplePromptAdd?: (text: string) => void
+  /**
+   * inline：在輸入框上方展開區塊（預設）
+   * modal：由父層開啟獨立視窗，此處不顯示例區；請搭配 chatInputSeed 帶入文字
+   */
+  exampleLayout?: 'inline' | 'modal'
+  /** 父層選好範例後遞增 n 並帶入 text，會寫入輸入框並 focus */
+  chatInputSeed?: { n: number; text: string } | null
+  onChatInputSeedApplied?: () => void
 }
 
 export default function AgentChat({
@@ -144,20 +168,58 @@ export default function AgentChat({
   onCopySuccess,
   onCopyError,
   emptyPlaceholder = '輸入訊息開始對話...',
+  emptyPlaceholderClassName,
+  submitDisabled = false,
+  submitDisabledTitle,
   headerTitle = '對話',
   headerActions,
+  examplePrompts,
+  onExamplePromptRemove,
+  onExamplePromptAdd,
+  exampleLayout = 'inline',
+  chatInputSeed,
+  onChatInputSeedApplied,
 }: AgentChatProps) {
   const [input, setInput] = useState('')
   const [isAtBottom, setIsAtBottom] = useState(true)
   const [chartModalIndex, setChartModalIndex] = useState<number | null>(null)
   const [pdfPreviewTarget, setPdfPreviewTarget] = useState<{ content: string; chartData?: ChartData } | null>(null)
   const chatScrollRef = useRef<HTMLDivElement>(null)
+  const chatInputRef = useRef<HTMLInputElement>(null)
+  const [exampleDraft, setExampleDraft] = useState('')
+  const [examplePanelOpen, setExamplePanelOpen] = useState(true)
+  const prevMessageCountRef = useRef(messages.length)
+
+  const hasExampleBlock = Boolean(
+    exampleLayout === 'inline' &&
+      ((examplePrompts && examplePrompts.length > 0) || onExamplePromptAdd)
+  )
+
+  const onSeedAppliedRef = useRef(onChatInputSeedApplied)
+  onSeedAppliedRef.current = onChatInputSeedApplied
+  const lastSeedNRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    if (!chatInputSeed) return
+    if (lastSeedNRef.current === chatInputSeed.n) return
+    lastSeedNRef.current = chatInputSeed.n
+    setInput(chatInputSeed.text)
+    queueMicrotask(() => chatInputRef.current?.focus())
+    onSeedAppliedRef.current?.()
+  }, [chatInputSeed?.n, chatInputSeed?.text])
 
   useEffect(() => {
     if (isAtBottom) {
       chatScrollRef.current?.scrollTo({ top: chatScrollRef.current.scrollHeight, behavior: 'smooth' })
     }
   }, [messages, isLoading, isAtBottom])
+
+  useEffect(() => {
+    const prev = prevMessageCountRef.current
+    if (prev === 0 && messages.length > 0) setExamplePanelOpen(false)
+    if (messages.length === 0) setExamplePanelOpen(true)
+    prevMessageCountRef.current = messages.length
+  }, [messages.length])
 
   function handleChatScroll() {
     const el = chatScrollRef.current
@@ -175,7 +237,7 @@ export default function AgentChat({
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     const text = input.trim()
-    if (!text || isLoading) return
+    if (!text || isLoading || submitDisabled) return
     setInput('')
     onSubmit(text)
   }
@@ -205,7 +267,11 @@ export default function AgentChat({
             className="h-full overflow-y-auto rounded-xl border border-gray-200/80 bg-gray-50/60 ring-1 ring-gray-200/40 p-4"
           >
             {messages.length === 0 ? (
-              <p className="text-[18px] text-gray-400">{emptyPlaceholder}</p>
+              <p
+                className={`whitespace-pre-line ${emptyPlaceholderClassName ?? 'text-[18px] text-gray-400'}`}
+              >
+                {emptyPlaceholder}
+              </p>
             ) : (
               <ul className="flex flex-col space-y-4">
                 {messages.map((m, i) => (
@@ -310,8 +376,133 @@ export default function AgentChat({
             onDownloadError={onCopyError}
           />
         )}
+        {hasExampleBlock && (
+          <div className="mb-3 shrink-0 rounded-xl border border-gray-200/80 bg-white/90 px-3 py-2 ring-1 ring-gray-200/40">
+            <button
+              type="button"
+              onClick={() => setExamplePanelOpen((o) => !o)}
+              className="flex w-full items-center justify-between gap-2 rounded-lg px-1 py-1.5 text-left text-[16px] text-gray-800 transition-colors hover:bg-gray-50"
+              aria-expanded={examplePanelOpen}
+            >
+              <span>
+                <span className="font-semibold text-gray-800">範例問題</span>
+                <span className="ml-2 font-normal text-gray-500">點選帶入下方輸入框</span>
+              </span>
+              <ChevronDown
+                className={`h-5 w-5 shrink-0 text-gray-500 transition-transform ${examplePanelOpen ? 'rotate-180' : ''}`}
+                aria-hidden
+              />
+            </button>
+            {examplePanelOpen && (
+              <div className="mt-2 space-y-3 border-t border-gray-100 pt-3">
+                {examplePrompts != null && examplePrompts.some((p) => p.isSystem) && (
+                  <div>
+                    <p className="mb-1.5 text-[14px] font-medium text-gray-500">系統提供</p>
+                    <div className="flex flex-wrap gap-2">
+                      {examplePrompts
+                        .filter((p) => p.isSystem)
+                        .map((p) => (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => {
+                              setInput(p.text)
+                              chatInputRef.current?.focus()
+                            }}
+                            disabled={isLoading}
+                            className="max-w-full rounded-full border border-slate-200 bg-slate-50 px-4 py-1.5 text-left text-[15px] leading-snug text-gray-800 transition-colors hover:border-slate-300 hover:bg-slate-100 disabled:opacity-50"
+                          >
+                            <span className="line-clamp-2">{p.text}</span>
+                          </button>
+                        ))}
+                    </div>
+                  </div>
+                )}
+                {examplePrompts != null && examplePrompts.some((p) => !p.isSystem) && (
+                  <div>
+                    <p className="mb-1.5 text-[14px] font-medium text-gray-500">我的範例</p>
+                    <div className="flex flex-wrap gap-2">
+                      {examplePrompts
+                        .filter((p) => !p.isSystem)
+                        .map((p) => (
+                          <div
+                            key={p.id}
+                            className="flex max-w-full items-center gap-0.5 rounded-full border border-blue-200 bg-blue-50/80 pl-3 pr-1 py-1"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setInput(p.text)
+                                chatInputRef.current?.focus()
+                              }}
+                              disabled={isLoading}
+                              className="min-w-0 max-w-[min(100%,24rem)] text-left text-[15px] leading-snug text-gray-800 transition-opacity hover:opacity-90 disabled:opacity-50"
+                            >
+                              <span className="line-clamp-2">{p.text}</span>
+                            </button>
+                            {onExamplePromptRemove && (
+                              <button
+                                type="button"
+                                onClick={() => onExamplePromptRemove(p.id)}
+                                className="shrink-0 rounded-full p-1 text-blue-700/80 transition-colors hover:bg-blue-100 hover:text-blue-900"
+                                aria-label={`刪除範例：${p.text.slice(0, 20)}${p.text.length > 20 ? '…' : ''}`}
+                              >
+                                <X className="h-4 w-4" />
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                )}
+                {examplePrompts != null &&
+                  examplePrompts.length === 0 &&
+                  !onExamplePromptAdd && (
+                    <p className="text-[15px] text-gray-500">目前沒有範例問題。</p>
+                  )}
+                {onExamplePromptAdd && (
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <input
+                      type="text"
+                      value={exampleDraft}
+                      onChange={(e) => setExampleDraft(e.target.value.slice(0, MAX_CUSTOM_EXAMPLE_CHARS))}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && e.nativeEvent.isComposing) return
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          const t = exampleDraft.trim()
+                          if (!t) return
+                          onExamplePromptAdd(t)
+                          setExampleDraft('')
+                        }
+                      }}
+                      placeholder="新增我的範例…"
+                      maxLength={MAX_CUSTOM_EXAMPLE_CHARS}
+                      disabled={isLoading}
+                      className="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 text-[15px] text-gray-800 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400 disabled:opacity-50"
+                    />
+                    <button
+                      type="button"
+                      disabled={isLoading || !exampleDraft.trim()}
+                      onClick={() => {
+                        const t = exampleDraft.trim()
+                        if (!t) return
+                        onExamplePromptAdd(t)
+                        setExampleDraft('')
+                      }}
+                      className="shrink-0 rounded-xl bg-gray-200 px-4 py-2 text-[15px] font-medium text-gray-800 transition-colors hover:bg-gray-300 disabled:opacity-40"
+                    >
+                      加入
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
         <form onSubmit={handleSubmit} className="flex gap-2">
           <input
+            ref={chatInputRef}
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -324,7 +515,8 @@ export default function AgentChat({
           />
           <button
             type="submit"
-            disabled={isLoading || !input.trim()}
+            title={submitDisabled ? submitDisabledTitle : undefined}
+            disabled={isLoading || !input.trim() || submitDisabled}
             className="rounded-2xl bg-gray-800 px-5 py-2 text-[18px] font-medium text-white transition-colors hover:bg-gray-900 disabled:opacity-40"
           >
             送出

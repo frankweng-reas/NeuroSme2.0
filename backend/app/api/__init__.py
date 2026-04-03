@@ -1,6 +1,6 @@
 """API 路由彙總：掛載 users、agents、source_files、prompt_templates、qtn_projects、bi_projects 等 endpoint"""
 from fastapi import APIRouter
-from app.api.endpoints import users, agents, agent_catalog, chat, chat_dev, chat_compute_tool, source_files, prompt_templates, tenants, qtn_projects, qtn_sources, qtn_catalogs, companies, scheduling, bi_projects, bi_sources, bi_schemas, llm_configs
+from app.api.endpoints import users, agents, agent_catalog, chat, chat_dev, chat_compute_tool, source_files, prompt_templates, tenants, qtn_projects, qtn_sources, qtn_catalogs, companies, scheduling, bi_projects, bi_sources, bi_schemas, bi_sample_qa, llm_configs
 
 router = APIRouter()
 router.include_router(users.router, prefix="/users", tags=["users"])
@@ -20,4 +20,5 @@ router.include_router(scheduling.router, prefix="/scheduling", tags=["scheduling
 router.include_router(bi_projects.router, prefix="/bi-projects", tags=["bi-projects"])
 router.include_router(bi_sources.router, prefix="/bi-sources", tags=["bi-sources"])
 router.include_router(bi_schemas.router, prefix="/bi-schemas", tags=["bi-schemas"])
+router.include_router(bi_sample_qa.router, prefix="/bi-sample-qa", tags=["bi-sample-qa"])
 router.include_router(llm_configs.router, prefix="/llm-configs", tags=["llm-configs"])

@@ -1,0 +1,7 @@
+{
+  "name": "@neurosme/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "NeuroSme dashboard 原始碼根；供 agent 套件作 peer / link 解析，deep import 對應此目錄下檔案（由 Vite / TS 處理副檔名）。"
+}

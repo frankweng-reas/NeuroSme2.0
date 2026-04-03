@@ -20,15 +20,17 @@ interface AgentHeaderProps {
   className?: string
   /** 是否顯示主管工具（僅報價型 agent 使用，其他 agent 不顯示） */
   showManagerTools?: boolean
-  /** 是否顯示 Schema 管理按鈕（manager 以上角色才顯示） */
+  /** 是否顯示資料範本管理按鈕（manager 以上角色才顯示） */
   showSchemaManager?: boolean
-  /** 點擊 Schema 管理按鈕的 callback */
+  /** 點擊資料範本管理按鈕的 callback */
   onSchemaManagerOpen?: () => void
   /** 自訂 header 背景色，未傳則用預設 #4b5563 */
   headerBackgroundColor?: string
+  /** 標題右側「使用說明」按鈕（例如開啟 HelpModal） */
+  onOnlineHelpClick?: () => void
 }
 
-export default function AgentHeader({ agent, className = '', showManagerTools: showManagerToolsProp = false, showSchemaManager = false, onSchemaManagerOpen, headerBackgroundColor = '#4b5563' }: AgentHeaderProps) {
+export default function AgentHeader({ agent, className = '', showManagerTools: showManagerToolsProp = false, showSchemaManager = false, onSchemaManagerOpen, headerBackgroundColor = '#4b5563', onOnlineHelpClick }: AgentHeaderProps) {
   const { user: authUser } = useAuth()
   const [user, setUser] = useState<User | null>(null)
   const [managerToolsOpen, setManagerToolsOpen] = useState(false)
@@ -133,8 +135,19 @@ export default function AgentHeader({ agent, className = '', showManagerTools: s
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <AgentIcon iconName={agent.icon_name} className="h-6 w-6 text-white" />
-            <div>
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
               <h1 className="text-2xl font-bold text-white">{agent.agent_name}</h1>
+              {onOnlineHelpClick && (
+                <button
+                  type="button"
+                  onClick={onOnlineHelpClick}
+                  title="使用說明"
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/30 bg-white/10 text-base font-semibold leading-none text-white transition-opacity hover:bg-white/20"
+                  aria-label="使用說明"
+                >
+                  ？
+                </button>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -143,8 +156,9 @@ export default function AgentHeader({ agent, className = '', showManagerTools: s
                 type="button"
                 onClick={onSchemaManagerOpen}
                 className="rounded-3xl border border-white/30 bg-white/10 px-4 py-2 text-sm font-medium text-white transition-opacity hover:bg-white/20"
+                aria-label="資料範本管理"
               >
-                Schema 管理
+                資料範本管理
               </button>
             )}
             {showManagerTools && (

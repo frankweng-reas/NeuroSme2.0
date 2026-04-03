@@ -2,8 +2,8 @@
  * agent_id 含 business 時使用：商務型 agent 專用 UI。
  * 資料匯入僅使用 biProjects.importCsvToDuckdb（bi_schemas → DuckDB），不使用 bi_sources API。
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { ChevronRight, ChevronsRight, Database, HelpCircle, Loader2, MoreVertical, Plus, RefreshCw } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ChevronRight, ChevronsRight, Database, HelpCircle, Lightbulb, Loader2, MoreVertical, Plus, RefreshCw } from 'lucide-react'
 import { Group, Panel, PanelImperativeHandle, Separator } from 'react-resizable-panels'
 import { chatCompletionsComputeToolStream, type ComputeStage } from '@/api/chat'
 import { ApiError } from '@/api/client'
@@ -16,7 +16,9 @@ import AgentHeader from '@/components/AgentHeader'
 import ConfirmModal from '@/components/ConfirmModal'
 import InputModal from '@/components/InputModal'
 import SchemaManagerOverlay from '@/components/SchemaManagerOverlayV2'
+import ExamplePromptsModal from '@/components/ExamplePromptsModal'
 import { createBiProject, deleteBiProject, getDuckdbStatus, importCsvToDuckdb, listBiProjects, updateBiProject, type BiProjectItem, type MessageStored } from '@/api/biProjects'
+import { createBiSampleQa, deleteBiSampleQa, listBiSampleQa } from '@/api/biSampleQa'
 import { getBiSchema, listBiSchemas, type BiSchemaItem } from '@/api/biSchemas'
 import { DETAIL_OPTIONS, LANGUAGE_OPTIONS, ROLE_OPTIONS } from '@/constants/aiOptions'
 import type { Agent } from '@/types'
@@ -84,6 +86,16 @@ function csvHeadersMatchSchema(csvHeaders: string[], allowedHeaders: Set<string>
 
 const STORAGE_KEY_PREFIX = 'agent-business-ui'
 const PROJECT_STORAGE_KEY_PREFIX = 'agent-business-project'
+
+/** 系統預設範例問題（無論資料是否就緒皆可檢視；實際分析仍受匯入／權限限制） */
+const BI_SYSTEM_EXAMPLE_QUESTIONS = [
+  '2026年各個平台的銷售金額佔比？',
+  '「乳品」 大類中各品牌的銷售額佔比',
+  '各品牌的 ROI (銷售額-成本)/成本？',
+  '對比 2024 年 3 月，2025 年各通路的銷售成長率，且 2025 銷售額大於 1000，取前 5',
+  '各通路下，各品牌的銷售額佔「本通路」總額比例',
+] as const
+
 interface StoredState {
   userPrompt: string
   model: string
@@ -485,15 +497,106 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
   ])
   const [schemas, setSchemas] = useState<BiSchemaItem[]>([])
   const [csvAdapterToast, setCsvAdapterToast] = useState<string | null>(null)
-  const [duckdbRowCount, setDuckdbRowCount] = useState<number | null>(null)
+  /** 各分析主題 DuckDB 列數（null 表示尚未載入或取狀態失敗） */
+  const [duckdbRowCountByProject, setDuckdbRowCountByProject] = useState<Record<string, number | null>>({})
   const [schemaManagerOpen, setSchemaManagerOpen] = useState(false)
   const [pendingSchemaChange, setPendingSchemaChange] = useState<{ blockId: string; schemaId: string } | null>(null)
+  const [examplePromptsModalOpen, setExamplePromptsModalOpen] = useState(false)
+  const [chatInputSeed, setChatInputSeed] = useState<{ n: number; text: string } | null>(null)
+  const chatExampleSeedCounterRef = useRef(0)
+
+  const [userExamplePrompts, setUserExamplePrompts] = useState<{ id: string; text: string }[]>([])
 
   const loadSchemas = useCallback(() => {
     listBiSchemas(agent.agent_id)
       .then(setSchemas)
       .catch(() => setSchemas([]))
   }, [agent.agent_id])
+
+  const refreshUserSampleQa = useCallback(() => {
+    listBiSampleQa(agent.id)
+      .then((rows) =>
+        setUserExamplePrompts(rows.map((r) => ({ id: r.id, text: r.question_text })))
+      )
+      .catch(() => setUserExamplePrompts([]))
+  }, [agent.id])
+
+  useEffect(() => {
+    refreshUserSampleQa()
+  }, [refreshUserSampleQa])
+
+  const examplePrompts = useMemo(
+    () => [
+      ...BI_SYSTEM_EXAMPLE_QUESTIONS.map((text, i) => ({
+        id: `sys-${i}`,
+        text,
+        isSystem: true as const,
+      })),
+      ...userExamplePrompts.map((u) => ({ ...u, isSystem: false as const })),
+    ],
+    [userExamplePrompts]
+  )
+
+  const handleExamplePromptAdd = useCallback(
+    (text: string) => {
+      const t = text.trim()
+      if (!t) return
+      void (async () => {
+        try {
+          await createBiSampleQa({ agent_id: agent.id, question_text: t })
+          refreshUserSampleQa()
+        } catch (err) {
+          const msg =
+            err instanceof ApiError
+              ? err.detail ?? err.message
+              : err instanceof Error
+                ? err.message
+                : '新增失敗'
+          setToastMessage(String(msg))
+        }
+      })()
+    },
+    [agent.id, refreshUserSampleQa]
+  )
+
+  const handleExamplePromptRemove = useCallback(
+    (id: string) => {
+      if (id.startsWith('sys-')) return
+      void (async () => {
+        try {
+          await deleteBiSampleQa(id, agent.id)
+          refreshUserSampleQa()
+        } catch (err) {
+          const msg =
+            err instanceof ApiError
+              ? err.detail ?? err.message
+              : err instanceof Error
+                ? err.message
+                : '刪除失敗'
+          setToastMessage(String(msg))
+        }
+      })()
+    },
+    [agent.id, refreshUserSampleQa]
+  )
+
+  const handlePickExampleForChat = useCallback((text: string) => {
+    chatExampleSeedCounterRef.current += 1
+    setChatInputSeed({ n: chatExampleSeedCounterRef.current, text })
+  }, [])
+
+  const clearChatInputSeed = useCallback(() => setChatInputSeed(null), [])
+
+  const openImportForProject = useCallback((p: BiProjectItem) => {
+    setProjectMenuOpen(null)
+    setSelectedProject(p)
+    try {
+      localStorage.setItem(getProjectStorageKey(agent.id), p.project_id)
+    } catch {
+      // 忽略
+    }
+    setImportDrawerOpen(true)
+  }, [agent.id])
 
   // 切換專案時，用已儲存的 schema_id 預填 blocks
   useEffect(() => {
@@ -578,19 +681,71 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
     loadSchemas()
   }, [loadSchemas])
 
-  const fetchDuckdbStatus = useCallback(() => {
-    if (!selectedProject) {
-      setDuckdbRowCount(null)
-      return
-    }
-    getDuckdbStatus(agent.id, selectedProject.project_id)
-      .then((res) => setDuckdbRowCount(res.row_count))
-      .catch(() => setDuckdbRowCount(null))
-  }, [agent.id, selectedProject?.project_id])
+  const projectIdsKey = useMemo(
+    () => projects.map((p) => p.project_id).slice().sort().join('|'),
+    [projects]
+  )
 
   useEffect(() => {
-    fetchDuckdbStatus()
-  }, [fetchDuckdbStatus])
+    if (!agent.id || projects.length === 0) {
+      setDuckdbRowCountByProject({})
+      return
+    }
+    let cancelled = false
+    void Promise.all(
+      projects.map((p) =>
+        getDuckdbStatus(agent.id, p.project_id)
+          .then((res) => ({ id: p.project_id, count: res.row_count }))
+          .catch(() => ({ id: p.project_id, count: null as number | null }))
+      )
+    ).then((rows) => {
+      if (cancelled) return
+      const next: Record<string, number | null> = {}
+      for (const r of rows) {
+        next[r.id] = r.count
+      }
+      setDuckdbRowCountByProject(next)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [agent.id, projectIdsKey])
+
+  const duckdbRowCount = selectedProject
+    ? duckdbRowCountByProject[selectedProject.project_id] ?? null
+    : null
+
+  /** 對話區「資料」按鈕 icon 色：與左欄主題 db 圖示語意一致（淺底用較深 shade） */
+  const chatDataDbIconClass = useMemo(() => {
+    if (!selectedProject) return 'text-gray-500'
+    if (duckdbRowCount == null) return 'text-amber-600'
+    if (duckdbRowCount > 0) return 'text-emerald-600'
+    return 'text-red-600'
+  }, [selectedProject, duckdbRowCount])
+
+  /** 與 db 圖示色語意同源：`duckdbRowCountByProject` / `duckdbRowCount`，不重算 */
+  const chatEmptyPlaceholder = useMemo(() => {
+    if (!selectedProject) {
+      return '請先選擇左側「分析主題」以開始分析。'
+    }
+    if (duckdbRowCount == null) {
+      return '正在確認此主題的資料狀態…'
+    }
+    if (duckdbRowCount === 0) {
+      return '尚無資料。\n請點對話列「範例問題」旁的資料庫圖示，或左側主題旁的資料庫圖示，匯入資料。'
+    }
+    return '輸入訊息開始對話…'
+  }, [selectedProject, duckdbRowCount])
+
+  const chatEmptyPlaceholderClassName = useMemo(() => {
+    if (selectedProject && duckdbRowCount === 0) {
+      return 'max-w-2xl text-2xl font-semibold leading-snug text-gray-800 sm:text-[1.65rem] md:text-3xl md:leading-snug'
+    }
+    return undefined
+  }, [selectedProject, duckdbRowCount])
+
+  /** 無資料時停用送出，與空狀態 / db 圖示語意一致 */
+  const chatSubmitDisabled = Boolean(selectedProject && duckdbRowCount === 0)
 
   const applySchemaChange = (id: string, value: string) => {
     setBlocks((prev) =>
@@ -810,6 +965,11 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
         setMessages([])
       }
       setProjects((prev) => prev.filter((p) => p.project_id !== projectId))
+      setDuckdbRowCountByProject((prev) => {
+        const next = { ...prev }
+        delete next[projectId]
+        return next
+      })
     } catch {
       // 忽略錯誤
     } finally {
@@ -844,7 +1004,8 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
       const res = await importCsvToDuckdb(agent.id, selectedProject.project_id, payload)
       setToastMessage(res.message)
       if (res.ok && res.row_count != null) {
-        setDuckdbRowCount(res.row_count)
+        const pid = selectedProject.project_id
+        setDuckdbRowCountByProject((prev) => ({ ...prev, [pid]: res.row_count! }))
       }
       if (res.ok && res.schema_id) {
         setProjects((prev) =>
@@ -978,7 +1139,20 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
       setMessages((prev) => [
         ...prev,
         { role: 'user', content: text },
-        { role: 'assistant', content: '請先選擇專案後再進行對話。左側專案區可選擇或建立專案。' },
+        { role: 'assistant', content: '請先選擇分析主題後再進行對話。左側可選擇或建立分析主題。' },
+      ])
+      return
+    }
+
+    if (duckdbRowCount === 0) {
+      setMessages((prev) => [
+        ...prev,
+        { role: 'user', content: text },
+        {
+          role: 'assistant',
+          content:
+            '此分析主題尚無匯入資料。請點對話列「範例問題」旁或左側主題旁的資料庫圖示匯入資料後，再提問。',
+        },
       ])
       return
     }
@@ -991,7 +1165,7 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
         {
           role: 'assistant',
           content:
-            '此專案尚未設定資料 schema。請在「匯入資料」區從 bi_schemas 選擇 Schema 並上傳 CSV 完成匯入後，再進行分析對話。',
+            '此分析主題尚未設定資料模型。請在「匯入資料」區選擇範本並上傳 CSV 完成匯入後，再進行分析對話。',
         },
       ])
       return
@@ -1101,7 +1275,18 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
       <HelpModal
         open={showHelpModal}
         onClose={() => setShowHelpModal(false)}
-        url="/help-ai-settings.md"
+        url="/help-bi-agent.md"
+      />
+      <ExamplePromptsModal
+        open={examplePromptsModalOpen}
+        onClose={() => setExamplePromptsModalOpen(false)}
+        examplePrompts={examplePrompts}
+        onPick={handlePickExampleForChat}
+        onAdd={handleExamplePromptAdd}
+        onRemove={handleExamplePromptRemove}
+        isLoading={isLoading}
+        onCopySuccess={() => setToastMessage('已複製到剪貼簿')}
+        onCopyError={() => setToastMessage('複製失敗')}
       />
       <ConfirmModal
         open={deleteProjectConfirm !== null}
@@ -1189,11 +1374,11 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
         headerBackgroundColor="#1C3939"
         showSchemaManager
         onSchemaManagerOpen={() => setSchemaManagerOpen(true)}
+        onOnlineHelpClick={() => setShowHelpModal(true)}
       />
       {schemaManagerOpen && (
         <SchemaManagerOverlay
           agentId={agent.agent_id}
-          agentName={agent.agent_name}
           onClose={() => setSchemaManagerOpen(false)}
           onSchemaChanged={loadSchemas}
         />
@@ -1217,21 +1402,21 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
                 type="button"
                 onClick={() => setProjectPanelCollapsed(false)}
                 className="flex items-center justify-center rounded-2xl p-1.5 text-white/80 transition-colors hover:bg-white/10"
-                title="展開專案"
-                aria-label="展開專案"
+                title="展開分析主題"
+                aria-label="展開分析主題"
               >
                 <ChevronRight className="h-5 w-5" />
               </button>
             ) : (
               <>
-                <h3 className="text-base font-medium text-white">專案</h3>
+                <h3 className="text-base font-medium text-white">分析主題</h3>
                 <div className="flex items-center gap-1">
                   <button
                     type="button"
                     onClick={() => setProjectPanelCollapsed(true)}
                     className="rounded-2xl px-1.5 py-1 text-white/80 transition-colors hover:bg-white/10"
-                    title="折疊專案"
-                    aria-label="折疊專案"
+                    title="折疊分析主題"
+                    aria-label="折疊分析主題"
                   >
                     {'<<'}
                   </button>
@@ -1239,9 +1424,11 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
                     type="button"
                     onClick={handleOpenNewProject}
                     className="flex items-center gap-1 rounded-2xl border border-white/30 bg-white/10 px-2.5 py-1 text-base font-medium text-white transition-colors hover:bg-white/20"
+                    aria-label="新增分析主題"
+                    title="新增分析主題"
                   >
                     <Plus className="h-3.5 w-3.5" />
-                    New
+                    新增
                   </button>
                 </div>
               </>
@@ -1252,13 +1439,27 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
               {projectsLoading ? (
                 <p className="text-base text-[#AE924C]/70">載入中…</p>
               ) : projects.length === 0 ? (
-                <p className="text-base text-[#AE924C]/70">尚無專案，點擊 +New 建立</p>
+                <p className="text-base text-white">尚無分析主題，點擊「新增」建立</p>
               ) : (
                 <ul className="space-y-2">
-                  {projects.map((p) => (
+                  {projects.map((p) => {
+                    const rowCount = duckdbRowCountByProject[p.project_id]
+                    const dbIconClass =
+                      rowCount == null
+                        ? 'text-[#AE924C]/80'
+                        : rowCount > 0
+                          ? 'text-emerald-400'
+                          : 'text-red-400'
+                    const dbTitle =
+                      rowCount == null
+                        ? '載入資料狀態…（點擊開啟匯入）'
+                        : rowCount > 0
+                          ? `已匯入 ${rowCount.toLocaleString()} 筆，點擊開啟匯入`
+                          : '尚無資料，點擊開啟匯入'
+                    return (
                     <li
                       key={p.project_id}
-                      className={`relative flex cursor-pointer items-center justify-between gap-2 rounded-lg px-3 py-2 text-base transition-colors text-white ${
+                      className={`relative flex cursor-pointer items-center justify-between gap-1 rounded-lg px-2 py-2 text-base transition-colors text-white ${
                         selectedProject?.project_id === p.project_id
                           ? 'bg-[#AE924C] font-medium'
                           : 'hover:bg-[#AE924C]/10'
@@ -1272,6 +1473,18 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
                         }
                       }}
                     >
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          openImportForProject(p)
+                        }}
+                        className="shrink-0 rounded-lg p-1 text-white transition-colors hover:bg-white/15"
+                        title={dbTitle}
+                        aria-label={dbTitle}
+                      >
+                        <Database className={`h-4 w-4 ${dbIconClass}`} />
+                      </button>
                       <span className="min-w-0 flex-1 truncate text-white">{p.project_name}</span>
                       {selectedProject?.project_id === p.project_id && (
                         <>
@@ -1282,15 +1495,22 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
                               setProjectMenuOpen((prev) => (prev === p.project_id ? null : p.project_id))
                             }}
                             className="shrink-0 rounded-2xl p-1 text-white/80 transition-colors hover:bg-white/10 hover:text-white"
-                            aria-label="專案選單"
+                            aria-label="分析主題選單"
                           >
                             <MoreVertical className="h-4 w-4" />
                           </button>
                           {projectMenuOpen === p.project_id && (
                         <div
-                          className="absolute right-0 top-full z-10 mt-1 min-w-[7rem] rounded-lg border border-gray-200 bg-white py-1 shadow-lg"
+                          className="absolute right-0 top-full z-10 mt-1 min-w-[9rem] rounded-lg border border-gray-200 bg-white py-1 shadow-lg"
                           onClick={(e) => e.stopPropagation()}
                         >
+                          <button
+                            type="button"
+                            className="w-full rounded-2xl px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100"
+                            onClick={() => openImportForProject(p)}
+                          >
+                            匯入資料
+                          </button>
                           <button
                             type="button"
                             className="w-full rounded-2xl px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100"
@@ -1313,7 +1533,8 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
                         </>
                       )}
                     </li>
-                  ))}
+                    )
+                  })}
                 </ul>
               )}
             </div>
@@ -1332,17 +1553,42 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
             onSubmit={handleSendMessage}
             isLoading={isLoading}
             loadingStage={loadingStage}
+            emptyPlaceholder={chatEmptyPlaceholder}
+            emptyPlaceholderClassName={chatEmptyPlaceholderClassName}
+            submitDisabled={chatSubmitDisabled}
+            submitDisabledTitle="尚無匯入資料，請先點資料庫圖示匯入"
             onCopySuccess={() => setToastMessage('已複製到剪貼簿')}
             onCopyError={() => setToastMessage('複製失敗')}
+            exampleLayout="modal"
+            chatInputSeed={chatInputSeed}
+            onChatInputSeedApplied={clearChatInputSeed}
             headerActions={
               <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setExamplePromptsModalOpen(true)}
+                  className="flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-50"
+                  aria-label="範例問題"
+                >
+                  <Lightbulb className="h-4 w-4 shrink-0 text-amber-600" />
+                  <span>範例問題</span>
+                </button>
                 <button
                   type="button"
                   onClick={() => setImportDrawerOpen(true)}
                   className="flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-50"
                   aria-label="資料管理"
+                  title={
+                    !selectedProject
+                      ? '請先選擇分析主題'
+                      : duckdbRowCount == null
+                        ? '載入資料狀態…'
+                        : duckdbRowCount > 0
+                          ? `已匯入 ${duckdbRowCount.toLocaleString()} 筆`
+                          : '尚無資料，請匯入'
+                  }
                 >
-                  <Database className="h-4 w-4 shrink-0" />
+                  <Database className={`h-4 w-4 shrink-0 ${chatDataDbIconClass}`} />
                   <span>
                     {selectedProject
                       ? duckdbRowCount !== null

@@ -1,4 +1,4 @@
-/** Schema 管理（v2）- Wizard 式新建 + 側欄卡片列表 */
+/** 資料範本管理（v2）- Wizard 式新建 + 側欄卡片列表 */
 import { useEffect, useRef, useState } from 'react'
 import {
   CheckCircle2,
@@ -12,6 +12,7 @@ import {
   X,
 } from 'lucide-react'
 import ConfirmModal from '@/components/ConfirmModal'
+import HelpModal from '@/components/HelpModal'
 import {
   createBiSchema,
   deleteBiSchema,
@@ -25,7 +26,6 @@ import {
 
 interface SchemaManagerOverlayV2Props {
   agentId: string
-  agentName?: string
   onClose: () => void
   onSchemaChanged: () => void
 }
@@ -152,7 +152,7 @@ let toastId = 0
 
 // ─── Component ───────────────────────────────────────
 
-export default function SchemaManagerOverlayV2({ agentId, agentName, onClose, onSchemaChanged }: SchemaManagerOverlayV2Props) {
+export default function SchemaManagerOverlayV2({ agentId, onClose, onSchemaChanged }: SchemaManagerOverlayV2Props) {
 
   // state
   const [schemas, setSchemas] = useState<BiSchemaItem[]>([])
@@ -177,6 +177,7 @@ export default function SchemaManagerOverlayV2({ agentId, agentName, onClose, on
   const [toDelete, setToDelete] = useState<BiSchemaItem | null>(null)
   const [dropdownId, setDropdownId] = useState<string | null>(null)
   const [toasts, setToasts] = useState<ToastItem[]>([])
+  const [helpOpen, setHelpOpen] = useState(false)
 
   // always-fresh refs — avoids stale closure entirely
   const colsRef = useRef(cols)
@@ -331,7 +332,7 @@ export default function SchemaManagerOverlayV2({ agentId, agentName, onClose, on
   const renderSidebar = () => (
     <aside className="flex w-64 shrink-0 flex-col overflow-hidden rounded-xl border border-gray-300/50 shadow-md" style={{ backgroundColor: '#483C32' }}>
       <div className="flex shrink-0 items-center justify-between border-b border-gray-300/50 pl-5 pr-3 py-2.5">
-        <span className="text-base font-medium text-white">Schema 列表</span>
+        <span className="text-base font-medium text-white">資料範本列表</span>
         <button type="button" onClick={startNew}
           className="flex items-center gap-1 rounded-2xl border border-white/30 bg-white/10 px-2.5 py-1 text-base font-medium text-white transition-colors hover:bg-white/20">
           <Plus className="h-3.5 w-3.5" />新增
@@ -339,7 +340,7 @@ export default function SchemaManagerOverlayV2({ agentId, agentName, onClose, on
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {schemas.length === 0
-          ? <p className="mt-6 text-center text-base text-[#AE924C]/70">尚無 Schema</p>
+          ? <p className="mt-6 text-center text-base text-[#AE924C]/70">尚無資料範本</p>
           : <ul className="flex flex-col gap-1">
               {schemas.map(s => (
                 <li key={s.id} onClick={() => void openEdit(s.id)}
@@ -401,7 +402,7 @@ export default function SchemaManagerOverlayV2({ agentId, agentName, onClose, on
     <div className="flex flex-col gap-6">
       <div className="grid grid-cols-2 gap-4">
         <div>
-          <label className="mb-1.5 block text-base font-medium text-gray-700">Schema 名稱 <span className="text-red-500">*</span></label>
+          <label className="mb-1.5 block text-base font-medium text-gray-700">資料範本名稱 <span className="text-red-500">*</span></label>
           <input type="text" value={name} onChange={e => setName(e.target.value)} autoFocus
             className="w-full rounded-lg border border-gray-300 px-3 py-2 text-base text-gray-800 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
             placeholder="例：月銷售報表" />
@@ -612,15 +613,23 @@ export default function SchemaManagerOverlayV2({ agentId, agentName, onClose, on
   // ─── Main render ──────────────────────────────────────
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-gray-100 p-4" role="dialog" aria-modal="true">
+    <div className="fixed inset-0 z-50 flex flex-col bg-gray-100 p-4" role="dialog" aria-modal="true" aria-label="資料範本管理">
 
       {/* Header — 獨立圓角卡片 */}
-      <div className="flex shrink-0 items-center justify-between rounded-xl border border-gray-300/50 px-6 py-3.5 shadow-md" style={{ backgroundColor: '#483C32' }}>
-        <div>
-          <h2 className="text-base font-semibold text-white">Schema 管理</h2>
-          {agentName && <p className="mt-0.5 text-sm text-white/60">{agentName}</p>}
+      <div className="flex shrink-0 items-center justify-between rounded-xl border border-gray-300/50 px-6 py-4 shadow-md" style={{ backgroundColor: '#483C32' }}>
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <h2 className="text-2xl font-bold text-white">資料範本管理</h2>
+          <button
+            type="button"
+            onClick={() => setHelpOpen(true)}
+            title="使用說明"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/30 bg-white/10 text-base font-semibold leading-none text-white transition-opacity hover:bg-white/20"
+            aria-label="使用說明"
+          >
+            ？
+          </button>
         </div>
-        <button type="button" onClick={onClose} className="rounded-xl p-2 text-white/70 transition-colors hover:bg-white/10 hover:text-white">
+        <button type="button" onClick={onClose} className="rounded-xl p-2 text-white/70 transition-colors hover:bg-white/10 hover:text-white" aria-label="關閉資料範本管理">
           <X className="h-5 w-5" />
         </button>
       </div>
@@ -641,11 +650,11 @@ export default function SchemaManagerOverlayV2({ agentId, agentName, onClose, on
                     <Plus className="h-10 w-10 text-white/80" />
                   </div>
                 </div>
-                <h3 className="text-lg font-semibold text-gray-800">選擇或建立 Schema</h3>
-                <p className="mt-1.5 text-base text-gray-500">從左側選擇已有的 Schema，或新建一個</p>
+                <h3 className="text-lg font-semibold text-gray-800">選擇或建立資料範本</h3>
+                <p className="mt-1.5 text-base text-gray-500">從左側選擇已有的資料範本，或新建一個</p>
                 <button type="button" onClick={startNew}
                   className="mt-5 rounded-xl bg-blue-600 px-5 py-2.5 text-base font-medium text-white shadow-sm transition-colors hover:bg-blue-700">
-                  + 新建 Schema
+                  + 新建資料範本
                 </button>
               </div>
             </div>
@@ -714,8 +723,10 @@ export default function SchemaManagerOverlayV2({ agentId, agentName, onClose, on
         </div>
       </div>
 
+      <HelpModal open={helpOpen} onClose={() => setHelpOpen(false)} url="/help-bi-schema.md" title="資料範本管理說明" />
+
       {/* Confirm delete */}
-      <ConfirmModal open={confirmOpen} title="刪除 Schema"
+      <ConfirmModal open={confirmOpen} title="刪除資料範本"
         message={`確定要刪除「${toDelete?.name ?? ''}」嗎？此操作無法復原。`}
         confirmText={deleting ? '刪除中…' : '刪除'} variant="danger"
         onConfirm={() => { if (!deleting) void handleDelete() }}
