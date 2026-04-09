@@ -15,6 +15,8 @@ export interface ChatRequest {
   chat_thread_id?: string
   /** 可選，貫穿觀測／稽核 */
   trace_id?: string
+  /** 本輪 user 訊息 id；有圖附件時後端會組多模態送視覺模型 */
+  user_message_id?: string
   system_prompt: string
   user_prompt: string
   /** Chat Agent：本頁上傳檔之純文字參考；與後端來源合併，受 CHAT_DATA_MAX_CHARS 限制 */

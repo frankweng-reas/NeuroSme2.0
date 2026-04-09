@@ -1,5 +1,6 @@
 /** NeuroSme 通用 LLM 對話殼（NsChat）；與 AgentChat 分離，供 ChatAgent 等擴充 */
 import { useEffect, useRef, useState, type FormEvent, type HTMLAttributes, type ReactNode } from 'react'
+import type { ChatMessageAttachmentMeta } from '@/api/chatThreads'
 import { ChevronDown, Copy, Loader2, RotateCcw } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -97,6 +98,17 @@ const CHAT_MARKDOWN_COMPONENTS = {
   ),
 }
 
+function isImageAttachmentMeta(a: ChatMessageAttachmentMeta): boolean {
+  const t = (a.content_type || '').toLowerCase()
+  if (t === 'image/jpeg' || t === 'image/png' || t === 'image/webp' || t === 'image/gif') {
+    return true
+  }
+  const n = a.original_filename || ''
+  const i = n.lastIndexOf('.')
+  const ext = i >= 0 ? n.slice(i).toLowerCase() : ''
+  return ['.jpg', '.jpeg', '.png', '.webp', '.gif'].includes(ext)
+}
+
 export interface NsChatUsage {
   prompt_tokens: number
   completion_tokens: number
@@ -133,6 +145,8 @@ export interface NsChatMessage {
   /** 為 true 時為串流進行中，不顯示「再試一次」 */
   streaming?: boolean
   meta?: NsChatResponseMeta
+  /** user 訊息之附件 meta（圖片等由 attachmentBlobUrls 對應顯示） */
+  attachments?: ChatMessageAttachmentMeta[]
 }
 
 export interface NsChatProps {
@@ -163,6 +177,8 @@ export interface NsChatProps {
   composerAboveForm?: ReactNode
   /** 與輸入框同一列、位於輸入框左側（例如附加檔按鈕） */
   composerLeading?: ReactNode
+  /** stored_file id → object URL，供 user 圖片附件顯示 */
+  attachmentBlobUrls?: Record<string, string>
 }
 
 export default function NsChat({
@@ -184,6 +200,7 @@ export default function NsChat({
   allowSubmitEmptyInput = false,
   composerAboveForm,
   composerLeading,
+  attachmentBlobUrls = {},
 }: NsChatProps) {
   const [input, setInput] = useState('')
   const [isAtBottom, setIsAtBottom] = useState(true)
@@ -269,7 +286,25 @@ export default function NsChat({
                   >
                     <span className="sr-only">{m.role === 'user' ? '您：' : '助理：'}</span>
                     {m.role === 'user' ? (
-                      <p className="whitespace-pre-wrap text-[18px] leading-relaxed">{m.content}</p>
+                      <div className="space-y-2">
+                        <p className="whitespace-pre-wrap text-[18px] leading-relaxed">{m.content}</p>
+                        {m.attachments?.filter(isImageAttachmentMeta).map((a) => {
+                          const url = attachmentBlobUrls[a.file_id]
+                          return (
+                            <div key={a.file_id} className="max-w-full">
+                              {url ? (
+                                <img
+                                  src={url}
+                                  alt={a.original_filename}
+                                  className="max-h-72 max-w-full rounded-lg object-contain ring-1 ring-white/25"
+                                />
+                              ) : (
+                                <p className="text-[15px] text-white/75">圖片載入中…</p>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
                     ) : (
                       <div>
                         <ReactMarkdown

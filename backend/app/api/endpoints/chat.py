@@ -1,4 +1,5 @@
 """Chat API：POST /chat/completions（LiteLLM 統一支援 OpenAI / Gemini / 台智雲）"""
+import base64
 import json
 import logging
 import os
@@ -29,10 +30,15 @@ from app.models.qtn_catalog import QtnCatalog
 from app.models.qtn_project import QtnProject
 from app.models.qtn_source import QtnSource
 from app.models.chat_llm_request import ChatLlmRequest
+from app.models.chat_message import ChatMessage as DbChatMessage
+from app.models.chat_message_attachment import ChatMessageAttachment
 from app.models.chat_thread import ChatThread
 from app.models.source_file import SourceFile
+from app.models.stored_file import StoredFile
 from app.models.user import User
+from app.services.chat_attachment_service import _is_image
 from app.services.duckdb_store import get_project_data_as_csv
+from app.services.stored_files_store import absolute_blob_path
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -103,9 +109,11 @@ class ChatRequest(BaseModel):
     data: str = ""  # Chat Agent 等：前端可傳純文字參考（如本頁上傳檔），與後端組出之資料合併後一併受長度上限檢查
     model: str = "gpt-4o-mini"
     messages: list[ChatMessage] = []
-    content: str  # 新使用者訊息
     chat_thread_id: str = ""
     trace_id: str = ""
+    #: 本輪 user 訊息之 DB id；有圖片附件時後端會從 stored_files 讀取像素組入最後一則 user（OpenAI / Gemini 多模態）
+    user_message_id: str = ""
+    content: str  # 新使用者訊息
 
 
 class UsageMeta(BaseModel):
@@ -214,12 +222,124 @@ def _build_messages(req: ChatRequest, data: str = "") -> list[dict]:
         msgs.append({"role": "system", "content": "\n\n".join(system_parts)})
     for m in req.messages:
         msgs.append({"role": m.role, "content": m.content})
-    # 新訊息：若有 user_prompt 則前置
     user_content = req.content
     if req.user_prompt.strip():
         user_content = f"{req.user_prompt.strip()}\n\n{req.content}"
     msgs.append({"role": "user", "content": user_content})
     return msgs
+
+
+def _load_user_message_image_parts(
+    db: Session,
+    *,
+    tenant_id: str,
+    user_id: int,
+    thread_id: UUID,
+    user_message_id: UUID,
+) -> list[tuple[str, bytes]]:
+    msg = (
+        db.query(DbChatMessage)
+        .join(ChatThread, ChatThread.id == DbChatMessage.thread_id)
+        .filter(
+            DbChatMessage.id == user_message_id,
+            DbChatMessage.thread_id == thread_id,
+            ChatThread.tenant_id == tenant_id,
+            ChatThread.user_id == user_id,
+        )
+        .first()
+    )
+    if not msg or (msg.role or "").strip().lower() != "user":
+        return []
+    atts = (
+        db.query(ChatMessageAttachment)
+        .filter(ChatMessageAttachment.message_id == user_message_id)
+        .order_by(ChatMessageAttachment.created_at.asc())
+        .all()
+    )
+    out: list[tuple[str, bytes]] = []
+    for a in atts:
+        sf = (
+            db.query(StoredFile)
+            .filter(
+                StoredFile.id == a.file_id,
+                StoredFile.tenant_id == tenant_id,
+                StoredFile.deleted_at.is_(None),
+            )
+            .first()
+        )
+        if not sf:
+            continue
+        if not _is_image(sf.original_filename, sf.content_type):
+            continue
+        try:
+            path = absolute_blob_path(sf.tenant_id, sf.id)
+        except RuntimeError:
+            continue
+        if not path.is_file():
+            continue
+        raw = path.read_bytes()
+        mt = (sf.content_type or "").strip().lower() or "image/png"
+        if mt not in ("image/jpeg", "image/png", "image/webp", "image/gif"):
+            mt = "image/png"
+        out.append((mt, raw))
+    max_n = settings.CHAT_INLINE_IMAGE_MAX_COUNT
+    if len(out) > max_n:
+        out = out[:max_n]
+    return out
+
+
+def _merge_last_user_string_with_images(text: str, images: list[tuple[str, bytes]]) -> str | list[dict]:
+    if not images:
+        return text
+    body = text.strip() if text.strip() else "請依圖片內容回答（繁體中文）。"
+    parts: list[dict] = [{"type": "text", "text": body}]
+    for mime, raw in images:
+        b64 = base64.standard_b64encode(raw).decode("ascii")
+        parts.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
+    return parts
+
+
+def _inject_user_message_images_into_messages(
+    db: Session,
+    messages: list[dict],
+    *,
+    tenant_id: str,
+    user_id: int,
+    thread_id: UUID | None,
+    user_message_id_raw: str,
+    model: str,
+) -> tuple[list[dict], bool]:
+    raw = (user_message_id_raw or "").strip()
+    if not raw or thread_id is None:
+        return messages, False
+    try:
+        umid = UUID(raw)
+    except ValueError:
+        return messages, False
+    image_parts = _load_user_message_image_parts(
+        db,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        thread_id=thread_id,
+        user_message_id=umid,
+    )
+    if not image_parts:
+        return messages, False
+    if model.startswith("twcc/"):
+        raise HTTPException(
+            status_code=400,
+            detail="台智雲模型目前不支援對話中附加圖片；請改用 OpenAI／Gemini 等視覺模型。",
+        )
+    if not messages:
+        return messages, False
+    last = messages[-1]
+    if last.get("role") != "user":
+        return messages, False
+    text = last.get("content")
+    if not isinstance(text, str):
+        return messages, False
+    last["content"] = _merge_last_user_string_with_images(text, image_parts)
+    return messages, True
 
 
 def _parse_response(resp) -> ChatResponse:
@@ -509,6 +629,7 @@ class ChatCompletionPrepared:
     thread_uuid: UUID | None
     trace_raw: str | None
     user_id: int
+    has_vision_user_content: bool
 
 
 def _prepare_chat_completion(req: ChatRequest, db: Session, current: User) -> ChatCompletionPrepared:
@@ -553,6 +674,7 @@ def _prepare_chat_completion(req: ChatRequest, db: Session, current: User) -> Ch
             status_code=413,
             detail=f"參考資料超過 {max_chars:,} 字元（目前約 {data_len:,} 字元），請減少選用的來源檔案後再試。",
         )
+
     if data_len == 0:
         if pt == "quotation_parse":
             raise HTTPException(
@@ -601,6 +723,15 @@ def _prepare_chat_completion(req: ChatRequest, db: Session, current: User) -> Ch
         )
 
     messages = _build_messages(req, data=data)
+    messages, has_vision = _inject_user_message_images_into_messages(
+        db,
+        messages,
+        tenant_id=tenant_id,
+        user_id=current.id,
+        thread_id=thread_uuid,
+        user_message_id_raw=req.user_message_id,
+        model=model,
+    )
     return ChatCompletionPrepared(
         tenant_id=tenant_id,
         messages=messages,
@@ -611,6 +742,7 @@ def _prepare_chat_completion(req: ChatRequest, db: Session, current: User) -> Ch
         thread_uuid=thread_uuid,
         trace_raw=trace_raw,
         user_id=current.id,
+        has_vision_user_content=has_vision,
     )
 
 
@@ -652,6 +784,7 @@ async def chat_completions(
         api_key = prepared.api_key
         api_base = prepared.api_base
         messages = prepared.messages
+        vision_timeout = 180 if prepared.has_vision_user_content else 60
 
         if model.startswith("twcc/"):
             # 台智雲：直接呼叫 Conversation API（X-API-KEY、/models/conversation）
@@ -722,7 +855,7 @@ async def chat_completions(
             "model": litellm_model,
             "messages": messages,
             "api_key": api_key,
-            "timeout": 60,
+            "timeout": vision_timeout,
             "temperature": 0,
         }
         if api_base:
@@ -902,11 +1035,12 @@ async def chat_completions_stream(
                     os.environ["GEMINI_API_KEY"] = prepared.api_key
                 else:
                     os.environ["OPENAI_API_KEY"] = prepared.api_key
+                stream_timeout = 240 if prepared.has_vision_user_content else 120
                 completion_kwargs: dict = {
                     "model": prepared.litellm_model,
                     "messages": prepared.messages,
                     "api_key": prepared.api_key,
-                    "timeout": 120,
+                    "timeout": stream_timeout,
                     "temperature": 0,
                     "stream": True,
                 }

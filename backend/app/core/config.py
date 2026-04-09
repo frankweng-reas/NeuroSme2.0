@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     # PDF 擷取：單檔最多頁數與擷取字元上限（仍受 CHAT_AGENT_REFERENCE_MAX_CHARS 合併限制）
     CHAT_PDF_MAX_PAGES: int = 48
     CHAT_PDF_EXTRACT_MAX_CHARS_PER_FILE: int = 20_000
+    # Chat 圖片附件：實體存 stored_files（chat_message_attachments），送 LLM 時自 blob 讀出組多模態。
+    # MAX_BYTES：上傳驗證（persist_chat_uploads）與圖檔類單檔上限；MAX_COUNT：單次 completion 最多注入幾張圖。
+    CHAT_INLINE_IMAGE_MAX_BYTES: int = 4 * 1024 * 1024
+    CHAT_INLINE_IMAGE_MAX_COUNT: int = 4
 
     # LLM Key 加密用對稱金鑰（Fernet，32-byte URL-safe base64）
     # 產生方式：python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"

@@ -1,4 +1,7 @@
-import { apiFetch } from './client'
+import { TOKEN_KEY } from '@/contexts/AuthContext'
+import { ApiError, apiFetch } from './client'
+
+const API_BASE = '/api/v1'
 
 export interface ChatThreadItem {
   id: string
@@ -69,6 +72,26 @@ export async function listChatMessages(threadId: string): Promise<ChatMessageIte
 
 export async function listThreadFiles(threadId: string): Promise<ThreadFileItem[]> {
   return apiFetch<ThreadFileItem[]>(`/chat/threads/${encodeURIComponent(threadId)}/files`)
+}
+
+/** 取得本對話附件二進位（須 Bearer；供圖片顯示等） */
+export async function fetchChatThreadFileBlob(threadId: string, fileId: string): Promise<Blob> {
+  const token = localStorage.getItem(TOKEN_KEY)
+  const res = await fetch(
+    `${API_BASE}/chat/threads/${encodeURIComponent(threadId)}/files/${encodeURIComponent(fileId)}/content`,
+    { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+  )
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`
+    try {
+      const body = (await res.json()) as { detail?: unknown }
+      if (typeof body.detail === 'string') detail = body.detail
+    } catch {
+      /* ignore */
+    }
+    throw new ApiError(detail || '無法載入附件', res.status, detail)
+  }
+  return res.blob()
 }
 
 export async function appendChatMessage(

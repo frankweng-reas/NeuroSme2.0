@@ -28,7 +28,11 @@ logger = logging.getLogger(__name__)
 CHAT_ATTACH_MAX_BYTES = 30 * 1024
 # PDF 二進位單檔上限（擷取後仍受 CHAT_AGENT_REFERENCE_MAX_CHARS 限制）
 CHAT_ATTACH_PDF_MAX_BYTES = 4 * 1024 * 1024
-CHAT_ATTACHMENT_EXT = frozenset({".txt", ".md", ".csv", ".json", ".tsv", ".log", ".text", ".pdf"})
+# 圖片（與 settings.CHAT_INLINE_IMAGE_MAX_BYTES 對齊，供 persist 與驗證）
+CHAT_ATTACHMENT_IMAGE_EXT = frozenset({".jpg", ".jpeg", ".png", ".webp", ".gif"})
+CHAT_ATTACHMENT_EXT = frozenset(
+    {".txt", ".md", ".csv", ".json", ".tsv", ".log", ".text", ".pdf", *CHAT_ATTACHMENT_IMAGE_EXT}
+)
 
 
 def _attachment_ext(name: str) -> str:
@@ -43,14 +47,28 @@ def _is_pdf(filename: str, content_type: str | None) -> bool:
     return t == "application/pdf"
 
 
+def _is_image(filename: str, content_type: str | None) -> bool:
+    ext = _attachment_ext(filename)
+    if ext in CHAT_ATTACHMENT_IMAGE_EXT:
+        return True
+    t = (content_type or "").lower()
+    return t in ("image/jpeg", "image/png", "image/webp", "image/gif")
+
+
 def _max_upload_bytes(filename: str, content_type: str | None) -> int:
-    return CHAT_ATTACH_PDF_MAX_BYTES if _is_pdf(filename, content_type) else CHAT_ATTACH_MAX_BYTES
+    if _is_pdf(filename, content_type):
+        return CHAT_ATTACH_PDF_MAX_BYTES
+    if _is_image(filename, content_type):
+        return int(settings.CHAT_INLINE_IMAGE_MAX_BYTES)
+    return CHAT_ATTACH_MAX_BYTES
 
 
 def is_chat_attachment_allowed(filename: str, content_type: str | None) -> bool:
     ext = _attachment_ext(filename)
     t = (content_type or "").lower()
     if ext == ".pdf" or t == "application/pdf":
+        return True
+    if _is_image(filename, content_type):
         return True
     if ext in CHAT_ATTACHMENT_EXT:
         return True
@@ -117,6 +135,10 @@ def _extract_pdf_text(raw: bytes) -> str:
 def _decode_attachment_plaintext(filename: str, content_type: str | None, raw: bytes) -> str:
     if _is_pdf(filename, content_type):
         return _extract_pdf_text(raw)
+    if _is_image(filename, content_type):
+        return (
+            f"（圖片檔「{filename}」已作為附件儲存並顯示於對話中；以下不包含像素／辨識內容。）"
+        )
     try:
         return raw.decode("utf-8")
     except UnicodeDecodeError:
@@ -169,6 +191,8 @@ def build_attachment_reference_text(
     for a in atts:
         sf = db.query(StoredFile).filter(StoredFile.id == a.file_id).first()
         if not sf or sf.deleted_at is not None:
+            continue
+        if _is_image(sf.original_filename, sf.content_type):
             continue
         try:
             path = absolute_blob_path(sf.tenant_id, sf.id)
@@ -231,6 +255,8 @@ def build_reference_text_for_file_ids(
         if not sf or sf.deleted_at is not None:
             continue
         if sf.tenant_id != tenant_id:
+            continue
+        if _is_image(sf.original_filename, sf.content_type):
             continue
         try:
             path = absolute_blob_path(sf.tenant_id, sf.id)
@@ -330,7 +356,7 @@ def persist_chat_uploads(
             raise ValueError("檔案過大，請節錄重點後再上傳。")
         if not is_chat_attachment_allowed(name, ctype):
             raise ValueError(
-                f"不支援的檔案類型：{name}（僅限 .txt / .md / .csv / .json / .pdf 等純文字或 PDF）"
+                f"不支援的檔案類型：{name}（僅限純文字、PDF 與圖片 jpeg/png/webp/gif）"
             )
         normalized.append((name, ctype, body))
 

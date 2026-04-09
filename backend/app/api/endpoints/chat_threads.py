@@ -27,6 +27,7 @@ from app.services.chat_attachment_service import (
     persist_chat_uploads,
     resolve_llm_attachment_window_reference_text,
 )
+from app.services.stored_files_store import absolute_blob_path
 
 router = APIRouter()
 
@@ -308,6 +309,51 @@ def list_thread_files(
         )
         for sf, _ in rows
     ]
+
+
+@router.get("/threads/{thread_id}/files/{file_id}/content")
+def get_thread_stored_file_content(
+    thread_id: UUID,
+    file_id: UUID,
+    db: Session = Depends(get_db),
+    current: Annotated[User, Depends(get_current_user)] = ...,
+):
+    """下載本對話曾出現之 stored_files 內容（供前端顯示圖片等；須登入且擁有該 thread）。"""
+    _get_thread_owned(db, thread_id=thread_id, tenant_id=current.tenant_id, user_id=current.id)
+    n = (
+        db.query(ChatMessageAttachment)
+        .join(ChatMessage, ChatMessage.id == ChatMessageAttachment.message_id)
+        .filter(ChatMessage.thread_id == thread_id, ChatMessageAttachment.file_id == file_id)
+        .count()
+    )
+    if n == 0:
+        raise HTTPException(status_code=404, detail="此對話中無該附件")
+    sf = (
+        db.query(StoredFile)
+        .filter(
+            StoredFile.id == file_id,
+            StoredFile.tenant_id == current.tenant_id,
+            StoredFile.deleted_at.is_(None),
+        )
+        .first()
+    )
+    if not sf:
+        raise HTTPException(status_code=404, detail="檔案不存在")
+    try:
+        path = absolute_blob_path(sf.tenant_id, sf.id)
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail="檔案儲存未設定")
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="實體檔案不存在")
+    raw = path.read_bytes()
+    ct = (sf.content_type or "").strip() or "application/octet-stream"
+    return Response(
+        content=raw,
+        media_type=ct,
+        headers={
+            "Cache-Control": "private, max-age=3600",
+        },
+    )
 
 
 @router.post("/threads/{thread_id}/messages", response_model=ChatMessageResponse, status_code=status.HTTP_201_CREATED)

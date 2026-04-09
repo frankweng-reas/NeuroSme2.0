@@ -10,6 +10,7 @@ import {
   createChatThread,
   deleteChatMessage,
   deleteChatThread,
+  fetchChatThreadFileBlob,
   getLlmAttachmentReferenceText,
   listChatMessages,
   listChatThreads,
@@ -17,6 +18,7 @@ import {
   patchChatMessage,
   patchChatThread,
   uploadChatMessageAttachments,
+  type ChatMessageAttachmentMeta,
   type ChatMessageItem,
   type ChatThreadItem,
   type ThreadFileItem,
@@ -39,7 +41,23 @@ const CHAT_ATTACH_MAX_FILE_BYTES = 30 * 1024
 const CHAT_ATTACH_PDF_MAX_FILE_BYTES = 4 * 1024 * 1024
 /** 與後端 persist_chat_uploads 拒絕單檔 ValueError 文案一致 */
 const CHAT_ATTACH_TOO_LARGE_MESSAGE = '檔案過大，請節錄重點後再上傳。'
-const CHAT_ATTACHMENT_EXT = new Set(['.txt', '.md', '.csv', '.json', '.tsv', '.log', '.text', '.pdf'])
+const CHAT_ATTACHMENT_EXT = new Set([
+  '.txt',
+  '.md',
+  '.csv',
+  '.json',
+  '.tsv',
+  '.log',
+  '.text',
+  '.pdf',
+  '.jpg',
+  '.jpeg',
+  '.png',
+  '.webp',
+  '.gif',
+])
+/** 與後端 CHAT_INLINE_IMAGE_MAX_BYTES 對齊（圖片附件單檔） */
+const CHAT_ATTACH_IMAGE_MAX_FILE_BYTES = 4 * 1024 * 1024
 
 function isChatAttachmentTooLargeApiError(e: unknown): boolean {
   if (!(e instanceof ApiError)) return false
@@ -84,8 +102,10 @@ interface ChatAttachmentItem {
   /** 純文字附件；PDF 為空，改以上傳之二進位送後端擷取 */
   content: string
   sizeBytes?: number
-  kind?: 'text' | 'pdf'
+  kind?: 'text' | 'pdf' | 'image'
   binary?: ArrayBuffer
+  /** 圖片上傳時之 MIME，供 FormData */
+  mimeType?: string
 }
 
 type AttachPanelFeedback = { text: string }
@@ -95,12 +115,22 @@ function attachmentExt(name: string): string {
   return i >= 0 ? name.slice(i).toLowerCase() : ''
 }
 
+function isChatImageFile(file: File): boolean {
+  const t = (file.type || '').toLowerCase()
+  if (t === 'image/jpeg' || t === 'image/png' || t === 'image/webp' || t === 'image/gif') {
+    return true
+  }
+  const ext = attachmentExt(file.name)
+  return ['.jpg', '.jpeg', '.png', '.webp', '.gif'].includes(ext)
+}
+
 function isPdfFile(file: File): boolean {
   return attachmentExt(file.name) === '.pdf' || (file.type || '').toLowerCase() === 'application/pdf'
 }
 
 function isChatAttachmentFileAllowed(file: File): boolean {
   if (isPdfFile(file)) return true
+  if (isChatImageFile(file)) return true
   if (CHAT_ATTACHMENT_EXT.has(attachmentExt(file.name))) return true
   const t = (file.type || '').toLowerCase()
   if (t.startsWith('text/')) return true
@@ -122,9 +152,9 @@ async function readFileAsUtf8Text(file: File): Promise<string> {
   })
 }
 
-/** 僅純文字：PDF 由後端擷取後經 attachment-reference-text 注入 */
+/** 僅純文字：PDF／圖片由後端處理或占位，不併入前端 data 字串 */
 function buildAttachmentPayload(items: ChatAttachmentItem[]): string {
-  const textOnly = items.filter((a) => a.kind !== 'pdf')
+  const textOnly = items.filter((a) => a.kind !== 'pdf' && a.kind !== 'image')
   if (textOnly.length === 0) return ''
   return textOnly.map((a) => `=== 檔案：${a.name} ===\n${a.content}`).join('\n\n')
 }
@@ -181,19 +211,30 @@ function threadSessionKey(agentCompositeId: string) {
   return `${THREAD_SESSION_PREFIX}-${agentCompositeId}`
 }
 
+function isImageAttachmentMeta(a: ChatMessageAttachmentMeta): boolean {
+  const t = (a.content_type || '').toLowerCase()
+  if (t === 'image/jpeg' || t === 'image/png' || t === 'image/webp' || t === 'image/gif') return true
+  const ext = attachmentExt(a.original_filename)
+  return ['.jpg', '.jpeg', '.png', '.webp', '.gif'].includes(ext)
+}
+
 function mapApiMessagesToNs(rows: ChatMessageItem[]): NsChatMessage[] {
   return rows
     .filter((r) => r.role === 'user' || r.role === 'assistant')
     .map((r) => {
       let content = r.content
-      if (r.role === 'user' && r.attachments?.length) {
-        const names = r.attachments.map((a) => a.original_filename).join('、')
-        content = `${content}\n\n（附件：${names}）`
+      const att = r.attachments ?? []
+      if (r.role === 'user' && att.length > 0) {
+        const nonImg = att.filter((a) => !isImageAttachmentMeta(a))
+        if (nonImg.length > 0) {
+          content = `${content}\n\n（附件：${nonImg.map((a) => a.original_filename).join('、')}）`
+        }
       }
       return {
         id: r.id,
         role: r.role as 'user' | 'assistant',
         content,
+        attachments: att.length > 0 ? att : undefined,
       }
     })
 }
@@ -232,6 +273,8 @@ export default function AgentChatUI({ agent }: AgentChatUIProps) {
   const [errorModal, setErrorModal] = useState<{ title: string; message: string } | null>(null)
   const chatFileInputRef = useRef<HTMLInputElement>(null)
   const attachFileOpIdRef = useRef(0)
+  /** stored_file id → 預覽用 object URL（對話內圖片附件） */
+  const [attachmentBlobUrls, setAttachmentBlobUrls] = useState<Record<string, string>>({})
   /** 與上一則成功寫入後端之錨點一致時，新訊息可省略 context_file_ids（沿用窗口） */
   const lastCommittedAnchorKeyRef = useRef<string>('')
   /** 防雙擊送出：在 React state 尚未把 isLoading 設為 true 前即擋下第二則送出（含 POST→上傳→PATCH 與串流整段） */
@@ -247,6 +290,104 @@ export default function AgentChatUI({ agent }: AgentChatUIProps) {
   const showErrorModal = useCallback((message: string, title = '發生錯誤') => {
     setErrorModal({ title, message })
   }, [])
+
+  const userImageAttachmentKey = useMemo(() => {
+    return messages
+      .filter((m) => m.role === 'user' && m.attachments?.some(isImageAttachmentMeta))
+      .map(
+        (m) =>
+          `${m.id ?? ''}:${[...(m.attachments ?? [])].filter(isImageAttachmentMeta).map((a) => a.file_id).sort().join(',')}`
+      )
+      .sort()
+      .join('|')
+  }, [messages])
+
+  useEffect(() => {
+    if (!selectedThreadId) {
+      setAttachmentBlobUrls((prev) => {
+        for (const u of Object.values(prev)) {
+          try {
+            URL.revokeObjectURL(u)
+          } catch {
+            /* ignore */
+          }
+        }
+        return {}
+      })
+      return
+    }
+    const ids = new Set<string>()
+    for (const m of messages) {
+      if (m.role !== 'user' || !m.attachments) continue
+      for (const a of m.attachments) {
+        if (isImageAttachmentMeta(a)) ids.add(a.file_id)
+      }
+    }
+    const idList = [...ids]
+    if (idList.length === 0) {
+      setAttachmentBlobUrls((prev) => {
+        for (const u of Object.values(prev)) {
+          try {
+            URL.revokeObjectURL(u)
+          } catch {
+            /* ignore */
+          }
+        }
+        return {}
+      })
+      return
+    }
+
+    let cancelled = false
+    ;(async () => {
+      const next: Record<string, string> = {}
+      try {
+        for (const fid of idList) {
+          if (cancelled) return
+          const blob = await fetchChatThreadFileBlob(selectedThreadId, fid)
+          if (cancelled) return
+          next[fid] = URL.createObjectURL(blob)
+        }
+      } catch {
+        if (!cancelled) {
+          setAttachmentBlobUrls((prev) => {
+            for (const u of Object.values(prev)) {
+              try {
+                URL.revokeObjectURL(u)
+              } catch {
+                /* ignore */
+              }
+            }
+            return {}
+          })
+        }
+        return
+      }
+      if (cancelled) {
+        for (const u of Object.values(next)) {
+          try {
+            URL.revokeObjectURL(u)
+          } catch {
+            /* ignore */
+          }
+        }
+        return
+      }
+      setAttachmentBlobUrls((prev) => {
+        for (const u of Object.values(prev)) {
+          try {
+            URL.revokeObjectURL(u)
+          } catch {
+            /* ignore */
+          }
+        }
+        return next
+      })
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [selectedThreadId, userImageAttachmentKey])
 
   useEffect(() => {
     if (!attachPanelFeedback) return
@@ -444,7 +585,7 @@ export default function AgentChatUI({ agent }: AgentChatUIProps) {
       try {
         for (const file of files) {
           if (!isChatAttachmentFileAllowed(file)) {
-            const msg = `無法加入「${file.name}」：僅支援 .txt / .md / .csv / .json / .pdf 等（純文字或 PDF；text/* 亦可）。Word 請勿用此上傳。`
+            const msg = `無法加入「${file.name}」：僅支援純文字、PDF、或圖片（JPEG／PNG／WebP／GIF）。Word 請勿用此上傳。`
             showErrorModal(msg, '無法加入附件')
             return
           }
@@ -460,6 +601,23 @@ export default function AgentChatUI({ agent }: AgentChatUIProps) {
             }
             const binary = await file.arrayBuffer()
             additions.push({ id, name, content: '', kind: 'pdf', binary, sizeBytes: file.size })
+            continue
+          }
+          if (isChatImageFile(file)) {
+            if (file.size > CHAT_ATTACH_IMAGE_MAX_FILE_BYTES) {
+              showErrorModal('圖片超過 4MB，請壓縮後再上傳。', '無法加入附件')
+              return
+            }
+            const binary = await file.arrayBuffer()
+            additions.push({
+              id,
+              name,
+              content: '',
+              kind: 'image',
+              binary,
+              sizeBytes: file.size,
+              mimeType: (file.type || 'application/octet-stream').toLowerCase(),
+            })
             continue
           }
           if (file.size > CHAT_ATTACH_MAX_FILE_BYTES) {
@@ -595,6 +753,7 @@ export default function AgentChatUI({ agent }: AgentChatUIProps) {
         prompt_type: 'chat_agent',
         chat_thread_id: threadId,
         trace_id: traceId,
+        user_message_id: userMessageId,
         system_prompt: '',
         user_prompt: '',
         data,
@@ -712,6 +871,12 @@ export default function AgentChatUI({ agent }: AgentChatUIProps) {
       const filesSnapshot = chatAttachments.map((a) => {
         if (a.kind === 'pdf' && a.binary) {
           return { name: a.name, blob: new Blob([a.binary], { type: 'application/pdf' }) }
+        }
+        if (a.kind === 'image' && a.binary) {
+          return {
+            name: a.name,
+            blob: new Blob([a.binary], { type: a.mimeType || 'application/octet-stream' }),
+          }
         }
         return { name: a.name, content: a.content }
       })
@@ -875,9 +1040,11 @@ export default function AgentChatUI({ agent }: AgentChatUIProps) {
                     （
                     {a.kind === 'pdf'
                       ? `PDF · ${(a.sizeBytes ?? 0).toLocaleString()} bytes`
-                      : a.content.length > 0
-                        ? `約 ${a.content.length.toLocaleString()} 字`
-                        : `約 ${(a.sizeBytes ?? 0).toLocaleString()} bytes`}
+                      : a.kind === 'image'
+                        ? `圖片 · ${(a.sizeBytes ?? 0).toLocaleString()} bytes`
+                        : a.content.length > 0
+                          ? `約 ${a.content.length.toLocaleString()} 字`
+                          : `約 ${(a.sizeBytes ?? 0).toLocaleString()} bytes`}
                     ）
                   </span>
                   <button
@@ -909,7 +1076,7 @@ export default function AgentChatUI({ agent }: AgentChatUIProps) {
             aria-label={
               chatAttachments.length > 0 ? `附加檔案，已選 ${chatAttachments.length} 個` : '附加檔案'
             }
-            title="附加檔：純文字單檔約 30KB；PDF 單檔約 4MB（後端擷取文字，佔用對話參考字數上限）。"
+            title="純文字檔約 30KB；PDF／圖片單檔約 4MB。圖片與其他附件一併儲存，對話中可預覽；餵給模型時僅附檔名與占位說明（不送圖素）。"
           >
             <Paperclip className="h-5 w-5" />
           </button>
@@ -1237,7 +1404,7 @@ export default function AgentChatUI({ agent }: AgentChatUIProps) {
             type="file"
             className="hidden"
             multiple
-            accept=".txt,.md,.csv,.json,.tsv,.log,.text,.pdf,text/plain,application/pdf,text/csv,application/json"
+            accept=".txt,.md,.csv,.json,.tsv,.log,.text,.pdf,.jpg,.jpeg,.png,.webp,.gif,text/plain,application/pdf,text/csv,application/json,image/jpeg,image/png,image/webp,image/gif"
             onChange={(e) => void onChatFileInputChange(e)}
           />
           {messagesLoading ? (
@@ -1247,12 +1414,15 @@ export default function AgentChatUI({ agent }: AgentChatUIProps) {
               embedded
               messages={messages}
               onSubmit={handleSubmit}
-              allowSubmitEmptyInput={chatAttachments.length > 0 || selectedThreadFileIds.length > 0}
+              allowSubmitEmptyInput={
+                chatAttachments.length > 0 || selectedThreadFileIds.length > 0
+              }
               isLoading={isLoading}
-              emptyPlaceholder="輸入訊息並送出即可；會自動建立對話並寫入紀錄。可加參考檔（純文字或 PDF）。"
+              emptyPlaceholder="輸入訊息並送出即可；會自動建立對話並寫入紀錄。可附加純文字、PDF 或圖片（與其他附件相同，皆會儲存並可在對話中預覽圖片）。"
               inputPlaceholder="輸入訊息…"
               composerAboveForm={chatComposerAbove}
               composerLeading={chatComposerLeading}
+              attachmentBlobUrls={attachmentBlobUrls}
               onCopySuccess={() => showToast('已複製到剪貼簿')}
               onCopyError={() =>
                 showErrorModal('無法複製到剪貼簿，請手動選取文字或檢查瀏覽器權限。', '複製失敗')

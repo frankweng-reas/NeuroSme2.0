@@ -5,7 +5,7 @@
 ## 對話與模型
 
 - **系統提示**：`prompt_type: chat_agent` 時載入專用系統提示檔（如 `system_prompt_chat_agent.md`），塑造助理行為。
-- **附檔參考與 LLM cache**：附檔擷取後的參考全文經 `data` 併入 **同一則 system**（順序為：系統提示檔 → 請求可選之 `system_prompt` →「以下為參考資料」區塊）。**不**將整段附檔塞入 user 訊息，讓 prompt **前段固定、變動在後**，以配合供應商 **prompt cache** 對前綴快取。
+- **附檔參考與 LLM cache**：可擷取為文字之附檔（含 PDF）經 `data` 併入 **同一則 system**（順序為：系統提示檔 → 請求可選之 `system_prompt` →「以下為參考資料」區塊）。**不**將該段全文併入歷史 user 訊息，讓 prompt **前段固定、變動在後**，以配合供應商 **prompt cache** 對前綴快取；**圖檔**走多模態，見「附件」一節。
 - **多對話串（threads）**：側欄列出歷史對話，可切換；新對話自動建立 thread。
 - **重新命名對話**：變更 thread 標題。
 - **刪除對話**：刪除整個 thread。
@@ -25,11 +25,19 @@
 
 產品上可把附檔規則想成兩句話（細節與實作見同節後段）：
 
-1. **有勾選（及／或本則迴紋針上傳）**：該批檔會當成**附檔參考**餵給模型；自寫入錨點的那一則 user 起算，**連續 5 次 user 發言**內都帶**同一批**（一問一答算 1 次 user）。
+1. **有勾選（及／或本則迴紋針上傳）**：該批檔會餵給模型——**可擷取為文字者**（含 PDF）併入 **system** 附檔參考；**圖片**另以**多模態**併入該輪最後一則 **user**（須視覺模型，見「圖片與視覺模型」）。自寫入錨點的那一則 user 起算，**連續 5 次 user 發言**內都帶**同一批**（一問一答算 1 次 user）。
 2. **資料夾裡全部未勾選、且本則也沒有迴紋針新檔**：**不**帶入對話檔當附檔參考送給模型（該段視為無附檔錨點；若接在舊錨點後送出，則以「空集合」建立新錨點，不再沿用上一段有檔的附檔）。
 
-- **本機上傳（迴紋針）**：可於送出前附加多個檔案。**純文字類**（如 `.txt`、`.md`、`.csv`、`.json` 等）與 **PDF** 等（依後端允許清單與單檔大小上限）；上傳後綁在該則 **user** 訊息，並**併入該則的錨點**、同樣受上述 5 次窗口約束。
-- **參考字元上限**：合併後注入模型的參考文字長度受後端上限約束（避免一次塞入過長內容）。
+- **本機上傳（迴紋針）**：可於送出前附加多個檔案。**純文字類**（如 `.txt`、`.md`、`.csv`、`.json` 等）、**PDF**，以及常見**圖片**（如 `.png`、`.jpg`、`.webp`、`.gif` 等，依後端允許清單與單檔大小上限）；上傳後實體存 **`stored_files`** 並綁在該則 **user** 訊息，檔案 id **併入該則的錨點**、同樣受上述 5 次窗口約束。
+- **參考字元上限**：**文字／PDF 擷取**合併後注入 **system**「參考資料」的長度受後端上限約束（避免一次塞入過長內容）。**圖片不寫入該段參考全文**；像素改以多模態送交模型，見下節「圖片與視覺模型」。
+
+### 圖片與視覺模型（多模態）
+
+- **儲存**：與其他附件相同，圖檔存 **`stored_files`**，並經 **`chat_message_attachments`** 綁在該則 **user** 訊息。
+- **送 LLM**：Chat UI 在呼叫 **`/chat/completions-stream`**（或 **`/chat/completions`**）時帶 **`chat_thread_id`** 與 **`user_message_id`**（本輪該則 user 訊息 id）。後端會驗證訊息屬該 thread，將該則之**圖片附件**自 blob 讀出，並把 **Prompt 裡最後一則 user** 的 `content` 組成 OpenAI 式多模態（**文字** + 一或多張 **`image_url`**，多為 data URL）。
+- **模型**：須使用**支援視覺**的供應商／模型（例如租戶設定之 **OpenAI**、**Gemini** 等，經 LiteLLM）。**台智雲**路徑目前**不支援**對話中附圖；若該則 user 實際含圖片附件，請求會回 **400**，請改選視覺模型。
+- **上限**：單次送進 completion 的圖片張數、單檔大小等與 **`CHAT_INLINE_IMAGE_MAX_COUNT`**、**`CHAT_INLINE_IMAGE_MAX_BYTES`**（後端設定）對齊。
+- **`GET .../llm-attachment-reference-text`**：回傳之參考全文**僅含**可擷取之文字／PDF 等；**不含**圖檔內容區塊（與上項分工一致）。
 
 ### 本對話已出現的檔（資料夾按鈕）
 
@@ -48,11 +56,12 @@
 - `GET .../threads/{id}/files`：thread 內曾出現之檔案列表。
 - `POST .../messages`：`user` 可選帶 `context_file_ids`（皆須已屬本 thread）；省略則沿用上一錨點。
 - `PATCH .../messages/{id}`：更新該則 user 訊息之錨點（例如上傳完成後合併新 `file_id`）。
-- `GET .../messages/{id}/llm-attachment-reference-text`：依窗口規則回傳本則 user 送 LLM 時應注入之參考全文；串流前由前端取用。
+- `GET .../messages/{id}/llm-attachment-reference-text`：依窗口規則回傳應注入 **system 參考資料**之全文（**不含**圖檔段落）；串流前由前端取用以組 `data`。
+- **`POST .../chat/completions`**、**`POST .../chat/completions-stream`**：可選 **`user_message_id`**。與 **`chat_thread_id`** 並用且該則含圖附件時，後端注入多模態 user 內容；逾時等行為對含圖請求較長，以實作為準。
 
 ## 後端與資料
 
-- **持久化**：`chat_threads` / `chat_messages`（含可選欄位 **`context_file_ids`**（JSONB）表示 user 訊息之附檔錨點；與可選 `chat_llm_requests` 觀測）。
+- **持久化**：`chat_threads` / `chat_messages`（含可選欄位 **`context_file_ids`**（JSONB）表示 user 訊息之附檔錨點）、**`chat_message_attachments`** 與 **`stored_files`**（附件含圖）；與可選 **`chat_llm_requests`** 觀測。
 - **權限**：透過現有 agent 存取檢查，僅有權限者可讀寫該 agent 的對話與附件。
 
 ## 管理後台：Chat 用量洞察（第一階）
@@ -65,7 +74,7 @@
 - **A-1**：區間內請求數、成功／失敗／pending、token 加總與平均每請求 token 等 KPI。
 - **A-2**：依模型／provider 之用量表；圖表側另有 **模型 total tokens（Top 10）** 等視覺化。
 - **A-3**：依狀態分布（含圓餅）與失敗 **error_code** 排行；每日趨勢圖依**台北日**彙總。
-- **介面**：Tab「用量」内結合 **recharts 圖表** 與明細表。
+- **介面**：Tab「用量」內結合 **recharts 圖表** 與明細表。
 
 ### 2）使用者（Epic B：B-1～B-3）
 
