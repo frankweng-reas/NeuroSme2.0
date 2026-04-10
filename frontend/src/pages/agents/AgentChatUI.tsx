@@ -1,6 +1,13 @@
 /** agent_id 為 chat 時使用：通用對話（ChatAgent），對話紀錄存 DB（chat_threads / chat_messages） */
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
-import { ChevronRight, FolderOpen, MoreHorizontal, Paperclip } from 'lucide-react'
+import {
+  ChevronRight,
+  FolderOpen,
+  MessageSquarePlus,
+  MoreHorizontal,
+  Paperclip,
+  Search,
+} from 'lucide-react'
 import NsChat, { type NsChatMessage } from '@/components/NsChat'
 import ErrorModal from '@/components/ErrorModal'
 import AgentHeader from '@/components/AgentHeader'
@@ -218,6 +225,18 @@ function isImageAttachmentMeta(a: ChatMessageAttachmentMeta): boolean {
   return ['.jpg', '.jpeg', '.png', '.webp', '.gif'].includes(ext)
 }
 
+/** 側欄與搜尋：與列表顯示標題一致 */
+function chatThreadSidebarLabel(t: ChatThreadItem): string {
+  if (t.title?.trim()) return t.title.trim()
+  const d = t.last_message_at || t.updated_at
+  try {
+    const date = new Date(d)
+    return `對話 ${date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`
+  } catch {
+    return '新對話'
+  }
+}
+
 function mapApiMessagesToNs(rows: ChatMessageItem[]): NsChatMessage[] {
   return rows
     .filter((r) => r.role === 'user' || r.role === 'assistant')
@@ -266,6 +285,9 @@ export default function AgentChatUI({ agent }: AgentChatUIProps) {
   const [renameTitleDraft, setRenameTitleDraft] = useState('')
   const [renameSaving, setRenameSaving] = useState(false)
   const [threadFilesModalOpen, setThreadFilesModalOpen] = useState(false)
+  const [threadSearchOpen, setThreadSearchOpen] = useState(false)
+  const [threadSearchQuery, setThreadSearchQuery] = useState('')
+  const threadSearchInputRef = useRef<HTMLInputElement>(null)
   const [chatAttachments, setChatAttachments] = useState<ChatAttachmentItem[]>([])
   const [threadFiles, setThreadFiles] = useState<ThreadFileItem[]>([])
   const [selectedThreadFileIds, setSelectedThreadFileIds] = useState<string[]>([])
@@ -508,6 +530,18 @@ export default function AgentChatUI({ agent }: AgentChatUIProps) {
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [threadFilesModalOpen])
+
+  useEffect(() => {
+    if (!threadSearchOpen) return
+    const t = window.setTimeout(() => threadSearchInputRef.current?.focus(), 0)
+    return () => window.clearTimeout(t)
+  }, [threadSearchOpen])
+
+  const displayedThreads = useMemo(() => {
+    const q = threadSearchQuery.trim().toLowerCase()
+    if (!q) return threads
+    return threads.filter((t) => chatThreadSidebarLabel(t).toLowerCase().includes(q))
+  }, [threads, threadSearchQuery])
 
   const persistModel = useCallback(
     (m: string) => {
@@ -1125,17 +1159,6 @@ export default function AgentChatUI({ agent }: AgentChatUIProps) {
     ]
   )
 
-  const threadLabel = (t: ChatThreadItem) => {
-    if (t.title?.trim()) return t.title.trim()
-    const d = t.last_message_at || t.updated_at
-    try {
-      const date = new Date(d)
-      return `對話 ${date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`
-    } catch {
-      return '新對話'
-    }
-  }
-
   return (
     <div className="relative flex h-full flex-col p-4 text-[18px]">
       <ErrorModal
@@ -1288,8 +1311,7 @@ export default function AgentChatUI({ agent }: AgentChatUIProps) {
                 <ChevronRight className="h-5 w-5" />
               </button>
             ) : (
-              <div className="flex w-full min-w-0 items-center justify-between gap-2 pr-1">
-                <h3 className="text-base font-medium text-white">對話</h3>
+              <div className="flex w-full min-w-0 justify-end pr-1">
                 <button
                   type="button"
                   onClick={() => setSidebarCollapsed(true)}
@@ -1305,6 +1327,67 @@ export default function AgentChatUI({ agent }: AgentChatUIProps) {
           {!sidebarCollapsed && (
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
               <div className="min-h-0 flex-1 overflow-y-auto p-4">
+                <div className="shrink-0 space-y-1.5">
+                  <button
+                    type="button"
+                    onClick={handleStartFreshConversation}
+                    className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-base transition-colors ${
+                      selectedThreadId === null
+                        ? 'bg-[#AE924C] font-medium text-white'
+                        : 'text-white hover:bg-[#AE924C]/10'
+                    }`}
+                  >
+                    <MessageSquarePlus className="h-5 w-5 shrink-0 opacity-90" aria-hidden />
+                    新對話
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setThreadSearchOpen((open) => {
+                        if (open) setThreadSearchQuery('')
+                        return !open
+                      })
+                    }}
+                    aria-expanded={threadSearchOpen}
+                    className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-base transition-colors ${
+                      threadSearchOpen
+                        ? 'bg-white/12 text-white'
+                        : 'text-white hover:bg-[#AE924C]/10'
+                    }`}
+                  >
+                    <Search className="h-5 w-5 shrink-0 opacity-90" aria-hidden />
+                    搜尋對話
+                  </button>
+                  {threadSearchOpen ? (
+                    <input
+                      ref={threadSearchInputRef}
+                      type="search"
+                      value={threadSearchQuery}
+                      onChange={(e) => setThreadSearchQuery(e.target.value)}
+                      placeholder="依標題搜尋…"
+                      aria-label="篩選對話標題"
+                      autoComplete="off"
+                      className="w-full rounded-lg border border-white/25 bg-white/10 px-3 py-2 text-[15px] text-white placeholder:text-white/40 focus:border-[#AE924C] focus:outline-none focus:ring-1 focus:ring-[#AE924C]"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Escape' && !e.nativeEvent.isComposing) {
+                          setThreadSearchOpen(false)
+                          setThreadSearchQuery('')
+                        }
+                      }}
+                    />
+                  ) : null}
+                </div>
+                <div
+                  className="my-3 h-px shrink-0 bg-white/25"
+                  role="separator"
+                  aria-hidden="true"
+                />
+                <p className="shrink-0 text-base font-medium text-gray-300">你的對話</p>
+                <div
+                  className="mt-2 mb-3 h-px shrink-0 bg-white/25"
+                  role="separator"
+                  aria-hidden="true"
+                />
                 {threadsLoading ? (
                   <p className="text-base text-[#AE924C]/80">載入中…</p>
                 ) : threadsError ? (
@@ -1315,9 +1398,11 @@ export default function AgentChatUI({ agent }: AgentChatUIProps) {
                       <p className="text-base leading-relaxed text-white/85">
                         尚無紀錄。在右側輸入並送出後，會<strong className="font-semibold">自動</strong>建立一則對話並儲存。
                       </p>
+                    ) : displayedThreads.length === 0 ? (
+                      <p className="text-base leading-relaxed text-white/75">找不到符合的對話。</p>
                     ) : (
                       <ul className="space-y-2">
-                        {threads.map((t) => (
+                        {displayedThreads.map((t) => (
                           <li
                             key={t.id}
                             className="relative"
@@ -1335,7 +1420,7 @@ export default function AgentChatUI({ agent }: AgentChatUIProps) {
                                 onClick={() => handleSelectThread(t.id)}
                                 className="min-w-0 flex-1 px-2 py-2 text-left text-base"
                               >
-                                <span className="line-clamp-2">{threadLabel(t)}</span>
+                                <span className="line-clamp-2">{chatThreadSidebarLabel(t)}</span>
                               </button>
                               <button
                                 type="button"
@@ -1380,20 +1465,6 @@ export default function AgentChatUI({ agent }: AgentChatUIProps) {
                   </>
                 )}
               </div>
-              {!threadsLoading && !threadsError && threads.length > 0 && (
-                <div className="shrink-0 border-t border-white/15 px-4 py-3">
-                  <button
-                    type="button"
-                    onClick={handleStartFreshConversation}
-                    className="w-full rounded-lg py-2 text-center text-[15px] text-[#AE924C]/90 underline-offset-2 transition-colors hover:text-[#AE924C] hover:underline"
-                  >
-                    開始另一則對話…
-                  </button>
-                  <p className="mt-1 text-center text-xs leading-snug text-white/50">
-                    不建立空白串；送出第一則訊息時才存成新對話。
-                  </p>
-                </div>
-              )}
             </div>
           )}
         </div>
@@ -1418,7 +1489,18 @@ export default function AgentChatUI({ agent }: AgentChatUIProps) {
                 chatAttachments.length > 0 || selectedThreadFileIds.length > 0
               }
               isLoading={isLoading}
-              emptyPlaceholder="輸入訊息並送出即可；會自動建立對話並寫入紀錄。可附加純文字、PDF 或圖片（與其他附件相同，皆會儲存並可在對話中預覽圖片）。"
+              emptyPlaceholder="輸入訊息開始你的對話，可附加純文字、PDF 或圖片。"
+              emptyStateTop={
+                selectedThreadId === null ? (
+                  <img
+                    src="/chatbot_icon.png"
+                    alt=""
+                    role="presentation"
+                    draggable={false}
+                    className="pointer-events-none h-auto max-h-full w-auto max-w-full select-none object-contain"
+                  />
+                ) : undefined
+              }
               inputPlaceholder="輸入訊息…"
               composerAboveForm={chatComposerAbove}
               composerLeading={chatComposerLeading}

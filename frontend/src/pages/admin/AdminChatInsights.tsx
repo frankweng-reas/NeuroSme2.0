@@ -64,7 +64,7 @@ function InsightsTabDateRange({
   onApply,
   onPresetDays,
 }: {
-  label: ReactNode
+  label?: ReactNode
   start: string
   end: string
   onStartChange: (v: string) => void
@@ -74,7 +74,7 @@ function InsightsTabDateRange({
 }) {
   return (
     <div className="space-y-2">
-      <div className="text-xs text-gray-600">{label}</div>
+      {label ? <div className="text-xs text-gray-600">{label}</div> : null}
       <div className="flex flex-wrap items-end gap-3 rounded-lg border border-gray-200 bg-gray-50 p-4">
         <div>
           <label className="block text-xs font-medium text-gray-600">起始日（台北）</label>
@@ -321,13 +321,6 @@ export default function AdminChatInsights() {
     <div className="mx-auto max-w-6xl space-y-6">
       <div>
         <h2 className="text-xl font-semibold text-gray-900">Chat 用量洞察</h2>
-        <p className="mt-1 text-sm text-gray-600">
-          「用量／使用者」統計來自 <code className="rounded bg-gray-100 px-1 text-xs">chat_llm_requests</code>
-          ，日期在<strong className="font-medium text-gray-800"> 各分頁內 </strong>選擇（台北日曆）。
-          「<strong className="font-medium text-gray-800">儲存空間</strong>」為{' '}
-          <code className="rounded bg-gray-100 px-1 text-xs">chat_threads</code>／Chat 附加檔之{' '}
-          <strong className="font-medium text-gray-800">當下存量</strong>，無日期區間。
-        </p>
       </div>
 
       <div className="flex gap-1 border-b border-gray-200">
@@ -369,7 +362,6 @@ export default function AdminChatInsights() {
       {mainTab === 'usage' && (
         <div className="space-y-4">
           <InsightsTabDateRange
-            label="本 Tab 統計區間（與「使用者」Tab 互不影響，可日後新增不需日期的分頁。）"
             start={usageStart}
             end={usageEnd}
             onStartChange={setUsageStart}
@@ -389,7 +381,6 @@ export default function AdminChatInsights() {
         <UsersTabBody
           dateRangeToolbar={
             <InsightsTabDateRange
-              label="本 Tab 統計區間（與「用量」Tab 獨立；下鑽對話串亦以此區間為準。）"
               start={usersStart}
               end={usersEnd}
               onStartChange={setUsersStart}
@@ -445,10 +436,6 @@ function StorageTabBody({
   const t = storage?.totals
   return (
     <div className="space-y-6">
-      <p className="text-sm text-gray-600">
-        供管理員掌握租戶 Chat 之<strong className="font-medium text-gray-800">資源佔用</strong>：對話串數、附加檔連結數、不重複檔案數與合計大小（僅計{' '}
-        <code className="rounded bg-gray-100 px-1 text-xs">stored_files</code> 未刪除且經 Chat 訊息引用者）。
-      </p>
       <div className="flex flex-wrap items-center justify-end gap-3">
         <label className="flex cursor-pointer items-center gap-2 text-sm text-gray-700">
           <input

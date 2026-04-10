@@ -157,6 +157,8 @@ export interface NsChatProps {
   headerActions?: ReactNode
   emptyPlaceholder?: string
   emptyPlaceholderClassName?: string
+  /** 無訊息時顯示於說明文字上方（例如插圖） */
+  emptyStateTop?: ReactNode
   /** 輸入框 placeholder，未傳則用 emptyPlaceholder */
   inputPlaceholder?: string
   /** 思考中顯示文字，預設「助理思考中」 */
@@ -189,6 +191,7 @@ export default function NsChat({
   headerActions,
   emptyPlaceholder = '輸入訊息…',
   emptyPlaceholderClassName,
+  emptyStateTop,
   inputPlaceholder,
   loadingLabel = '助理思考中',
   submitDisabled = false,
@@ -268,11 +271,26 @@ export default function NsChat({
             aria-live="polite"
           >
             {messages.length === 0 && !isLoading ? (
-              <p
-                className={`whitespace-pre-line ${emptyPlaceholderClassName ?? 'text-center text-[18px] text-gray-400'}`}
-              >
-                {emptyPlaceholder}
-              </p>
+              emptyStateTop != null ? (
+                <div className="flex h-full min-h-full w-full flex-col items-center gap-5 px-1 py-3 text-center">
+                  <div className="flex min-h-0 w-full flex-1 items-center justify-center">
+                    <div className="box-border flex h-full min-h-[10rem] w-full items-center justify-center overflow-hidden">
+                      {emptyStateTop}
+                    </div>
+                  </div>
+                  <p
+                    className={`shrink-0 max-w-xl whitespace-pre-line ${emptyPlaceholderClassName ?? 'text-[18px] text-gray-400'}`}
+                  >
+                    {emptyPlaceholder}
+                  </p>
+                </div>
+              ) : (
+                <p
+                  className={`whitespace-pre-line ${emptyPlaceholderClassName ?? 'text-center text-[18px] text-gray-400'}`}
+                >
+                  {emptyPlaceholder}
+                </p>
+              )
             ) : (
               <ul className="flex flex-col space-y-4">
                 {messages.map((m, i) => (
