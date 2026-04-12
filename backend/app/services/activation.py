@@ -99,11 +99,25 @@ def redeem_code(code: str, tenant_id: str, db: Session) -> ActivationCode:
     except Exception:
         raise RedeemError("Code 格式無效")
 
-    # 查 DB 記錄
+    # 查 DB 記錄，若不存在則視為首次兌換（on-prem 場景：code 在 REAS 系統產生，客戶 DB 沒有預存記錄）
     code_hash = _hash_code(code)
     record = db.query(ActivationCode).filter(ActivationCode.code_hash == code_hash).first()
     if not record:
-        raise RedeemError("Code 不存在，請確認輸入是否正確")
+        # 簽名已驗過，直接從 payload 建立記錄
+        expires_date = None
+        if payload.get("expires"):
+            try:
+                expires_date = date.fromisoformat(payload["expires"])
+            except ValueError:
+                pass
+        record = ActivationCode(
+            code_hash=code_hash,
+            customer_name=payload.get("customer", ""),
+            agent_ids=",".join(payload.get("agents", [])),
+            expires_at=expires_date,
+        )
+        db.add(record)
+        db.flush()
 
     # 到期檢查
     if record.is_expired():
