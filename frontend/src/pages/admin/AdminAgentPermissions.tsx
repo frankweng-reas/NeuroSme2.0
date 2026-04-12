@@ -149,20 +149,7 @@ export default function AdminAgentPermissions() {
       )}
       {/* 左側：使用者列表 */}
       <div className="flex w-64 flex-shrink-0 flex-col rounded-lg border-2 border-gray-200 bg-gray-50 p-4 shadow-sm">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-gray-800">使用者</h2>
-          {user?.role === 'admin' && (
-            <button
-              type="button"
-              onClick={() => setShowReactivate(true)}
-              className="flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-xs text-gray-600 hover:bg-gray-50 hover:border-gray-400 transition-colors"
-              title="輸入新的 Activation Code 以加購或更新授權"
-            >
-              <KeySquare className="h-3.5 w-3.5" />
-              重新啟用
-            </button>
-          )}
-        </div>
+        <h2 className="mb-3 text-lg font-semibold text-gray-800">使用者</h2>
         <input
           type="text"
           placeholder="搜尋 email / 帳號"
@@ -234,6 +221,17 @@ export default function AdminAgentPermissions() {
                     </select>
                   )}
                 </label>
+                {user?.role === 'admin' && (
+                  <button
+                    type="button"
+                    onClick={() => setShowReactivate(true)}
+                    className="flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 hover:border-gray-400 transition-colors"
+                    title="輸入新的 Activation Code 以加購或更新授權"
+                  >
+                    <KeySquare className="h-4 w-4" />
+                    重新啟用
+                  </button>
+                )}
                 <button
                 type="button"
                 onClick={handleSave}
