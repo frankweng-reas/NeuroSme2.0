@@ -271,7 +271,7 @@ export async function chatCompletionsComputeToolStream(
     const match = block.match(/^data:\s*(.+)$/m)
     if (!match) return
     try {
-      const data = JSON.parse(match[1]) as { stage: string; content?: string; chart_data?: unknown; model?: string; usage?: Record<string, number> }
+      const data = JSON.parse(match[1]) as { stage: string; content?: string; chart_data?: unknown; model?: string; usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } }
       if (data.stage === 'intent') onStage('intent')
       else if (data.stage === 'compute') onStage('compute')
       else if (data.stage === 'text') onStage('text')

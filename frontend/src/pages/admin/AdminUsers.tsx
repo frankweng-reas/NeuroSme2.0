@@ -4,7 +4,7 @@ import { Pencil, Trash2, UserPlus, X } from 'lucide-react'
 import { ApiError } from '@/api/client'
 import { createUser, deleteUser, listUsers, updateUser } from '@/api/users'
 import { useToast } from '@/contexts/ToastContext'
-import type { User, UserRole } from '@/types'
+import type { User } from '@/types'
 
 const ROLE_BADGE: Record<string, string> = {
   super_admin: 'bg-purple-100 text-purple-700',
