@@ -1,14 +1,11 @@
 /** Admin：Agent 權限設定區塊 - 選 user → 勾選 agent → 儲存 */
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { KeySquare } from 'lucide-react'
 import { getAgents } from '@/api/agents'
 import { getUserAgentIds, listUsers, updateUserAgents, updateUserRole } from '@/api/users'
 import { ApiError } from '@/api/client'
 import { useToast } from '@/contexts/ToastContext'
-import { useAuth } from '@/contexts/AuthContext'
 import type { Agent, User, UserRole } from '@/types'
 import AgentIcon from '@/components/AgentIcon'
-import ActivationDialog from '@/components/ActivationDialog'
 
 const GROUP_COLORS = [
   { accent: 'border-l-slate-300', iconBg: 'bg-slate-50', iconColor: 'text-slate-600' },
@@ -19,7 +16,6 @@ const GROUP_COLORS = [
 ]
 
 export default function AdminAgentPermissions() {
-  const { user } = useAuth()
   const [users, setUsers] = useState<User[]>([])
   const [agents, setAgents] = useState<Agent[]>([])
   const [selectedUserId, setSelectedUserId] = useState<number | null>(null)
@@ -31,7 +27,6 @@ export default function AdminAgentPermissions() {
   const [isLoadingUserAgents, setIsLoadingUserAgents] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [usersError, setUsersError] = useState<string | null>(null)
-  const [showReactivate, setShowReactivate] = useState(false)
   const { showToast } = useToast()
 
   useEffect(() => {
@@ -129,24 +124,6 @@ export default function AdminAgentPermissions() {
 
   return (
     <div className="flex h-full min-h-0 gap-6">
-      {showReactivate && (
-        <ActivationDialog
-          onActivated={() => {
-            setShowReactivate(false)
-            // 重新載入 agents（讓右側清單更新）
-            if (selectedUserId != null) {
-              const u = users.find((x) => x.id === selectedUserId)
-              setIsLoadingAgents(true)
-              getAgents(true, u?.tenant_id)
-                .then(setAgents)
-                .catch(() => setAgents([]))
-                .finally(() => setIsLoadingAgents(false))
-            }
-            showToast('系統已重新啟用')
-          }}
-          onClose={() => setShowReactivate(false)}
-        />
-      )}
       {/* 左側：使用者列表 */}
       <div className="flex w-64 flex-shrink-0 flex-col rounded-lg border-2 border-gray-200 bg-gray-50 p-4 shadow-sm">
         <h2 className="mb-3 text-lg font-semibold text-gray-800">使用者</h2>
@@ -221,17 +198,6 @@ export default function AdminAgentPermissions() {
                     </select>
                   )}
                 </label>
-                {user?.role === 'admin' && (
-                  <button
-                    type="button"
-                    onClick={() => setShowReactivate(true)}
-                    className="flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 hover:border-gray-400 transition-colors"
-                    title="輸入新的 Activation Code 以加購或更新授權"
-                  >
-                    <KeySquare className="h-4 w-4" />
-                    重新啟用
-                  </button>
-                )}
                 <button
                 type="button"
                 onClick={handleSave}
