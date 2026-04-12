@@ -1,8 +1,9 @@
 /** REAS-Activate Code 產生器（super_admin 專用） */
 import { useEffect, useState } from 'react'
-import { Copy, Check } from 'lucide-react'
+import { Copy, Check, ClipboardList } from 'lucide-react'
 import { listAgentCatalog } from '@/api/agentCatalog'
-import { generateActivationCode } from '@/api/activation'
+import { generateActivationCode, listActivationHistory } from '@/api/activation'
+import type { ActivationHistoryItem } from '@/api/activation'
 import { useToast } from '@/contexts/ToastContext'
 import type { AgentCatalog } from '@/types'
 
@@ -15,6 +16,7 @@ export default function AdminActivateCode() {
   const [isLoading, setIsLoading] = useState(true)
   const [isGenerating, setIsGenerating] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [history, setHistory] = useState<ActivationHistoryItem[]>([])
   const { showToast } = useToast()
 
   useEffect(() => {
@@ -22,6 +24,9 @@ export default function AdminActivateCode() {
       .then(setAgents)
       .catch(() => setAgents([]))
       .finally(() => setIsLoading(false))
+    listActivationHistory()
+      .then(setHistory)
+      .catch(() => setHistory([]))
   }, [])
 
   function toggleAgent(agentId: string) {
@@ -39,6 +44,15 @@ export default function AdminActivateCode() {
 
   function deselectAll() {
     setSelectedIds(new Set())
+  }
+
+  /** 從歷史記錄複製設定 */
+  function applyHistory(item: ActivationHistoryItem) {
+    setCustomerName(item.customer_name)
+    setSelectedIds(new Set(item.agent_ids))
+    setExpiresAt(item.expires_at ?? '')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+    showToast(`已套用「${item.customer_name}」的設定`)
   }
 
   async function handleGenerate() {
@@ -60,6 +74,8 @@ export default function AdminActivateCode() {
       })
       setGeneratedCode(res.code)
       showToast('Activation Code 已產生')
+      // 重新載入歷史
+      listActivationHistory().then(setHistory).catch(() => {})
     } catch (err) {
       const msg = err instanceof Error ? err.message : '產生失敗'
       showToast(msg, 'error')
@@ -207,6 +223,47 @@ export default function AdminActivateCode() {
             {generatedCode}
           </div>
           <p className="mt-2 text-xs text-green-600">請將此 Code 傳送給客戶，客戶登入後在啟用對話框貼入即可。</p>
+        </div>
+      )}
+
+      {/* 歷史記錄 */}
+      {history.length > 0 && (
+        <div className="mt-10">
+          <div className="mb-3 flex items-center gap-2">
+            <ClipboardList className="h-4 w-4 text-gray-500" />
+            <h3 className="text-sm font-semibold text-gray-700">歷史記錄</h3>
+            <span className="text-xs text-gray-400">（點「套用」可自動填入上方欄位）</span>
+          </div>
+          <div className="space-y-2">
+            {history.map((item) => (
+              <div
+                key={item.id}
+                className="flex items-center justify-between rounded-lg border border-gray-200 bg-gray-50 px-4 py-3"
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-gray-800">{item.customer_name}</p>
+                  <p className="mt-0.5 text-xs text-gray-500">
+                    {item.agent_ids.join('、')}
+                  </p>
+                  <p className="mt-0.5 text-xs text-gray-400">
+                    產生：{item.created_at.slice(0, 10)}
+                    {item.expires_at && <span className="ml-2">到期：{item.expires_at}</span>}
+                    {item.activated_at
+                      ? <span className="ml-2 text-green-600">✓ 已兌換 {item.activated_at.slice(0, 10)}</span>
+                      : <span className="ml-2 text-amber-500">未兌換</span>
+                    }
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => applyHistory(item)}
+                  className="ml-4 flex-shrink-0 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-100 hover:border-gray-400 transition-colors"
+                >
+                  套用
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

@@ -47,3 +47,17 @@ export async function redeemActivationCode(code: string): Promise<RedeemCodeResp
 export async function getActivationStatus(): Promise<ActivationStatus> {
   return apiFetch<ActivationStatus>('/activate/status')
 }
+
+export interface ActivationHistoryItem {
+  id: number
+  customer_name: string
+  agent_ids: string[]
+  expires_at: string | null
+  created_at: string
+  activated_at: string | null
+}
+
+/** 取得所有 Activation Code 歷史（super_admin） */
+export async function listActivationHistory(): Promise<ActivationHistoryItem[]> {
+  return apiFetch<ActivationHistoryItem[]>('/activate/history')
+}
