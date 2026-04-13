@@ -26,7 +26,7 @@ const SIDEBAR_ITEMS = [
 ] as const
 
 const SIDEBAR_ITEMS_SECONDARY = [
-  { to: '/admin/companies', label: '公司資訊', icon: Building, superAdminOnly: false },
+  // { to: '/admin/companies', label: '公司資訊', icon: Building, superAdminOnly: false },
 ] as const
 
 const SIDEBAR_COLLAPSED_KEY = 'neurosme-admin-sidebar-collapsed'
