@@ -19,7 +19,6 @@ import ActivationDialog from '@/components/ActivationDialog'
 
 const SIDEBAR_ITEMS = [
   { to: '/admin/tenant-settings', label: 'REAS-系統 Tenants 設定', icon: Building2, superAdminOnly: true },
-  { to: '/admin/activate-code', label: 'REAS-Activate Code', icon: KeySquare, superAdminOnly: true },
   { to: '/admin/llm-settings', label: 'LLM 設定（租戶）', icon: KeyRound, superAdminOnly: false },
   { to: '/admin/users', label: '會員管理', icon: Users, superAdminOnly: false },
   { to: '/admin/agent-permissions', label: 'Agent 權限設定', icon: ShieldCheck, superAdminOnly: false },

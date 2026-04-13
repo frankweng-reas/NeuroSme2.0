@@ -11,7 +11,6 @@ import AgentPage from './pages/AgentPage'
 import AdminPage from './pages/AdminPage'
 import AdminAgentPermissions from './pages/admin/AdminAgentPermissions'
 import AdminAgentCatalog from './pages/admin/AdminAgentCatalog'
-import AdminActivateCode from './pages/admin/AdminActivateCode'
 import AdminCompanies from './pages/admin/AdminCompanies'
 import AdminLLMSettings from './pages/admin/AdminLLMSettings'
 import AdminTenantSettings from './pages/admin/AdminTenantSettings'
@@ -67,7 +66,6 @@ function App() {
               >
                 <Route index element={<Navigate to="agent-permissions" replace />} />
                 <Route path="agents" element={<SuperAdminRoute><AdminAgentCatalog /></SuperAdminRoute>} />
-                <Route path="activate-code" element={<SuperAdminRoute><AdminActivateCode /></SuperAdminRoute>} />
                 <Route path="agent-permissions" element={<AdminAgentPermissions />} />
                 <Route path="companies" element={<AdminCompanies />} />
                 <Route path="tenant-settings" element={<SuperAdminRoute><AdminTenantSettings /></SuperAdminRoute>} />
