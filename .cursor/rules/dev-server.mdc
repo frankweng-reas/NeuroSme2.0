@@ -1,0 +1,54 @@
+---
+description: ee.neurosme.ai 開發伺服器架構與服務狀態
+alwaysApply: true
+---
+
+# 開發伺服器環境（ee.neurosme.ai / 34.85.97.228）
+
+## 對外網址
+- `https://ee.neurosme.ai` → NeuroSme2.0 前端
+- `https://ee.neurosme.ai:3000` → reas-portal 前端
+- HTTP 自動 301 跳轉 HTTPS，Let's Encrypt 憑證，systemd timer 自動續期
+
+## 服務架構
+
+### Docker 容器（5個，restart: unless-stopped）
+- `neurosme20-nginx-dev-1`：port 80/443/3000，反向代理
+- `localauth-app-1`：port 4000，LocalAuth NestJS 服務
+- `localauth-db-1`：port 5433，LocalAuth PostgreSQL
+- `neurosme2.0`：port 5434，NeuroSme2.0 PostgreSQL
+- `reas-portal-db`：port 5435，reas-portal PostgreSQL
+
+### Systemd User Services（4個，自動重啟）
+- `neurosme-frontend`：Vite dev server，port 5173
+- `neurosme-backend`：uvicorn，port 8000
+- `reas-portal-frontend`：Vite dev server，port 3001
+- `reas-portal-backend`：uvicorn，port 8080
+
+## 重要設定檔位置
+- nginx：`~/NeuroSme2.0/nginx.dev.conf`
+- dev docker-compose：`~/NeuroSme2.0/docker-compose.dev.yml`
+- 客戶安裝包腳本：`~/scripts/build-onprem.sh`
+- systemd services：`~/.config/systemd/user/*.service`
+- 開發環境完整說明：`~/NeuroSme2.0/DEV-SETUP.md`
+
+## GCP 防火牆（開放 port）
+- 22（SSH）、80（HTTP）、443（HTTPS）、3000（reas-portal）
+
+## 常用指令
+```bash
+# 查看所有服務狀態
+docker ps && systemctl --user status neurosme-backend neurosme-frontend reas-portal-backend reas-portal-frontend
+
+# 重啟 nginx
+cd ~/NeuroSme2.0 && docker compose -f docker-compose.dev.yml restart
+
+# 查看 log
+tail -f /tmp/neurosme-frontend.log
+tail -f /tmp/neurosme-backend.log
+```
+
+## 注意事項
+- `docker-compose.onprem.yml` 是給客戶的安裝包，**不在這台伺服器執行**
+- reas-portal-backend 只有 systemd，沒有 docker 容器（已清理）
+- vite.config.ts/.js 都需要 `allowedHosts: ['ee.neurosme.ai']`
