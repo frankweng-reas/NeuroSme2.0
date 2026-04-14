@@ -123,10 +123,10 @@ Log 位置：
 443   nginx → NeuroSme 前端（Vite 5173）
 3000  nginx → reas-portal 前端（Vite 3001）
 4000  LocalAuth（Docker）
-5173  NeuroSme2.0 Vite dev server（host）
-3001  reas-portal Vite dev server（host）
-8000  NeuroSme2.0 後端 uvicorn（host）
-8080  reas-portal 後端 uvicorn（host）
+5173  NeuroSme2.0 Vite dev server（host / systemd）
+3001  reas-portal Vite dev server（host / systemd）
+8000  NeuroSme2.0 後端 uvicorn（host / systemd）
+8080  reas-portal 後端 uvicorn（host / systemd）
 5433  localauth-db（Docker）
 5434  neurosme2.0 db（Docker）
 5435  reas-portal-db（Docker）
