@@ -49,8 +49,6 @@ services:
       # 若客戶從其他網域嵌入 API，請將該網域加入此清單
       # 例："http://localhost", "http://localhost:80", "https://erp.acme.com"
       EXPOSE_COMPUTE_ERROR_DETAIL: "false"
-      # 若要在不使用 Activation Code 的情況下預設開啟某些 agent：
-      # ONPREM_ENABLED_AGENTS: business,chat,quotation
     volumes:
       - ./neurosme_data/stored_files:/app/data/stored_files
       - ./neurosme_data/duckdb:/app/data/duckdb
