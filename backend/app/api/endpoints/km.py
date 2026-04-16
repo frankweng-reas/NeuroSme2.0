@@ -30,6 +30,8 @@ class KmDocumentResponse(BaseModel):
     status: str
     error_message: str | None
     chunk_count: int | None
+    tags: list[str] | None
+    knowledge_base_id: int | None
     created_at: str
 
     model_config = {"from_attributes": True}
@@ -45,6 +47,8 @@ def _to_response(doc: KmDocument) -> KmDocumentResponse:
         status=doc.status,
         error_message=doc.error_message,
         chunk_count=doc.chunk_count,
+        tags=doc.tags or [],
+        knowledge_base_id=doc.knowledge_base_id,
         created_at=doc.created_at.isoformat() if doc.created_at else "",
     )
 
@@ -86,15 +90,38 @@ def _check_file_type(filename: str, content_type: str | None) -> None:
 async def upload_km_document(
     file: Annotated[UploadFile, File(description="上傳 PDF / TXT / Markdown")],
     scope: Annotated[str, Form(description="'private' 個人 | 'public' 租戶共用（admin）")] = "private",
+    tags: Annotated[str, Form(description="JSON 陣列字串，如 '[\"HR\",\"IT\"]'，可選")] = "[]",
+    knowledge_base_id: Annotated[int | None, Form(description="知識庫 ID，可選")] = None,
     db: Session = Depends(get_db),
     current: Annotated[User, Depends(get_current_user)] = ...,
 ):
     """上傳文件到知識庫。完成後同步進行 chunking + embedding。"""
+    import json as _json
+
     # scope 驗證
     if scope not in ("private", "public"):
         raise HTTPException(status_code=400, detail="scope 只能是 'private' 或 'public'")
-    if scope == "public" and current.role not in ("admin", "super_admin"):
+    if scope == "public" and current.role not in ("admin", "super_admin", "manager"):
         raise HTTPException(status_code=403, detail="只有管理員可以上傳到公共知識庫")
+
+    # tags 解析
+    try:
+        parsed_tags: list[str] = _json.loads(tags) if tags.strip() else []
+        if not isinstance(parsed_tags, list):
+            parsed_tags = []
+        parsed_tags = [str(t).strip() for t in parsed_tags if str(t).strip()]
+    except Exception:
+        parsed_tags = []
+
+    # knowledge_base_id 驗證
+    if knowledge_base_id is not None:
+        from app.models.km_knowledge_base import KmKnowledgeBase
+        kb = db.query(KmKnowledgeBase).filter(
+            KmKnowledgeBase.id == knowledge_base_id,
+            KmKnowledgeBase.tenant_id == current.tenant_id,
+        ).first()
+        if not kb:
+            raise HTTPException(status_code=404, detail="知識庫不存在")
 
     filename = file.filename or "unknown"
     content_type = file.content_type
@@ -118,6 +145,8 @@ async def upload_km_document(
         size_bytes=len(file_bytes),
         scope=scope,
         status="pending",
+        tags=parsed_tags if parsed_tags else None,
+        knowledge_base_id=knowledge_base_id,
     )
     db.add(doc)
     db.commit()
@@ -140,6 +169,7 @@ async def upload_km_document(
 @router.get("/documents", response_model=list[KmDocumentResponse])
 def list_km_documents(
     scope: str | None = Query(None, description="過濾：'private' | 'public' | 不傳=全部"),
+    knowledge_base_id: int | None = Query(None, description="依知識庫 ID 過濾"),
     db: Session = Depends(get_db),
     current: Annotated[User, Depends(get_current_user)] = ...,
 ):
@@ -156,6 +186,9 @@ def list_km_documents(
         query = query.filter(KmDocument.owner_user_id == current.id)
     elif scope == "public":
         query = query.filter(KmDocument.scope == "public")
+
+    if knowledge_base_id is not None:
+        query = query.filter(KmDocument.knowledge_base_id == knowledge_base_id)
 
     docs = query.order_by(KmDocument.created_at.desc()).all()
     return [_to_response(d) for d in docs]

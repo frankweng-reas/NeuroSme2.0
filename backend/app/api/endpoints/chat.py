@@ -56,13 +56,15 @@ class ChatRequest(BaseModel):
     system_prompt: str = ""
     user_prompt: str = ""
     data: str = ""  # Chat Agent 等：前端可傳純文字參考（如本頁上傳檔），與後端組出之資料合併後一併受長度上限檢查
-    model: str = "gpt-4o-mini"
+    model: str = ""
     messages: list[ChatMessage] = []
     chat_thread_id: str = ""
     trace_id: str = ""
     #: 本輪 user 訊息之 DB id；有圖片附件時後端會從 stored_files 讀取像素組入最後一則 user（OpenAI / Gemini 多模態）
     user_message_id: str = ""
     content: str  # 新使用者訊息
+    selected_doc_ids: list[int] = []  # KM Agent：使用者勾選的文件 ID
+    knowledge_base_id: int | None = None  # CS Agent：指定知識庫 ID（優先於 selected_doc_ids）
 
 
 class ChatResponse(BaseModel):
@@ -196,16 +198,33 @@ def _prepare_chat_completion(req: ChatRequest, db: Session, current: User) -> Ch
 
     pt = (req.prompt_type or "").strip()
 
-    # KM Agent：RAG 向量檢索，不使用 source_files
-    if aid == "knowledge":
+    # KM Agent & Chat Service Agent：RAG 向量檢索，不使用 source_files
+    kb_model_name: str | None = None
+    kb_system_prompt: str | None = None
+    if aid in ("knowledge", "cs"):
         from app.services.km_service import format_km_context, km_retrieve_sync
 
-        chunks = km_retrieve_sync(req.content, db, tenant_id, current.id)
+        chunks = km_retrieve_sync(
+            req.content, db, tenant_id, current.id,
+            selected_doc_ids=req.selected_doc_ids or [],
+            knowledge_base_id=req.knowledge_base_id,
+        )
         data = format_km_context(chunks)
         if chunks:
             logger.info("KM RAG: retrieved %d chunks for query", len(chunks))
         else:
             logger.info("KM RAG: no relevant chunks found (tenant=%r, user=%s)", tenant_id, current.id)
+
+        # 讀取 KB 設定的 model 與 system_prompt
+        if req.knowledge_base_id:
+            from app.models.km_knowledge_base import KmKnowledgeBase
+            kb = db.query(KmKnowledgeBase).filter(
+                KmKnowledgeBase.id == req.knowledge_base_id,
+                KmKnowledgeBase.tenant_id == tenant_id,
+            ).first()
+            if kb:
+                kb_model_name = (kb.model_name or "").strip() or None
+                kb_system_prompt = (kb.system_prompt or "").strip() or None
     else:
         data = _get_selected_source_files_content(db, current.id, tenant_id, aid)
 
@@ -239,7 +258,13 @@ def _prepare_chat_completion(req: ChatRequest, db: Session, current: User) -> Ch
     elif data_len > 0:
         logger.info("chat_completions: 已載入參考資料 %d 字元", data_len)
 
-    model = (req.model or "").strip() or "gpt-4o-mini"
+    # KB 設定的 model 優先；其次前端傳入的 model；兩者皆空則報錯
+    model = kb_model_name or (req.model or "").strip()
+    if not model:
+        raise HTTPException(
+            status_code=400,
+            detail="未指定模型，請在知識庫設定中選擇模型，或在 AI 設定中選擇模型",
+        )
     litellm_model, api_key, api_base = _get_llm_params(model, db=db, tenant_id=tenant_id)
 
     if not api_key:
@@ -253,7 +278,7 @@ def _prepare_chat_completion(req: ChatRequest, db: Session, current: User) -> Ch
             detail="台智雲 TWCC_API_BASE 未設定，請在管理介面（租戶 LLM 設定）設定",
         )
 
-    messages = _build_messages(req, data=data)
+    messages = _build_messages(req, data=data, kb_system_prompt=kb_system_prompt)
     messages, has_vision = _inject_user_message_images_into_messages(
         db,
         messages,

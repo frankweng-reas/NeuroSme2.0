@@ -1,4 +1,5 @@
-import { apiFetch, TOKEN_KEY } from './client'
+import { apiFetch } from './client'
+import { TOKEN_KEY } from '@/contexts/AuthContext'
 
 export interface KmDocument {
   id: number
@@ -9,12 +10,61 @@ export interface KmDocument {
   status: 'pending' | 'processing' | 'ready' | 'error'
   error_message: string | null
   chunk_count: number | null
+  tags: string[]
+  knowledge_base_id: number | null
   created_at: string
+}
+
+export interface KmKnowledgeBase {
+  id: number
+  name: string
+  description: string | null
+  model_name: string | null
+  system_prompt: string | null
+  doc_count: number
+  ready_count: number
+  created_at: string
+}
+
+export async function listKnowledgeBases(): Promise<KmKnowledgeBase[]> {
+  return apiFetch<KmKnowledgeBase[]>('/km/knowledge-bases')
+}
+
+export async function createKnowledgeBase(data: {
+  name: string
+  description?: string
+  model_name?: string
+  system_prompt?: string
+}): Promise<KmKnowledgeBase> {
+  return apiFetch<KmKnowledgeBase>('/km/knowledge-bases', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+}
+
+export async function updateKnowledgeBase(
+  id: number,
+  data: { name?: string; description?: string; model_name?: string; system_prompt?: string }
+): Promise<KmKnowledgeBase> {
+  return apiFetch<KmKnowledgeBase>(`/km/knowledge-bases/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+}
+
+export async function deleteKnowledgeBase(id: number): Promise<void> {
+  return apiFetch<void>(`/km/knowledge-bases/${id}`, { method: 'DELETE' })
 }
 
 export async function listKmDocuments(scope?: 'private' | 'public'): Promise<KmDocument[]> {
   const params = scope ? `?scope=${scope}` : ''
   return apiFetch<KmDocument[]>(`/km/documents${params}`)
+}
+
+export async function listKbDocuments(kbId: number): Promise<KmDocument[]> {
+  return apiFetch<KmDocument[]>(`/km/documents?knowledge_base_id=${kbId}`)
 }
 
 export async function deleteKmDocument(docId: number): Promise<void> {
@@ -24,11 +74,19 @@ export async function deleteKmDocument(docId: number): Promise<void> {
 export async function uploadKmDocument(
   file: File,
   scope: 'private' | 'public',
-  onProgress?: (percent: number) => void
+  onProgress?: (percent: number) => void,
+  tags?: string[],
+  knowledgeBaseId?: number
 ): Promise<KmDocument> {
   const form = new FormData()
   form.append('file', file)
   form.append('scope', scope)
+  if (tags && tags.length > 0) {
+    form.append('tags', JSON.stringify(tags))
+  }
+  if (knowledgeBaseId != null) {
+    form.append('knowledge_base_id', String(knowledgeBaseId))
+  }
 
   // 使用 XMLHttpRequest 支援進度回報
   return new Promise((resolve, reject) => {

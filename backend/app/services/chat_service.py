@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 _PROMPT_TYPE_FILES: dict[str, str] = {
     "chat_agent": "system_prompt_chat_agent.md",
     "analysis": "system_prompt_analysis.md",
+    "knowledge": "system_prompt_km_agent.md",
+    "cs": "system_prompt_cs_agent.md",
 }
 
 
@@ -47,16 +49,22 @@ def _load_system_prompt_from_file(prompt_type: str = "") -> str:
     return ""
 
 
-def _build_messages(req, data: str = "") -> list[dict]:
-    """組裝 OpenAI messages 格式。data 由後端依 agent_id 查詢已選取來源檔案組出"""
+def _build_messages(req, data: str = "", kb_system_prompt: str | None = None) -> list[dict]:
+    """組裝 OpenAI messages 格式。data 由後端依 agent_id 查詢已選取來源檔案組出。
+    kb_system_prompt：若有設定則覆寫 prompt_type 檔案，優先級最高。
+    """
     msgs: list[dict] = []
     system_parts: list[str] = []
-    file_prompt = _load_system_prompt_from_file(req.prompt_type)
-    if file_prompt:
-        system_parts.append(file_prompt)
+    # KB 自訂 system prompt 優先；其次從 prompt_type 檔案載入
+    if kb_system_prompt:
+        system_parts.append(kb_system_prompt)
+    else:
+        file_prompt = _load_system_prompt_from_file(req.prompt_type)
+        if file_prompt:
+            system_parts.append(file_prompt)
     if req.system_prompt.strip():
         system_parts.append(req.system_prompt.strip())
-    # 參考資料（含 Chat 附檔）置於 system 末段；前段為檔案 system_prompt + 自訂 system_prompt，前綴穩定以利 LLM prompt cache。勿改為併入 user。
+    # 參考資料置於 system 末段
     if data.strip():
         system_parts.append(f"以下為參考資料：\n\n{data.strip()}")
     if system_parts:

@@ -56,7 +56,9 @@ async def chat_completions_dev(
         f"chat_completions_dev: model={req.model!r}, content_len={len(req.content) if req.content else 0}"
     )
     try:
-        model = (req.model or "").strip() or "gpt-4o-mini"
+        model = (req.model or "").strip()
+        if not model:
+            raise HTTPException(status_code=400, detail="未指定模型，請在 AI 設定中選擇模型")
         tid = str(getattr(current, "tenant_id", "") or "")
         litellm_model, api_key, api_base = _get_llm_params(model, db=db, tenant_id=tid or None)
 

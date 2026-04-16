@@ -212,13 +212,17 @@ def km_retrieve_sync(
     db: Session,
     tenant_id: str,
     user_id: int,
-    top_k: int = 5,
+    top_k: int = 8,
+    selected_doc_ids: list[int] | None = None,
+    knowledge_base_id: int | None = None,
 ) -> list[KmChunk]:
     """同步向量檢索：query → embedding → cosine similarity 找 top-K chunks。
 
     存取範圍：
       - scope='public'（任何 tenant 使用者可見）
       - scope='private' 且 owner_user_id = user_id（個人私有）
+    若提供 knowledge_base_id，只在該知識庫的文件中搜尋。
+    若提供 selected_doc_ids（非空），則只在指定文件中搜尋。
     """
     api_key = _get_embed_api_key(db, tenant_id)
     if not api_key:
@@ -233,7 +237,7 @@ def km_retrieve_sync(
         return []
 
     try:
-        results = (
+        q = (
             db.query(KmChunk)
             .join(KmDocument, KmChunk.document_id == KmDocument.id)
             .filter(
@@ -244,7 +248,13 @@ def km_retrieve_sync(
                     | (KmDocument.owner_user_id == user_id)
                 ),
             )
-            .order_by(KmChunk.embedding.cosine_distance(query_embedding))
+        )
+        if knowledge_base_id is not None:
+            q = q.filter(KmDocument.knowledge_base_id == knowledge_base_id)
+        elif selected_doc_ids:
+            q = q.filter(KmDocument.id.in_(selected_doc_ids))
+        results = (
+            q.order_by(KmChunk.embedding.cosine_distance(query_embedding))
             .limit(top_k)
             .all()
         )

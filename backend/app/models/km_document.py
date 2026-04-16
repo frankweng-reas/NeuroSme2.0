@@ -1,5 +1,6 @@
 """KmDocument ORM：km_documents 表，知識庫文件（含處理狀態）"""
-from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, Integer, JSON, String, Text, func
+from sqlalchemy.orm import relationship
 
 from app.core.database import Base
 
@@ -20,6 +21,12 @@ class KmDocument(Base):
         nullable=True,
         index=True,
     )
+    knowledge_base_id = Column(
+        Integer,
+        ForeignKey("km_knowledge_bases.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     filename = Column(String(512), nullable=False)
     content_type = Column(String(255), nullable=True)
     size_bytes = Column(BigInteger, nullable=True)
@@ -29,5 +36,8 @@ class KmDocument(Base):
     status = Column(String(32), nullable=False, server_default="pending")
     error_message = Column(Text, nullable=True)
     chunk_count = Column(Integer, nullable=True)
+    tags = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    knowledge_base = relationship("KmKnowledgeBase", back_populates="documents", lazy="select")

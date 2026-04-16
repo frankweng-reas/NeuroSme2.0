@@ -1,4 +1,4 @@
-/** 基本設定：模型、角色、語言、詳略、範例問題數 */
+/** 基本設定：模型、角色（可選）、語言、詳略、範例問題數 */
 import {
   DETAIL_OPTIONS,
   LANGUAGE_OPTIONS,
@@ -9,8 +9,8 @@ import LLMModelSelect from '@/components/LLMModelSelect'
 export interface AISettingsPanelBasicProps {
   model: string
   onModelChange: (v: string) => void
-  role: string
-  onRoleChange: (v: string) => void
+  role?: string
+  onRoleChange?: (v: string) => void
   language: string
   onLanguageChange: (v: string) => void
   detailLevel: string
@@ -38,20 +38,22 @@ export default function AISettingsPanelBasic({
       </h3>
       <div className="grid grid-cols-2 gap-x-4 gap-y-2">
         <LLMModelSelect value={model} onChange={onModelChange} />
-        <div className="flex items-center gap-2">
-          <label className="shrink-0 text-[16px] font-medium text-gray-700">角色</label>
-          <select
-            value={role}
-            onChange={(e) => onRoleChange(e.target.value)}
-            className="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-[16px] focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400"
-          >
-            {ROLE_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </div>
+        {role !== undefined && onRoleChange !== undefined && (
+          <div className="flex items-center gap-2">
+            <label className="shrink-0 text-[16px] font-medium text-gray-700">角色</label>
+            <select
+              value={role}
+              onChange={(e) => onRoleChange(e.target.value)}
+              className="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-[16px] focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400"
+            >
+              {ROLE_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
         <div className="flex items-center gap-2">
           <label className="shrink-0 text-[16px] font-medium text-gray-700">語言</label>
           <select

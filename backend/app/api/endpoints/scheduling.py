@@ -121,7 +121,7 @@ class SchedulingSolveRequest(BaseModel):
     agent_id: str
     content: str = ""
     constraints: dict[str, Any] | None = None
-    model: str = "gpt-4o-mini"
+    model: str = ""
 
 
 class SchedulingSolveResponse(BaseModel):
@@ -162,7 +162,10 @@ async def scheduling_solve(
         for fn, c in rows:
             if c and c.strip():
                 data += f"--- {fn} ---\n{c.strip()}\n\n"
-        params = await _call_llm_extract(req.content.strip(), req.model, data, db=db, tenant_id=tenant_id)
+        model = (req.model or "").strip()
+        if not model:
+            raise HTTPException(status_code=400, detail="未指定模型，請在 AI 設定中選擇模型")
+        params = await _call_llm_extract(req.content.strip(), model, data, db=db, tenant_id=tenant_id)
     else:
         raise HTTPException(
             status_code=400,

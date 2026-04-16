@@ -8,12 +8,10 @@ import {
   BookOpen,
   ChevronRight,
   ChevronsRight,
-  FileText,
   Globe,
   HelpCircle,
   Loader2,
   Lock,
-  Plus,
   RefreshCw,
   Trash2,
   Upload,
@@ -22,13 +20,16 @@ import { Group, Panel, PanelImperativeHandle, Separator } from 'react-resizable-
 import { chatCompletionsStream } from '@/api/chat'
 import { ApiError } from '@/api/client'
 import { deleteKmDocument, listKmDocuments, uploadKmDocument, type KmDocument } from '@/api/km'
+import { getMe } from '@/api/users'
+import { appendChatMessage, createChatThread } from '@/api/chatThreads'
 import AgentChat, { type Message, type ResponseMeta } from '@/components/AgentChat'
 import AgentHeader from '@/components/AgentHeader'
 import AISettingsPanelAdvanced from '@/components/AISettingsPanelAdvanced'
 import AISettingsPanelBasic from '@/components/AISettingsPanelBasic'
 import ConfirmModal from '@/components/ConfirmModal'
+import ErrorModal from '@/components/ErrorModal'
 import { DETAIL_OPTIONS, LANGUAGE_OPTIONS, ROLE_OPTIONS } from '@/constants/aiOptions'
-import type { Agent } from '@/types'
+import type { Agent, UserRole } from '@/types'
 
 interface AgentKmUIProps {
   agent: Agent
@@ -66,47 +67,6 @@ function StatusBadge({ status }: { status: KmDocument['status'] }) {
   return <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[11px] text-red-700">錯誤</span>
 }
 
-function DocItem({
-  doc,
-  onDelete,
-}: {
-  doc: KmDocument
-  onDelete: (doc: KmDocument) => void
-}) {
-  return (
-    <li className="group flex items-start gap-2 rounded-lg px-2 py-2 transition-colors hover:bg-white/10">
-      <FileText className="mt-0.5 h-4 w-4 shrink-0 text-white/60" />
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm text-white" title={doc.filename}>
-          {doc.filename}
-        </p>
-        <div className="mt-0.5 flex flex-wrap items-center gap-1">
-          <StatusBadge status={doc.status} />
-          {doc.chunk_count != null && doc.status === 'ready' && (
-            <span className="text-[11px] text-white/50">{doc.chunk_count} 段</span>
-          )}
-          {doc.size_bytes != null && (
-            <span className="text-[11px] text-white/40">{formatBytes(doc.size_bytes)}</span>
-          )}
-        </div>
-        {doc.status === 'error' && doc.error_message && (
-          <p className="mt-0.5 truncate text-[11px] text-red-300" title={doc.error_message}>
-            {doc.error_message}
-          </p>
-        )}
-      </div>
-      <button
-        type="button"
-        onClick={() => onDelete(doc)}
-        className="shrink-0 rounded p-1 text-white/40 opacity-0 transition-colors group-hover:opacity-100 hover:bg-white/15 hover:text-red-300"
-        aria-label={`刪除 ${doc.filename}`}
-      >
-        <Trash2 className="h-3.5 w-3.5" />
-      </button>
-    </li>
-  )
-}
-
 function buildUserPromptPrefix(settings: {
   role: string
   language: string
@@ -133,7 +93,6 @@ export default function AgentKmUI({ agent }: AgentKmUIProps) {
 
   // ── 左側面板 ──────────────────────────────────────────────────────────────
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [activeScopeTab, setActiveScopeTab] = useState<'all' | 'public' | 'private'>('all')
 
   // ── 文件管理 ──────────────────────────────────────────────────────────────
   const [docs, setDocs] = useState<KmDocument[]>([])
@@ -144,14 +103,33 @@ export default function AgentKmUI({ agent }: AgentKmUIProps) {
   const [deleteTarget, setDeleteTarget] = useState<KmDocument | null>(null)
   const [deleteLoading, setDeleteLoading] = useState(false)
 
+  // ── 使用者角色（控制公共上傳權限）────────────────────────────────────────
+  const [userRole, setUserRole] = useState<UserRole>('member')
+
+  useEffect(() => {
+    getMe().then((me) => setUserRole(me.role)).catch(() => {})
+  }, [])
+
+  const canUploadPublic = userRole === 'admin' || userRole === 'super_admin' || userRole === 'manager'
+
+  // ── 勾選的文件（個人 default check，公共 default uncheck）────────────────
+  const [selectedDocIds, setSelectedDocIds] = useState<Set<number>>(new Set())
+
   // ── Chat ──────────────────────────────────────────────────────────────────
   const [messages, setMessages] = useState<Message[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [showClearConfirm, setShowClearConfirm] = useState(false)
+  const [threadId, setThreadId] = useState<string | null>(null)
+
+  // 進入頁面時自動建立 thread（用於後端儲存對話紀錄）
+  useEffect(() => {
+    createChatThread({ agent_id: agent.id, title: null })
+      .then((t) => setThreadId(t.id))
+      .catch(() => {})
+  }, [agent.id])
 
   // ── AI 設定 ───────────────────────────────────────────────────────────────
   const [model, setModel] = useState('gpt-4o-mini')
-  const [role, setRole] = useState('manager')
   const [language, setLanguage] = useState('zh-TW')
   const [detailLevel, setDetailLevel] = useState('brief')
   const [exampleQuestionsCount, setExampleQuestionsCount] = useState('0')
@@ -171,11 +149,24 @@ export default function AgentKmUI({ agent }: AgentKmUIProps) {
     return () => clearTimeout(id)
   }, [toast])
 
+  // ── 錯誤 Modal ────────────────────────────────────────────────────────────
+  const [errorModal, setErrorModal] = useState<{ title?: string; message: string } | null>(null)
+
   // ── 載入文件 ──────────────────────────────────────────────────────────────
   const loadDocs = useCallback(() => {
     setDocsLoading(true)
     listKmDocuments()
-      .then(setDocs)
+      .then((data) => {
+        setDocs(data)
+        // 個人文件 default check，公共文件 default uncheck
+        setSelectedDocIds((prev) => {
+          const next = new Set(prev)
+          data.forEach((d) => {
+            if (d.scope === 'private' && !next.has(d.id)) next.add(d.id)
+          })
+          return next
+        })
+      })
       .catch(() => setDocs([]))
       .finally(() => setDocsLoading(false))
   }, [])
@@ -183,15 +174,6 @@ export default function AgentKmUI({ agent }: AgentKmUIProps) {
   useEffect(() => {
     loadDocs()
   }, [loadDocs])
-
-  // ── 過濾文件 ──────────────────────────────────────────────────────────────
-  const filteredDocs =
-    activeScopeTab === 'all'
-      ? docs
-      : docs.filter((d) => d.scope === activeScopeTab)
-
-  const publicDocs = docs.filter((d) => d.scope === 'public')
-  const privateDocs = docs.filter((d) => d.scope === 'private')
 
   // ── 上傳 ──────────────────────────────────────────────────────────────────
   const handleFileChange = useCallback(
@@ -206,16 +188,22 @@ export default function AgentKmUI({ agent }: AgentKmUIProps) {
       try {
         const doc = await uploadKmDocument(file, uploadScope, (pct) => setUploadProgress(pct))
         setDocs((prev) => [doc, ...prev])
+        if (doc.scope === 'private') {
+          setSelectedDocIds((prev) => new Set([...prev, doc.id]))
+        }
         if (doc.status === 'ready') {
           showToast(`「${doc.filename}」上傳完成，共 ${doc.chunk_count ?? 0} 段`)
         } else if (doc.status === 'error') {
-          showToast(`「${doc.filename}」處理失敗：${doc.error_message ?? '未知錯誤'}`, 'error')
+          setErrorModal({
+            title: '文件處理失敗',
+            message: `「${doc.filename}」\n\n${doc.error_message ?? '未知錯誤'}`,
+          })
         } else {
           showToast(`「${doc.filename}」上傳成功，處理中…`)
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : '上傳失敗'
-        showToast(msg, 'error')
+        setErrorModal({ title: '上傳失敗', message: msg })
       } finally {
         setUploading(false)
         setUploadProgress(0)
@@ -231,6 +219,7 @@ export default function AgentKmUI({ agent }: AgentKmUIProps) {
     try {
       await deleteKmDocument(deleteTarget.id)
       setDocs((prev) => prev.filter((d) => d.id !== deleteTarget.id))
+      setSelectedDocIds((prev) => { const next = new Set(prev); next.delete(deleteTarget.id); return next })
       showToast(`「${deleteTarget.filename}」已刪除`)
     } catch (err) {
       const msg = err instanceof ApiError ? err.detail ?? err.message : err instanceof Error ? err.message : '刪除失敗'
@@ -242,8 +231,20 @@ export default function AgentKmUI({ agent }: AgentKmUIProps) {
   }, [deleteTarget, showToast])
 
   // ── 最新設定 ref（避免 stale closure）────────────────────────────────────
-  const latestRef = useRef({ model, role, language, detailLevel, exampleQuestionsCount, userPrompt })
-  latestRef.current = { model, role, language, detailLevel, exampleQuestionsCount, userPrompt }
+  const latestRef = useRef({ model, language, detailLevel, exampleQuestionsCount, userPrompt })
+  latestRef.current = { model, language, detailLevel, exampleQuestionsCount, userPrompt }
+
+  // ── 全選 / 全不選 ─────────────────────────────────────────────────────────
+  const readyDocs = docs.filter((d) => d.status === 'ready')
+  const allSelected = readyDocs.length > 0 && readyDocs.every((d) => selectedDocIds.has(d.id))
+
+  const toggleSelectAll = useCallback(() => {
+    if (allSelected) {
+      setSelectedDocIds(new Set())
+    } else {
+      setSelectedDocIds(new Set(readyDocs.map((d) => d.id)))
+    }
+  }, [allSelected, readyDocs])
 
   // ── 傳送訊息 ──────────────────────────────────────────────────────────────
   const handleSendMessage = useCallback(
@@ -261,10 +262,21 @@ export default function AgentKmUI({ agent }: AgentKmUIProps) {
       }
 
       const s = latestRef.current
-      const userPromptPrefix = buildUserPromptPrefix(s)
+      const userPromptPrefix = buildUserPromptPrefix({
+        role: '',
+        language: s.language,
+        detailLevel: s.detailLevel,
+        exampleQuestionsCount: s.exampleQuestionsCount,
+        userPrompt: s.userPrompt,
+      })
 
       setMessages((prev) => [...prev, { role: 'user', content: text }])
       setIsLoading(true)
+
+      // 儲存 user 訊息到 thread（monitoring 用）
+      if (threadId) {
+        appendChatMessage(threadId, { role: 'user', content: text }).catch(() => {})
+      }
 
       let assistantText = ''
       const startIdx = messages.length + 1
@@ -275,13 +287,15 @@ export default function AgentKmUI({ agent }: AgentKmUIProps) {
         await chatCompletionsStream(
           {
             agent_id: agent.agent_id,
-            prompt_type: 'chat_agent',
+            prompt_type: 'knowledge',
             system_prompt: '',
             user_prompt: userPromptPrefix,
             data: '',
             model: s.model,
             messages: messages.map((m) => ({ role: m.role, content: m.content })),
             content: text,
+            selected_doc_ids: selectedDocIds.size > 0 ? [...selectedDocIds] : [],
+            chat_thread_id: threadId ?? '',
           },
           {
             onDelta: (chunk) => {
@@ -306,6 +320,10 @@ export default function AgentKmUI({ agent }: AgentKmUIProps) {
                 }
                 return next
               })
+              // 儲存 assistant 回覆到 thread（monitoring 用）
+              if (threadId && done.content) {
+                appendChatMessage(threadId, { role: 'assistant', content: done.content }).catch(() => {})
+              }
             },
             onError: (msg) => {
               setMessages((prev) => {
@@ -331,10 +349,11 @@ export default function AgentKmUI({ agent }: AgentKmUIProps) {
         setIsLoading(false)
       }
     },
-    [agent.agent_id, isLoading, messages, docs]
+    [agent.agent_id, isLoading, messages, docs, selectedDocIds, threadId]
   )
 
   const readyCount = docs.filter((d) => d.status === 'ready').length
+  const selectedReadyCount = docs.filter((d) => d.status === 'ready' && selectedDocIds.has(d.id)).length
 
   return (
     <div className="relative flex h-full flex-col p-4 text-[18px]">
@@ -358,8 +377,19 @@ export default function AgentKmUI({ agent }: AgentKmUIProps) {
         onConfirm={() => {
           setMessages([])
           setShowClearConfirm(false)
+          // 清除對話時建立新 thread
+          createChatThread({ agent_id: agent.id, title: null })
+            .then((t) => setThreadId(t.id))
+            .catch(() => {})
         }}
         onCancel={() => setShowClearConfirm(false)}
+      />
+
+      <ErrorModal
+        open={errorModal !== null}
+        title={errorModal?.title}
+        message={errorModal?.message ?? ''}
+        onClose={() => setErrorModal(null)}
       />
 
       <ConfirmModal
@@ -378,7 +408,7 @@ export default function AgentKmUI({ agent }: AgentKmUIProps) {
         {/* ── 左側：知識庫文件管理 ─────────────────────────────────────────── */}
         <div
           className={`flex shrink-0 flex-col overflow-hidden rounded-xl border border-gray-300/50 shadow-md transition-[width] duration-200 ${
-            sidebarCollapsed ? 'w-12' : 'w-64'
+            sidebarCollapsed ? 'w-12' : 'w-72'
           }`}
           style={{ backgroundColor: HEADER_COLOR }}
         >
@@ -402,7 +432,7 @@ export default function AgentKmUI({ agent }: AgentKmUIProps) {
               <>
                 <div className="flex items-center gap-2">
                   <BookOpen className="h-4 w-4 text-white/80" />
-                  <h3 className="text-sm font-semibold text-white">知識庫</h3>
+                  <h3 className="text-base font-semibold text-white">知識庫</h3>
                   {readyCount > 0 && (
                     <span className="rounded-full bg-emerald-500/20 px-1.5 py-0.5 text-[11px] text-emerald-300">
                       {readyCount}
@@ -424,23 +454,21 @@ export default function AgentKmUI({ agent }: AgentKmUIProps) {
 
           {!sidebarCollapsed && (
             <>
-              {/* Scope Tabs */}
-              <div className="flex shrink-0 gap-1 border-b border-white/20 px-3 pt-2 pb-0">
-                {(['all', 'public', 'private'] as const).map((tab) => (
+              {/* 全選 / 全不選 */}
+              {readyCount > 0 && (
+                <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-3 py-1.5">
+                  <span className="text-[11px] text-white/50">
+                    已勾選 {selectedReadyCount} / {readyCount}
+                  </span>
                   <button
-                    key={tab}
                     type="button"
-                    onClick={() => setActiveScopeTab(tab)}
-                    className={`flex-1 rounded-t-lg pb-1.5 pt-1 text-[12px] font-medium transition-colors ${
-                      activeScopeTab === tab
-                        ? 'bg-white/15 text-white'
-                        : 'text-white/50 hover:text-white/80'
-                    }`}
+                    onClick={toggleSelectAll}
+                    className="text-[11px] text-white/60 transition-colors hover:text-white/90"
                   >
-                    {tab === 'all' ? `全部 (${docs.length})` : tab === 'public' ? `公共 (${publicDocs.length})` : `我的 (${privateDocs.length})`}
+                    {allSelected ? '全不選' : '全選'}
                   </button>
-                ))}
-              </div>
+                </div>
+              )}
 
               {/* Document List */}
               <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
@@ -448,12 +476,72 @@ export default function AgentKmUI({ agent }: AgentKmUIProps) {
                   <div className="flex items-center justify-center py-6">
                     <Loader2 className="h-5 w-5 animate-spin text-white/60" />
                   </div>
-                ) : filteredDocs.length === 0 ? (
+                ) : docs.length === 0 ? (
                   <p className="px-2 py-4 text-center text-xs text-white/50">尚無文件</p>
                 ) : (
                   <ul className="space-y-0.5">
-                    {filteredDocs.map((doc) => (
-                      <DocItem key={doc.id} doc={doc} onDelete={setDeleteTarget} />
+                    {docs.map((doc) => (
+                      <li
+                        key={doc.id}
+                        className="group flex items-start gap-2 rounded-lg px-2 py-2 transition-colors hover:bg-white/10"
+                      >
+                        {/* Checkbox */}
+                        <input
+                          type="checkbox"
+                          checked={selectedDocIds.has(doc.id)}
+                          disabled={doc.status !== 'ready'}
+                          onChange={(e) => {
+                            setSelectedDocIds((prev) => {
+                              const next = new Set(prev)
+                              if (e.target.checked) next.add(doc.id)
+                              else next.delete(doc.id)
+                              return next
+                            })
+                          }}
+                          className="mt-0.5 h-3.5 w-3.5 shrink-0 cursor-pointer accent-emerald-400 disabled:opacity-30"
+                          aria-label={`選取 ${doc.filename}`}
+                        />
+                        {/* Scope icon */}
+                        {doc.scope === 'private'
+                          ? <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-white/40" />
+                          : <Globe className="mt-0.5 h-3.5 w-3.5 shrink-0 text-sky-400/70" />
+                        }
+                        {/* File info */}
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-base text-white" title={doc.filename}>
+                            {doc.filename}
+                          </p>
+                          <div className="mt-0.5 flex flex-wrap items-center gap-1">
+                            <StatusBadge status={doc.status} />
+                            {doc.chunk_count != null && doc.status === 'ready' && (
+                              <span className="text-[11px] text-white/50">{doc.chunk_count} 段</span>
+                            )}
+                            {doc.size_bytes != null && (
+                              <span className="text-[11px] text-white/40">{formatBytes(doc.size_bytes)}</span>
+                            )}
+                          </div>
+                          {doc.status === 'error' && doc.error_message && (
+                            <p className="mt-0.5 truncate text-[11px] text-red-300" title={doc.error_message}>
+                              {doc.error_message}
+                            </p>
+                          )}
+                        </div>
+                        {/* Delete */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (doc.scope === 'public' && userRole !== 'admin' && userRole !== 'super_admin') {
+                              setErrorModal({ title: '無法刪除', message: '公共文件只有管理員可以刪除。' })
+                              return
+                            }
+                            setDeleteTarget(doc)
+                          }}
+                          className="shrink-0 rounded p-1 text-white/40 opacity-0 transition-colors group-hover:opacity-100 hover:bg-white/15 hover:text-red-300"
+                          aria-label={`刪除 ${doc.filename}`}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </li>
                     ))}
                   </ul>
                 )}
@@ -461,33 +549,35 @@ export default function AgentKmUI({ agent }: AgentKmUIProps) {
 
               {/* Upload Controls */}
               <div className="shrink-0 border-t border-white/20 p-3">
-                {/* Scope toggle */}
-                <div className="mb-2 flex items-center gap-2 rounded-lg bg-white/10 p-1">
-                  <button
-                    type="button"
-                    onClick={() => setUploadScope('private')}
-                    className={`flex flex-1 items-center justify-center gap-1 rounded-md py-1 text-xs transition-colors ${
-                      uploadScope === 'private'
-                        ? 'bg-white/20 text-white font-medium'
-                        : 'text-white/60 hover:text-white/80'
-                    }`}
-                  >
-                    <Lock className="h-3 w-3" />
-                    我的
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setUploadScope('public')}
-                    className={`flex flex-1 items-center justify-center gap-1 rounded-md py-1 text-xs transition-colors ${
-                      uploadScope === 'public'
-                        ? 'bg-white/20 text-white font-medium'
-                        : 'text-white/60 hover:text-white/80'
-                    }`}
-                  >
-                    <Globe className="h-3 w-3" />
-                    公共
-                  </button>
-                </div>
+                {/* Scope toggle：只有 admin/manager 可見 */}
+                {canUploadPublic && (
+                  <div className="mb-2 flex items-center gap-2 rounded-lg bg-white/10 p-1">
+                    <button
+                      type="button"
+                      onClick={() => setUploadScope('private')}
+                      className={`flex flex-1 items-center justify-center gap-1 rounded-md py-1 text-sm transition-colors ${
+                        uploadScope === 'private'
+                          ? 'bg-white/20 text-white font-medium'
+                          : 'text-white/60 hover:text-white/80'
+                      }`}
+                    >
+                      <Lock className="h-3 w-3" />
+                      我的
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setUploadScope('public')}
+                      className={`flex flex-1 items-center justify-center gap-1 rounded-md py-1 text-sm transition-colors ${
+                        uploadScope === 'public'
+                          ? 'bg-white/20 text-white font-medium'
+                          : 'text-white/60 hover:text-white/80'
+                      }`}
+                    >
+                      <Globe className="h-3 w-3" />
+                      公共
+                    </button>
+                  </div>
+                )}
 
                 <input
                   ref={fileInputRef}
@@ -501,7 +591,7 @@ export default function AgentKmUI({ agent }: AgentKmUIProps) {
                   type="button"
                   disabled={uploading}
                   onClick={() => fileInputRef.current?.click()}
-                  className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-white/15 py-2 text-xs font-medium text-white transition-colors hover:bg-white/25 disabled:opacity-60"
+                  className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-white/15 py-2 text-sm font-medium text-white transition-colors hover:bg-white/25 disabled:opacity-60"
                 >
                   {uploading ? (
                     <>
@@ -543,10 +633,14 @@ export default function AgentKmUI({ agent }: AgentKmUIProps) {
               emptyPlaceholder={
                 readyCount === 0
                   ? '請先在左側上傳文件並等待處理完成，再開始提問。'
-                  : `已載入 ${readyCount} 份文件。請輸入問題，AI 將從知識庫中尋找相關資料回答。`
+                  : selectedReadyCount === 0
+                  ? '請在左側勾選至少一份文件後再提問。'
+                  : `使用 ${selectedReadyCount} 份文件。請輸入問題，AI 將從知識庫中尋找相關資料回答。`
               }
               onCopySuccess={() => showToast('已複製到剪貼簿')}
               onCopyError={() => showToast('複製失敗', 'error')}
+              showChart={false}
+              showPdf={false}
               headerActions={
                 <button
                   type="button"
@@ -589,8 +683,6 @@ export default function AgentKmUI({ agent }: AgentKmUIProps) {
               <AISettingsPanelBasic
                 model={model}
                 onModelChange={setModel}
-                role={role}
-                onRoleChange={setRole}
                 language={language}
                 onLanguageChange={setLanguage}
                 detailLevel={detailLevel}

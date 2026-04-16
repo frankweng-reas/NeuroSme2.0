@@ -24,6 +24,10 @@ export interface ChatRequest {
   model: string
   messages: ChatMessage[]
   content: string
+  /** KM Agent：使用者勾選的文件 ID；空陣列代表使用全部可存取文件 */
+  selected_doc_ids?: number[]
+  /** CS Agent：指定知識庫 ID（優先於 selected_doc_ids） */
+  knowledge_base_id?: number | null
 }
 
 export interface ChatUsage {

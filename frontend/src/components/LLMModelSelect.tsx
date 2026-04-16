@@ -22,6 +22,9 @@ export interface LLMModelSelectProps {
   labelPosition?: 'inline' | 'stacked'
   /** 不顯示載入/錯誤段落，改以 select 的 title 提示（適合窄工具列） */
   compact?: boolean
+  /** 在清單最上方加一個空值選項（label 預設「系統預設」），讓 value='' 時 UI 與 state 一致 */
+  allowEmpty?: boolean
+  emptyLabel?: string
 }
 
 type LoadState =
@@ -46,6 +49,8 @@ export default function LLMModelSelect({
   optionsOverride = null,
   labelPosition = 'inline',
   compact = false,
+  allowEmpty = false,
+  emptyLabel = '系統預設',
 }: LLMModelSelectProps) {
   const [loadState, setLoadState] = useState<LoadState>({ kind: 'idle' })
 
@@ -84,15 +89,17 @@ export default function LLMModelSelect({
     (optionsOverride != null ? optionsOverride.length === 0 : loadState.options.length === 0)
 
   // 選項載入成功後，若目前 value 已不在有效清單（例如 provider 已停用），自動切換至第一個可用模型
+  // allowEmpty 時空字串代表「系統預設」，不做自動切換
   useEffect(() => {
     if (loadState.kind !== 'ok') return
     if (hasNoModels) return
+    if (allowEmpty && value === '') return
     if (!value) return
     const valid = loadState.options
     if (!valid.some((o) => o.value === value)) {
-      onChangeRef.current(valid[0]?.value ?? '')
+      onChangeRef.current(allowEmpty ? '' : (valid[0]?.value ?? ''))
     }
-  }, [loadState, value, hasNoModels])
+  }, [loadState, value, hasNoModels, allowEmpty])
 
   const displayOptions = useMemo(() => {
     if (loadState.kind === 'ok' && hasNoModels) {
@@ -105,8 +112,9 @@ export default function LLMModelSelect({
     if (loadState.kind !== 'ok' && value && !opts.some((o) => o.value === value)) {
       opts.unshift({ value, label: value })
     }
+    if (allowEmpty) opts.unshift({ value: '', label: emptyLabel })
     return opts
-  }, [loadState, value, hasNoModels])
+  }, [loadState, value, hasNoModels, allowEmpty, emptyLabel])
 
   const selectValue =
     loadState.kind === 'ok' && hasNoModels ? NO_MODELS_PLACEHOLDER_VALUE : value

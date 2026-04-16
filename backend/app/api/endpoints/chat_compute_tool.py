@@ -511,7 +511,10 @@ async def _stream_compute_tool(
         detail = e.detail if isinstance(e.detail, str) else str(e.detail)
         yield _sse_event({"stage": "done", "error_stage": "setup", "content": detail, "chart_data": None})
         return
-    model = (req.model or "").strip() or "gpt-4o-mini"
+    model = (req.model or "").strip()
+    if not model:
+        yield _sse_event({"stage": "done", "error_stage": "setup", "content": "未指定模型，請在 AI 設定中選擇模型", "chart_data": None})
+        return
     intent_prompt = _load_intent_prompt()
     if not intent_prompt:
         yield _sse_event({"stage": "done", "error_stage": "intent", "content": "Intent prompt 檔案不存在", "chart_data": None})
@@ -775,7 +778,9 @@ async def pipeline_inspect(
     except HTTPException as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from e
 
-    model = (req.model or "").strip() or "gpt-4o-mini"
+    model = (req.model or "").strip()
+    if not model:
+        raise HTTPException(status_code=400, detail="未指定模型，請在 AI 設定中選擇模型")
 
     # --- 建 system prompt ---
     injected_prompt = _load_intent_prompt() or ""

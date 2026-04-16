@@ -158,6 +158,10 @@ interface AgentChatProps {
   /** 父層選好範例後遞增 n 並帶入 text，會寫入輸入框並 focus */
   chatInputSeed?: { n: number; text: string } | null
   onChatInputSeedApplied?: () => void
+  /** 控制訊息下方動作列顯示哪些按鈕（預設全開） */
+  showCopy?: boolean
+  showChart?: boolean
+  showPdf?: boolean
 }
 
 export default function AgentChat({
@@ -179,6 +183,9 @@ export default function AgentChat({
   exampleLayout = 'inline',
   chatInputSeed,
   onChatInputSeedApplied,
+  showCopy = true,
+  showChart = true,
+  showPdf = true,
 }: AgentChatProps) {
   const [input, setInput] = useState('')
   const [isAtBottom, setIsAtBottom] = useState(true)
@@ -255,10 +262,12 @@ export default function AgentChat({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <header className="flex flex-shrink-0 items-center justify-between rounded-t-xl border-b border-slate-200 bg-slate-100 px-4 py-3 font-semibold text-slate-800 shadow-sm">
-        <span>{headerTitle}</span>
-        {headerActions}
-      </header>
+      {(headerTitle || headerActions) && (
+        <header className="flex flex-shrink-0 items-center justify-between rounded-t-xl border-b border-slate-200 bg-slate-100 px-4 py-3 font-semibold text-slate-800 shadow-sm">
+          <span>{headerTitle}</span>
+          {headerActions}
+        </header>
+      )}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-4">
         <div className="relative mb-4 flex-1 min-h-0">
           <div
@@ -302,35 +311,41 @@ export default function AgentChat({
                         {m.meta.finish_reason && ` · finish: ${m.meta.finish_reason}`}
                       </div>
                     )}
-                    {m.role === 'assistant' && (
+                    {m.role === 'assistant' && (showCopy || showChart || showPdf) && (
                       <div className="mt-2 flex items-center gap-2 border-t border-gray-200 pt-2">
-                        <button
-                          type="button"
-                          onClick={() => handleCopy(m.content)}
-                          className="flex items-center gap-1 rounded-2xl px-2 py-1 text-[18px] text-gray-600 transition-colors hover:bg-gray-200"
-                        >
-                          <Copy className="h-4 w-4" />
-                          複製
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => m.chartData && setChartModalIndex(i)}
-                          disabled={!m.chartData}
-                          title={m.chartData ? '檢視圖表' : '此回覆無圖表資料'}
-                          className="flex items-center gap-1 rounded-2xl px-2 py-1 text-[18px] text-gray-600 transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
-                        >
-                          <BarChart3 className="h-4 w-4" />
-                          圖表
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleOpenPdfPreview(m.content, m.chartData)}
-                          title="匯出 PDF"
-                          className="flex items-center gap-1 rounded-2xl px-2 py-1 text-[18px] text-gray-600 transition-colors hover:bg-gray-200"
-                        >
-                          <FileDown className="h-4 w-4" />
-                          PDF
-                        </button>
+                        {showCopy && (
+                          <button
+                            type="button"
+                            onClick={() => handleCopy(m.content)}
+                            className="flex items-center gap-1 rounded-2xl px-2 py-1 text-[18px] text-gray-600 transition-colors hover:bg-gray-200"
+                          >
+                            <Copy className="h-4 w-4" />
+                            複製
+                          </button>
+                        )}
+                        {showChart && (
+                          <button
+                            type="button"
+                            onClick={() => m.chartData && setChartModalIndex(i)}
+                            disabled={!m.chartData}
+                            title={m.chartData ? '檢視圖表' : '此回覆無圖表資料'}
+                            className="flex items-center gap-1 rounded-2xl px-2 py-1 text-[18px] text-gray-600 transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
+                          >
+                            <BarChart3 className="h-4 w-4" />
+                            圖表
+                          </button>
+                        )}
+                        {showPdf && (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenPdfPreview(m.content, m.chartData)}
+                            title="匯出 PDF"
+                            className="flex items-center gap-1 rounded-2xl px-2 py-1 text-[18px] text-gray-600 transition-colors hover:bg-gray-200"
+                          >
+                            <FileDown className="h-4 w-4" />
+                            PDF
+                          </button>
+                        )}
                       </div>
                     )}
                   </li>

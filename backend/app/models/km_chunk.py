@@ -2,7 +2,7 @@
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import Column, ForeignKey, Integer, Text
 from sqlalchemy.dialects.postgresql import JSON
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import backref, relationship
 
 from app.core.database import Base
 
@@ -22,4 +22,4 @@ class KmChunk(Base):
     embedding = Column(Vector(1536), nullable=True)
     metadata_ = Column("metadata", JSON, nullable=True)
 
-    document = relationship("KmDocument", backref="chunks", lazy="select")
+    document = relationship("KmDocument", backref=backref("chunks", passive_deletes=True), lazy="select")
