@@ -70,7 +70,7 @@ def upgrade() -> None:
         sa.Column("chunk_index", sa.Integer, nullable=False),
         sa.Column("content", sa.Text, nullable=False),
         # vector(1536) 使用 pgvector extension，不能用一般 SQLAlchemy 型別，用 raw SQL 補加
-        sa.Column("metadata_", sa.JSON, nullable=True, name="metadata"),
+        sa.Column("metadata", sa.JSON, nullable=True),
     )
 
     # 用 raw SQL 新增 vector 欄位（須已啟用 pgvector extension）
