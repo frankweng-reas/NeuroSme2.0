@@ -11,14 +11,17 @@ from app.api.endpoints.chat import (
     ChatRequest,
     ChatResponse,
     _call_twcc_conversation,
-    _get_llm_params,
-    _get_provider_name,
     _parse_response,
-    _twcc_model_id,
 )
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.user import User
+from app.services.llm_service import (
+    _get_llm_params,
+    _get_provider_name,
+    _twcc_model_id,
+)
+from app.services.llm_utils import apply_api_base
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -91,9 +94,9 @@ async def chat_completions_dev(
             "api_key": api_key,
             "timeout": 60,
         }
-        if api_base:
-            base = api_base.rstrip("/")
-            completion_kwargs["api_base"] = base if base.endswith("/v1") else f"{base}/v1"
+        apply_api_base(completion_kwargs, api_base)
+        if model.startswith("local/"):
+            completion_kwargs["think"] = False
 
         resp = await litellm.acompletion(**completion_kwargs)
         return _parse_response(resp)

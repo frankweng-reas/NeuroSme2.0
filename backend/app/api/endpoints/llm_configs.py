@@ -17,6 +17,12 @@ from app.schemas.llm_config import (
     LLMProviderConfigUpdate,
     VALID_PROVIDERS,
 )
+from app.services.llm_utils import (
+    apply_api_base,
+    ensure_local_prefix,
+    resolve_litellm_model,
+    set_env_api_key,
+)
 
 router = APIRouter()
 
@@ -284,13 +290,17 @@ async def test_llm_config(
     """測試 LLM provider 連通性（使用最短測試 prompt，計算回應時間）"""
     tenant_id = _require_tenant_admin(db, current)
     cfg = _get_config_for_tenant(db, config_id, tenant_id)
-    if not cfg.api_key_encrypted:
+
+    # local provider（Ollama / LM Studio / vLLM）不需要真實 API Key
+    if cfg.provider != "local" and not cfg.api_key_encrypted:
         raise HTTPException(status_code=400, detail="尚未設定 API Key，無法測試")
 
-    try:
-        api_key = decrypt_api_key(cfg.api_key_encrypted)
-    except ValueError as e:
-        raise HTTPException(status_code=500, detail=f"API Key 解密失敗：{e}") from e
+    api_key = "local"
+    if cfg.api_key_encrypted:
+        try:
+            api_key = decrypt_api_key(cfg.api_key_encrypted)
+        except ValueError as e:
+            raise HTTPException(status_code=500, detail=f"API Key 解密失敗：{e}") from e
 
     # 決定測試用 model
     model = cfg.default_model or _TEST_DEFAULT_MODELS.get(cfg.provider, "gpt-4o-mini")
@@ -323,9 +333,31 @@ async def test_llm_config(
                     reply = data.get("choices", [{}])[0].get("message", {}).get("content", "")
                     return {"ok": True, "elapsed_ms": elapsed_ms, "reply": reply.strip()[:100]}
 
+        elif cfg.provider == "local":
+            # 本機模型（Ollama）：使用原生 /api/chat，支援 think 參數
+            api_base_raw = (cfg.api_base_url or "").rstrip("/")
+            if not api_base_raw:
+                raise HTTPException(status_code=400, detail="本機模型需設定 API Base URL（例：http://localhost:11434）")
+            local_model = ensure_local_prefix(model)
+            litellm_model = resolve_litellm_model(local_model)
+            kwargs: dict = {
+                "model": litellm_model,
+                "messages": _TEST_MESSAGES,
+                "api_key": api_key,
+                "max_tokens": 50,
+                "timeout": 30,
+                "temperature": 0,
+                "think": False,
+            }
+            apply_api_base(kwargs, api_base_raw)
+            resp = await litellm.acompletion(**kwargs)
+            elapsed_ms = int((time.monotonic() - t0) * 1000)
+            reply = (resp.choices[0].message.content or "").strip()
+            return {"ok": True, "elapsed_ms": elapsed_ms, "reply": reply[:100]}
+
         else:
             # OpenAI / Gemini（LiteLLM）
-            kwargs: dict = {
+            kwargs = {
                 "model": model,
                 "messages": _TEST_MESSAGES,
                 "api_key": api_key,
@@ -333,6 +365,7 @@ async def test_llm_config(
                 "timeout": 30,
                 "temperature": 0,
             }
+            set_env_api_key(model, api_key)
             resp = await litellm.acompletion(**kwargs)
             elapsed_ms = int((time.monotonic() - t0) * 1000)
             reply = (resp.choices[0].message.content or "").strip()

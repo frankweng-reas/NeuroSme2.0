@@ -11,12 +11,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.api.endpoints.chat import _get_llm_params
 from app.api.endpoints.source_files import _check_agent_access
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.source_file import SourceFile
 from app.models.user import User
+from app.services.llm_service import _get_llm_params
+from app.services.llm_utils import apply_api_base
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -98,9 +99,9 @@ async def _call_llm_extract(
         "api_key": api_key,
         "timeout": 30,
     }
-    if api_base:
-        base = api_base.rstrip("/")
-        completion_kwargs["api_base"] = base if base.endswith("/v1") else f"{base}/v1"
+    apply_api_base(completion_kwargs, api_base)
+    if model.startswith("local/"):
+        completion_kwargs["think"] = False
 
     resp = await litellm.acompletion(**completion_kwargs)
     if not resp.choices:

@@ -7,11 +7,7 @@ from app.models.tenant_agent import TenantAgent
 from app.models.user_agent import UserAgent
 from app.models.source_file import SourceFile
 from app.models.prompt_template import PromptTemplate
-from app.models.qtn_project import QtnProject
-from app.models.qtn_source import QtnSource
-from app.models.qtn_catalog import QtnCatalog
 from app.models.company import Company
-from app.models.qtn_sequence import QtnSequence
 from app.models.bi_project import BiProject
 from app.models.bi_source import BiSource
 from app.models.bi_schema import BiSchema
@@ -24,11 +20,13 @@ from app.models.notebook import Notebook
 from app.models.stored_file import StoredFile
 from app.models.chat_message_attachment import ChatMessageAttachment
 from app.models.notebook_source import NotebookSource
+from app.models.activation_code import ActivationCode
 
 __all__ = [
     "Base", "Tenant", "User", "AgentCatalog", "TenantAgent", "UserAgent",
-    "SourceFile", "PromptTemplate", "QtnProject", "QtnSource", "QtnCatalog", "Company", "QtnSequence",
+    "SourceFile", "PromptTemplate", "Company",
     "BiProject", "BiSource", "BiSchema", "BiSampleQa", "LLMProviderConfig",
     "ChatThread", "ChatMessage", "ChatLlmRequest",
     "Notebook", "StoredFile", "ChatMessageAttachment", "NotebookSource",
+    "ActivationCode",
 ]

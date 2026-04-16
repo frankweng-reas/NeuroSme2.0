@@ -17,17 +17,18 @@ from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 from uuid import UUID
 
-from app.api.endpoints.chat import (
-    ChatRequest,
-    _check_agent_access,
-    _get_llm_params,
-    _get_provider_name,
-    _twcc_model_id,
-)
+from app.api.endpoints.source_files import _check_agent_access
+from app.api.endpoints.chat import ChatRequest
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.bi_project import BiProject
 from app.core.security import get_current_user
+from app.services.llm_service import (
+    _get_llm_params,
+    _get_provider_name,
+    _twcc_model_id,
+)
+from app.services.llm_utils import apply_api_base
 from app.models.user import User
 from app.schemas.intent_v4 import (
     IntentV4,
@@ -456,9 +457,9 @@ async def _call_llm(
         "timeout": 60,
         "temperature": 0,
     }
-    if api_base:
-        base = api_base.rstrip("/")
-        completion_kwargs["api_base"] = base if base.endswith("/v1") else f"{base}/v1"
+    apply_api_base(completion_kwargs, api_base)
+    if model.startswith("local/"):
+        completion_kwargs["think"] = False
 
     resp = await litellm.acompletion(**completion_kwargs)
     choices = getattr(resp, "choices", None) or []
