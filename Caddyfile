@@ -1,0 +1,16 @@
+# NeuroSme On-Prem — Caddyfile
+#
+# 啟動前只需完成一件事：
+#   將下方的 neurosme.company.com 換成您的實際 domain
+#
+# Caddy 會自動向 Let's Encrypt 申請 HTTPS 憑證，無需手動操作。
+#
+# 前提：domain 的 DNS 已指向此伺服器，且 port 80/443 可從外網連入。
+#
+# ── 若需要使用自備憑證（內網環境），請參閱 certs/README.md ──────
+
+neurosme.company.com {
+    reverse_proxy /api/*  backend:8000
+    reverse_proxy /auth/* localauth:4000
+    reverse_proxy *       frontend:80
+}
