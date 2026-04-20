@@ -50,15 +50,16 @@ export default function Layout() {
     <div
       className="flex h-screen flex-col"
       style={{
-        backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40'%3E%3Cpath d='M 40 0 L 0 0 0 40' fill='none' stroke='rgba(24,51,61,0.18)' stroke-width='1'/%3E%3C/svg%3E"), linear-gradient(160deg, #e2e8ea 0%, #edf1f2 100%)`,
+        backgroundImage: `linear-gradient(160deg, #cdd5d9 0%, #d8e0e3 100%)`,
       }}
     >
       {/* Header - 在 agent 頁面隱藏 */}
       {!hideHeader && (
-      <header
-        className="flex-shrink-0 border-b border-black/10 shadow-sm"
-        style={{ backgroundColor: '#18333D' }}
-      >
+      <header className="flex-shrink-0 px-2 pt-3 pb-2">
+        <div
+          className="rounded-3xl border-b border-black/10 shadow-sm"
+          style={{ backgroundColor: '#18333D' }}
+        >
         <div className="container mx-auto px-4">
           <div className="flex h-20 items-center justify-between">
             {/* 應用名稱 - 點擊回到首頁 */}
@@ -131,6 +132,7 @@ export default function Layout() {
               </div>
             </div>
           </div>
+        </div>
         </div>
       </header>
       )}

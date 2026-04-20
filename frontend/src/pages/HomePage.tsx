@@ -67,7 +67,7 @@ export default function HomePage() {
   const getGroupColor = (index: number) => GROUP_COLORS[index % GROUP_COLORS.length]
 
   return (
-    <div className="container mx-auto px-4 py-8">
+    <div className="flex h-full flex-col px-2 pt-3 pb-5">
       {showActivationDialog && (
         <ActivationDialog
           onActivated={() => {
@@ -76,13 +76,14 @@ export default function HomePage() {
           }}
         />
       )}
-      <div className="mx-auto max-w-7xl">
-        {/* 標題 */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">我的助理</h1>
-          <p className="mt-1 text-base text-gray-500">選擇助理開始對話</p>
-        </div>
-
+      {/* 大圓角容器：充滿剩餘高度，內部捲動 */}
+      <div
+        className="flex min-h-0 flex-1 flex-col rounded-3xl ring-1 ring-slate-300/60 shadow-xl"
+        style={{
+          backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40'%3E%3Cpath d='M 0 0 L 40 40 M 40 0 L 0 40' fill='none' stroke='rgba(24,51,61,0.1)' stroke-width='1'/%3E%3C/svg%3E"), linear-gradient(160deg, #e3e9ec 0%, #dee5e8 100%)`,
+        }}
+      >
+        <div className="flex-1 overflow-y-auto px-7 py-6">
         {/* Agent 卡片列表 */}
         {isLoading ? (
           <div className="py-16 text-center">
@@ -140,6 +141,7 @@ export default function HomePage() {
             })}
           </div>
         )}
+        </div>
       </div>
     </div>
   )
