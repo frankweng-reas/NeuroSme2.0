@@ -13,6 +13,7 @@ import {
   BookOpen,
   Headphones,
   FileText,
+  Megaphone,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -31,6 +32,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
   'book-open': BookOpen,
   Headphones,
   FileText,
+  Megaphone,
 }
 
 const DEFAULT_ICON = MessageCircle

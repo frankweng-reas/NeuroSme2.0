@@ -34,6 +34,7 @@ _PROMPT_TYPE_FILES: dict[str, str] = {
     "cs":              "system_prompt_cs_agent.md",
     "quotation_parse": "system_prompt_quotation_1_parse.md",
     "quotation_share": "system_prompt_quotation_4_share.md",
+    "marketing":       "system_prompt_marketing_agent.md",
 }
 
 

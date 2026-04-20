@@ -12,6 +12,7 @@ import AgentKmUI from './agents/AgentKmUI'
 import AgentQuotationUI from './agents/AgentQuotationUI'
 import AgentSchedulingUI from './agents/AgentSchedulingUI'
 import AgentWritingUI from './agents/AgentWritingUI'
+import AgentMarketingUI from './agents/AgentMarketingUI'
 import AgentDefaultUI from './agents/AgentDefaultUI'
 
 function getAgentUI(agent: Agent) {
@@ -19,6 +20,7 @@ function getAgentUI(agent: Agent) {
   if (id === 'chat') return AgentChatUI
   if (id === 'cs') return AgentCsUI
   if (id === 'writing') return AgentWritingUI
+  if (id === 'marketing') return AgentMarketingUI
   if (id.includes('knowledge')) return AgentKmUI
   if (id.includes('business')) return AgentBusinessUI
   if (id.includes('customer')) return AgentCustomerUI

@@ -100,6 +100,16 @@ BUILTIN_AGENTS: list[AgentDef] = [
         "frontend_key": "agent-writing",
     },
     {
+        "group_id": "marketing",
+        "group_name": "行銷",
+        "agent_id": "marketing",
+        "agent_name": "Marketing Agent",
+        "icon_name": "Megaphone",
+        "sort_id": "16",
+        "backend_router": None,
+        "frontend_key": "agent-marketing",
+    },
+    {
         "group_id": "production",
         "group_name": "生產力",
         "agent_id": "chat",

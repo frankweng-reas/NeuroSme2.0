@@ -14,6 +14,7 @@ const AGENT_DESCRIPTIONS: Record<string, string> = {
   knowledge: '根據企業知識庫文件精準回答問題',
   cs:        '基於知識庫，提供精準客服問答',
   business:  '數據分析與商業洞察報告',
+  marketing: '社群貼文、廣告文案、EDM 一鍵生成',
   quotation: '自動化報價流程管理',
   customer:  '客戶行為分析與洞察',
   scheduling:'排班與行程規劃輔助',
