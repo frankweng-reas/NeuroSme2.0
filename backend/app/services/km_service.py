@@ -2,7 +2,10 @@
 
 設計：
   - 使用 pgvector 做向量搜尋（cosine similarity）
-  - Embedding model：text-embedding-3-small (dim=1536)，透過租戶 OpenAI API Key
+  - Embedding model：自動依 tenant 已設定的 provider 選擇（Gemini > OpenAI > Local）
+    - Gemini  → text-embedding-004        (768 維)
+    - OpenAI  → text-embedding-3-small    (768 維，指定 dimensions)
+    - Local   → ollama/nomic-embed-text   (768 維)
   - 支援 PDF（pypdf）、純文字/Markdown（UTF-8）
   - chunk_size=1500 字元，overlap=200 字元
 """
@@ -14,14 +17,22 @@ from sqlalchemy.orm import Session
 
 from app.models.km_chunk import KmChunk
 from app.models.km_document import KmDocument
+from app.models.llm_provider_config import LLMProviderConfig
 from app.services.llm_service import _get_llm_params
+from app.core.encryption import decrypt_api_key
 
 logger = logging.getLogger(__name__)
 
-EMBEDDING_MODEL = "text-embedding-3-small"
-EMBEDDING_DIM = 1536
+EMBEDDING_DIM = 768
 CHUNK_SIZE = 1500
 CHUNK_OVERLAP = 200
+
+# Embedding model 對應各 provider
+_EMBED_MODELS = {
+    "gemini": "gemini/text-embedding-004",
+    "openai": "text-embedding-3-small",
+    "local":  "ollama/nomic-embed-text",
+}
 
 # 各文件類型的 chunking 策略與檢索 top_k
 # chunk_size 越小 → top_k 越大（總 context 字元數約 3000–6000）
@@ -167,19 +178,56 @@ def chunk_text(
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def _get_embed_api_key(db: Session, tenant_id: str) -> str | None:
-    """取得租戶的 OpenAI API Key 用於 Embedding。"""
-    _, api_key, _ = _get_llm_params(EMBEDDING_MODEL, db=db, tenant_id=tenant_id)
-    return api_key
+def _get_embed_params(db: Session, tenant_id: str) -> tuple[str, str | None, str | None] | None:
+    """
+    自動偵測 tenant 已設定的 provider，依優先順序回傳 (model, api_key, api_base)。
+    優先順序：Gemini > OpenAI > Local
+    找不到任何設定時回傳 None。
+    """
+    def _db_cfg(provider: str):
+        return (
+            db.query(LLMProviderConfig)
+            .filter(
+                LLMProviderConfig.tenant_id == tenant_id,
+                LLMProviderConfig.provider == provider,
+                LLMProviderConfig.is_active.is_(True),
+            )
+            .order_by(LLMProviderConfig.id)
+            .first()
+        )
+
+    def _key(cfg) -> str | None:
+        if not cfg or not cfg.api_key_encrypted:
+            return None
+        try:
+            return decrypt_api_key(cfg.api_key_encrypted)
+        except ValueError:
+            return None
+
+    for provider in ("gemini", "openai", "local"):
+        cfg = _db_cfg(provider)
+        if not cfg:
+            continue
+        key = _key(cfg)
+        model = _EMBED_MODELS[provider]
+        if provider == "local":
+            # Local 不需要 API key，用 placeholder；api_base 從設定取
+            return model, key or "local", cfg.api_base_url or None
+        if key:
+            return model, key, None
+
+    return None
 
 
-def embed_texts_sync(texts: list[str], api_key: str) -> list[list[float]]:
+def embed_texts_sync(texts: list[str], model: str, api_key: str, api_base: str | None = None) -> list[list[float]]:
     """同步呼叫 LiteLLM embedding，回傳向量清單。"""
-    response = litellm.embedding(
-        model=EMBEDDING_MODEL,
-        input=texts,
-        api_key=api_key,
-    )
+    kwargs: dict = dict(model=model, input=texts, api_key=api_key)
+    if api_base:
+        kwargs["api_base"] = api_base
+    # OpenAI text-embedding-3-small 支援指定輸出維度（MRL），統一輸出 768
+    if model == "text-embedding-3-small":
+        kwargs["dimensions"] = EMBEDDING_DIM
+    response = litellm.embedding(**kwargs)
     return [item["embedding"] for item in response.data]
 
 
@@ -225,20 +273,22 @@ def process_document(
             db.commit()
             return
 
-        # 3. 取得 Embedding key
-        api_key = _get_embed_api_key(db, tenant_id)
-        if not api_key:
+        # 3. 自動偵測 Embedding provider（Gemini > OpenAI > Local）
+        embed_params = _get_embed_params(db, tenant_id)
+        if not embed_params:
             doc.status = "error"
-            doc.error_message = "未設定 OpenAI API Key，無法產生 Embedding。請在管理介面設定 openai provider。"
+            doc.error_message = "未設定任何 LLM Provider，無法產生 Embedding。請在管理介面設定 Gemini、OpenAI 或 Local provider。"
             db.commit()
             return
+        embed_model, embed_key, embed_base = embed_params
+        logger.info("KM embed 使用 model=%s (doc_id=%d)", embed_model, doc_id)
 
         # 4. 批次 Embedding（每批 100 筆）
         all_embeddings: list[list[float]] = []
         batch_size = 100
         for i in range(0, len(chunks), batch_size):
             batch = chunks[i : i + batch_size]
-            embeddings = embed_texts_sync(batch, api_key)
+            embeddings = embed_texts_sync(batch, model=embed_model, api_key=embed_key, api_base=embed_base)
             all_embeddings.extend(embeddings)
 
         # 5. 寫入 km_chunks
@@ -298,10 +348,11 @@ def km_retrieve_sync(
     若提供 selected_doc_ids（非空），則只在指定文件中搜尋。
     skip_scope_check=True：跳過 scope/owner 過濾（Widget 公開存取用）。
     """
-    api_key = _get_embed_api_key(db, tenant_id)
-    if not api_key:
-        logger.warning("KM 檢索失敗：tenant_id=%s 無 OpenAI API Key", tenant_id)
+    embed_params = _get_embed_params(db, tenant_id)
+    if not embed_params:
+        logger.warning("KM 檢索失敗：tenant_id=%s 無可用 Embedding provider", tenant_id)
         return []
+    embed_model, embed_key, embed_base = embed_params
 
     # 動態決定 top_k：依 KB 內文件類型取最大值（混合類型保守取多）
     if top_k is None:
@@ -324,7 +375,7 @@ def km_retrieve_sync(
         logger.debug("km_retrieve top_k=%d (doc_types=%s)", top_k, doc_types if doc_types else "unknown")
 
     try:
-        embeddings = embed_texts_sync([query], api_key)
+        embeddings = embed_texts_sync([query], model=embed_model, api_key=embed_key, api_base=embed_base)
         query_embedding = embeddings[0]
     except Exception as e:
         logger.warning("KM embedding 失敗: %s", e)

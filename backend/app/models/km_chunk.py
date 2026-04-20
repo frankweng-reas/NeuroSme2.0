@@ -19,7 +19,7 @@ class KmChunk(Base):
     )
     chunk_index = Column(Integer, nullable=False)
     content = Column(Text, nullable=False)
-    embedding = Column(Vector(1536), nullable=True)
+    embedding = Column(Vector(768), nullable=True)
     metadata_ = Column("metadata", JSON, nullable=True)
 
     document = relationship("KmDocument", backref=backref("chunks", passive_deletes=True), lazy="select")
