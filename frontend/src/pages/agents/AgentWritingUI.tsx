@@ -386,7 +386,7 @@ export default function AgentWritingUI({ agent }: AgentWritingUIProps) {
     // 50ms buffer flush
     intervalRef.current = setInterval(() => {
       if (fullTextRef.current && editor) {
-        editor.commands.setContent(markdownToHtml(fullTextRef.current), false)
+        editor.commands.setContent(markdownToHtml(fullTextRef.current), { emitUpdate: false })
       }
     }, 50)
 
@@ -410,7 +410,7 @@ export default function AgentWritingUI({ agent }: AgentWritingUIProps) {
           onDone: (done) => {
             stopStreaming()
             if (done.content && editor) {
-              editor.commands.setContent(markdownToHtml(done.content), false)
+              editor.commands.setContent(markdownToHtml(done.content), { emitUpdate: false })
             }
             setLastMeta({ model: done.model ?? model, usage: done.usage ?? null })
             setIsStreaming(false)

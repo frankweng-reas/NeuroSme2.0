@@ -35,6 +35,7 @@ export default defineConfig(({ mode }) => {
         workbox: {
           // 預快取 widget 相關資源
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
           navigateFallback: '/index.html',
           navigateFallbackDenylist: [/^\/api/, /^\/auth/],
           runtimeCaching: [

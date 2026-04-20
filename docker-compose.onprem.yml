@@ -1,11 +1,12 @@
 # NeuroSme On-Prem 完整部署
 #
 # 架構：
-#   nginx (port 80) → frontend / backend / localauth
+#   caddy (port 443 HTTPS / port 80 → redirect) → frontend / backend / localauth
 #   backend → neurosme-db (postgres)
 #   localauth → localauth-db (postgres)
 #
 # 客戶 IT 操作指南：
+#   啟動前：先編輯 Caddyfile，填入您的 domain 並選擇 TLS 模式
 #   啟動：  docker compose -f docker-compose.onprem.yml up -d
 #   升級：  （步驟與首次安裝相同，詳見 QUICKSTART.md）
 #   備份：  ~/neurosme-data/  目錄定期備份即可（Mac / Linux 皆適用）
@@ -14,14 +15,17 @@
 
 services:
 
-  # ── 外層反向代理 ────────────────────────────────────────────
-  nginx:
-    image: nginx:1.27-alpine
+  # ── 外層反向代理（含 TLS） ───────────────────────────────────
+  caddy:
+    image: caddy:2-alpine
     restart: unless-stopped
     ports:
       - "80:80"
+      - "443:443"
     volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./certs:/etc/caddy/certs:ro
+      - caddy_data:/data
     depends_on:
       - frontend
       - backend
@@ -107,3 +111,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+volumes:
+  caddy_data:   # Caddy 自動憑證（Let's Encrypt）儲存用；自備憑證模式下此 volume 為空
