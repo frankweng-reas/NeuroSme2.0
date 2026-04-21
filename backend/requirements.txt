@@ -34,3 +34,6 @@ pydantic-settings>=2.2.0
 python-dotenv==1.0.1
 cryptography>=42.0.0
 pgvector>=0.3.3
+
+# Rate Limiting（Public API）
+slowapi>=0.1.9

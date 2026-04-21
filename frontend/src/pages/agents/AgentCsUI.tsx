@@ -47,6 +47,7 @@ import {
   type WidgetSessionItem,
   type WidgetSessionDetail,
 } from '@/api/widget_admin'
+import AgentCsApiKeys from './AgentCsApiKeys'
 
 interface AgentCsUIProps {
   agent: Agent
@@ -119,8 +120,8 @@ export default function AgentCsUI({ agent }: AgentCsUIProps) {
   const [tokenGenerating, setTokenGenerating] = useState(false)
   const [showHelpModal, setShowHelpModal] = useState(false)
 
-  // ── 右欄 Tab：'chat' | 'history' ─────────────────────────────────────────
-  const [rightTab, setRightTab] = useState<'chat' | 'history'>('chat')
+  // ── 右欄 Tab：'chat' | 'history' | 'api' ────────────────────────────────
+  const [rightTab, setRightTab] = useState<'chat' | 'history' | 'api'>('chat')
   const [wSessions, setWSessions] = useState<WidgetSessionItem[]>([])
   const [wSessionsLoading, setWSessionsLoading] = useState(false)
   const [wDetail, setWDetail] = useState<WidgetSessionDetail | null>(null)
@@ -1278,6 +1279,13 @@ export default function AgentCsUI({ agent }: AgentCsUIProps) {
             >
               訪客對話
             </button>
+            <button
+              type="button"
+              onClick={() => setRightTab('api')}
+              className={`rounded-lg px-3 py-1 text-base font-medium transition-colors ${rightTab === 'api' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              API 整合
+            </button>
             {rightTab === 'chat' && (
               <>
                 <span className="mx-1 text-gray-200">|</span>
@@ -1353,8 +1361,7 @@ export default function AgentCsUI({ agent }: AgentCsUIProps) {
           )}
 
           {/* ── 訪客對話 ── */}
-          {rightTab === 'history' && (
-            <div className="flex min-h-0 flex-1 overflow-hidden">
+          {rightTab === 'history' && (            <div className="flex min-h-0 flex-1 overflow-hidden">
               {/* session 列表 */}
               <div className="w-64 shrink-0 overflow-y-auto border-r border-gray-100">
                 {!selectedKb ? (
@@ -1431,6 +1438,11 @@ export default function AgentCsUI({ agent }: AgentCsUIProps) {
                 )}
               </div>
             </div>
+          )}
+
+          {/* ── API 整合 ── */}
+          {rightTab === 'api' && (
+            <AgentCsApiKeys canManage={canManage} kbs={kbs} selectedKbId={selectedKbId} />
           )}
         </div>
 

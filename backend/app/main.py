@@ -8,10 +8,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import litellm
 from litellm.llms.custom_httpx.aiohttp_handler import BaseLLMAIOHTTPHandler
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from app.api import router as api_router
 from app.core.config import settings
 from app.core.database import SessionLocal
+from app.core.limiter import limiter
 from app.services.startup_seed import (
     seed_agent_catalog,
     seed_default_admin,
@@ -49,9 +53,15 @@ app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
+    docs_url=f"{settings.API_V1_STR}/docs",
+    redoc_url=f"{settings.API_V1_STR}/redoc",
     lifespan=lifespan,
 )
 
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
