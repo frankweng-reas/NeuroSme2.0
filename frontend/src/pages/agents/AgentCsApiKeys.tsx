@@ -384,8 +384,8 @@ export default function AgentCsApiKeys({ canManage, kbs, selectedKbId }: Props) 
                     />
                     <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} width={36} />
                     <Tooltip
-                      formatter={(value: number) => [value.toLocaleString(), '請求數']}
-                      labelFormatter={(label: string) => new Date(label).toLocaleDateString('zh-TW')}
+                      formatter={(value) => [(value as number).toLocaleString(), '請求數']}
+                      labelFormatter={(label) => new Date(String(label)).toLocaleDateString('zh-TW')}
                     />
                     <Line type="monotone" dataKey="request_count" stroke={HEADER_COLOR} strokeWidth={2} dot={false} />
                   </LineChart>
@@ -407,11 +407,11 @@ export default function AgentCsApiKeys({ canManage, kbs, selectedKbId }: Props) 
                     />
                     <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} width={42} />
                     <Tooltip
-                      formatter={(value: number, name: string) => [
-                        value.toLocaleString(),
+                      formatter={(value, name) => [
+                        (value as number).toLocaleString(),
                         name === 'input_tokens' ? '輸入 Tokens' : '輸出 Tokens',
                       ]}
-                      labelFormatter={(label: string) => new Date(label).toLocaleDateString('zh-TW')}
+                      labelFormatter={(label) => new Date(String(label)).toLocaleDateString('zh-TW')}
                     />
                     <Legend
                       formatter={(value: string) => value === 'input_tokens' ? '輸入' : '輸出'}
