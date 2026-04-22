@@ -179,6 +179,8 @@ export interface NsChatProps {
   composerAboveForm?: ReactNode
   /** 與輸入框同一列、位於輸入框左側（例如附加檔按鈕） */
   composerLeading?: ReactNode
+  /** 外部注入文字至輸入框（例如語音辨識結果），每次值改變都 append；請在注入後重設為 '' */
+  appendInputText?: string
   /** stored_file id → object URL，供 user 圖片附件顯示 */
   attachmentBlobUrls?: Record<string, string>
 }
@@ -203,12 +205,20 @@ export default function NsChat({
   allowSubmitEmptyInput = false,
   composerAboveForm,
   composerLeading,
+  appendInputText,
   attachmentBlobUrls = {},
 }: NsChatProps) {
   const [input, setInput] = useState('')
   const [isAtBottom, setIsAtBottom] = useState(true)
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // 語音辨識等外部文字注入：appendInputText 變化時 append 到輸入框並聚焦
+  useEffect(() => {
+    if (!appendInputText) return
+    setInput((prev) => (prev ? `${prev} ${appendInputText}` : appendInputText))
+    setTimeout(() => inputRef.current?.focus(), 0)
+  }, [appendInputText])
 
   useEffect(() => {
     if (isAtBottom) {

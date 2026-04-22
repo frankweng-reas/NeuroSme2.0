@@ -64,7 +64,7 @@ function StatusBadge({ status }: { status: KmDocument['status'] }) {
     return (
       <span className="flex items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[11px] text-amber-700">
         <Loader2 className="h-2.5 w-2.5 animate-spin" />
-        處理中
+        {status === 'pending' ? '需要重新載入' : '處理中'}
       </span>
     )
   return <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[11px] text-red-700">錯誤</span>
@@ -137,7 +137,7 @@ export default function AgentKmUI({ agent }: AgentKmUIProps) {
   }, [agent.id])
 
   // ── AI 設定 ───────────────────────────────────────────────────────────────
-  const [model, setModel] = useState('gpt-4o-mini')
+  const [model, setModel] = useState('') 
   const [language, setLanguage] = useState('zh-TW')
   const [detailLevel, setDetailLevel] = useState('brief')
   const [exampleQuestionsCount, setExampleQuestionsCount] = useState('0')
@@ -480,10 +480,11 @@ export default function AgentKmUI({ agent }: AgentKmUIProps) {
                 <p className="mb-3 text-sm text-gray-400">智能文檔處理可提昇搜尋準確度，請選擇適合類型</p>
                 <div className="grid grid-cols-2 gap-3">
                   {([
-                    { value: 'article', emoji: '📄', label: '一般文章', sub: '說明文件、公告' },
-                    { value: 'faq',     emoji: '💬', label: 'FAQ 問答集', sub: '常見問題、Q&A' },
-                    { value: 'spec',    emoji: '🔧', label: '技術規格', sub: '參數表、Datasheet' },
-                    { value: 'policy',  emoji: '📋', label: '政策 / 條款', sub: '合約、規章' },
+                    { value: 'article',   emoji: '📄', label: '一般文章', sub: '說明文件、公告' },
+                    { value: 'faq',       emoji: '💬', label: 'FAQ 問答集', sub: '常見問題、Q&A' },
+                    { value: 'spec',      emoji: '🔧', label: '技術規格', sub: '參數表、Datasheet' },
+                    { value: 'policy',    emoji: '📋', label: '政策 / 條款', sub: '合約、規章' },
+                    { value: 'reference', emoji: '📑', label: '參考資料', sub: '菜單、價目表、術語表、組織表' },
                   ] as const).map(({ value, emoji, label, sub }) => (
                     <button
                       key={value}

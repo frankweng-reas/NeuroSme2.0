@@ -9,6 +9,7 @@ import {
   Search,
 } from 'lucide-react'
 import NsChat, { type NsChatMessage } from '@/components/NsChat'
+import VoiceInput from '@/components/VoiceInput'
 import ErrorModal from '@/components/ErrorModal'
 import AgentHeader from '@/components/AgentHeader'
 import LLMModelSelect from '@/components/LLMModelSelect'
@@ -287,11 +288,11 @@ export default function AgentChatUI({ agent }: AgentChatUIProps) {
   const [model, setModel] = useState(() => {
     try {
       const raw = localStorage.getItem(storageKey(agent.id))
-      if (!raw) return 'gpt-4o-mini'
+      if (!raw) return ''
       const parsed = JSON.parse(raw) as { model?: string }
-      return typeof parsed.model === 'string' && parsed.model ? parsed.model : 'gpt-4o-mini'
+      return typeof parsed.model === 'string' && parsed.model ? parsed.model : ''
     } catch {
-      return 'gpt-4o-mini'
+      return ''
     }
   })
   const [isLoading, setIsLoading] = useState(false)
@@ -309,6 +310,7 @@ export default function AgentChatUI({ agent }: AgentChatUIProps) {
   const [selectedThreadFileIds, setSelectedThreadFileIds] = useState<string[]>([])
   const [attachPanelFeedback, setAttachPanelFeedback] = useState<AttachPanelFeedback | null>(null)
   const [errorModal, setErrorModal] = useState<{ title: string; message: string } | null>(null)
+  const [voiceTranscript, setVoiceTranscript] = useState('')
   const chatFileInputRef = useRef<HTMLInputElement>(null)
   const attachFileOpIdRef = useRef(0)
   /** stored_file id → 預覽用 object URL（對話內圖片附件） */
@@ -1164,6 +1166,15 @@ export default function AgentChatUI({ agent }: AgentChatUIProps) {
             ) : null}
           </div>
         ) : null}
+        <VoiceInput
+          onTranscript={(text) => {
+            setVoiceTranscript(text)
+            // NsChat 消費後重設，讓下次語音仍可觸發 useEffect
+            setTimeout(() => setVoiceTranscript(''), 50)
+          }}
+          onError={(msg) => showErrorModal(msg, '語音輸入失敗')}
+          disabled={isLoading}
+        />
       </div>
     ),
     [
@@ -1173,6 +1184,7 @@ export default function AgentChatUI({ agent }: AgentChatUIProps) {
       selectedThreadFileIds.length,
       selectedThreadId,
       threadFiles.length,
+      showErrorModal,
     ]
   )
 
@@ -1521,6 +1533,7 @@ export default function AgentChatUI({ agent }: AgentChatUIProps) {
               inputPlaceholder="輸入訊息…"
               composerAboveForm={chatComposerAbove}
               composerLeading={chatComposerLeading}
+              appendInputText={voiceTranscript}
               attachmentBlobUrls={attachmentBlobUrls}
               onCopySuccess={() => showToast('已複製到剪貼簿')}
               onCopyError={() =>

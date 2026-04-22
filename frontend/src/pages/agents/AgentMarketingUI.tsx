@@ -207,7 +207,7 @@ const EXTRA_EXAMPLES: ExampleGroup[] = [
 
 export default function AgentMarketingUI({ agent }: { agent: Agent }) {
   const [model, setModel] = useState(() => {
-    try { return localStorage.getItem(STORAGE_KEY) || 'gpt-4o-mini' } catch { return 'gpt-4o-mini' }
+    try { return localStorage.getItem(STORAGE_KEY) || '' } catch { return '' }
   })
   const [brand, setBrand] = useState<BrandProfile>(() => {
     try {

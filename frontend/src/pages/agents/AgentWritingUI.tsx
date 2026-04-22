@@ -273,7 +273,7 @@ interface AgentWritingUIProps {
 
 export default function AgentWritingUI({ agent }: AgentWritingUIProps) {
   const [model, setModel] = useState(() => {
-    try { return localStorage.getItem(STORAGE_KEY) || 'gpt-4o-mini' } catch { return 'gpt-4o-mini' }
+    try { return localStorage.getItem(STORAGE_KEY) || '' } catch { return '' }
   })
   const [profile, setProfile] = useState<{ name: string; company: string }>(() => {
     try {

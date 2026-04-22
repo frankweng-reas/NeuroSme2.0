@@ -101,7 +101,7 @@ function ScheduleTable({ assignments }: { assignments: ScheduleAssignment[] }) {
 
 export default function AgentSchedulingUI({ agent }: AgentSchedulingUIProps) {
   const sourcePanelRef = useRef<PanelImperativeHandle>(null)
-  const [model, setModel] = useState(() => loadStored(agent.id)?.model ?? 'gpt-4o-mini')
+  const [model, setModel] = useState(() => loadStored(agent.id)?.model ?? '')
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [result, setResult] = useState<{

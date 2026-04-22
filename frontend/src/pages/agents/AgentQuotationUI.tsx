@@ -472,7 +472,7 @@ export default function AgentQuotationUI({ agent }: AgentQuotationUIProps) {
   const [chatPreviewData, setChatPreviewData] = useState<Record<string, unknown> | null>(null)
   const [chatClearConfirmOpen, setChatClearConfirmOpen] = useState(false)
   const [deleteRowConfirm, setDeleteRowConfirm] = useState<{ source: 'preview' | 'parse'; rowIndex: number } | null>(null)
-  const [model, setModel] = useState('gpt-4o-mini')
+  const [model, setModel] = useState('')
   const [companies, setCompanies] = useState<Company[]>([])
   const [companiesLoading, setCompaniesLoading] = useState(false)
   const [pdfExporting, setPdfExporting] = useState(false)

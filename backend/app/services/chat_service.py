@@ -40,6 +40,7 @@ _PROMPT_TYPE_FILES: dict[str, str] = {
     "quotation_share": "system_prompt_quotation_4_share.md",
     "marketing":       "system_prompt_marketing_agent.md",
     "marketing_chat":  "system_prompt_marketing_chat.md",
+    "ordering":        "system_prompt_ordering.md",
 }
 
 
@@ -83,13 +84,13 @@ def _build_messages(req, data: str = "", kb_system_prompt: str | None = None) ->
     """
     msgs: list[dict] = []
     system_parts: list[str] = []
-    # KB 自訂 system prompt 優先；其次從 prompt_type 檔案載入
+    # 先載入 prompt_type 對應的基礎 prompt（cs.md 等），提供語言、安全、格式的保底規則
+    file_prompt = _load_system_prompt_from_file(req.prompt_type)
+    if file_prompt:
+        system_parts.append(file_prompt)
+    # KB 自訂 prompt 附加在後（不取代），讓客戶定義業務角色與輸出格式
     if kb_system_prompt:
         system_parts.append(kb_system_prompt)
-    else:
-        file_prompt = _load_system_prompt_from_file(req.prompt_type)
-        if file_prompt:
-            system_parts.append(file_prompt)
     if req.system_prompt.strip():
         system_parts.append(req.system_prompt.strip())
     # 參考資料置於 system 末段

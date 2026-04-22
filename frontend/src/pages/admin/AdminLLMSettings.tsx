@@ -118,7 +118,7 @@ export default function AdminLLMSettings() {
 
   // embedding migration
   const [showMigrateForm, setShowMigrateForm] = useState(false)
-  const [migrateForm, setMigrateForm] = useState({ provider: 'gemini', model: '', confirm: false })
+  const [migrateForm, setMigrateForm] = useState({ provider: 'openai', model: '', confirm: false })
   const [migrating, setMigrating] = useState(false)
 
   // embedding test
@@ -305,7 +305,7 @@ export default function AdminLLMSettings() {
       })
       setTenantConfig(tc)
       setShowMigrateForm(false)
-      setMigrateForm({ provider: 'gemini', model: '', confirm: false })
+        setMigrateForm({ provider: 'openai', model: '', confirm: false })
       showToast('Embedding 遷移完成，請重新上傳文件以建立索引', 'success')
       load()
     } catch (err) {
@@ -410,7 +410,7 @@ export default function AdminLLMSettings() {
                     </button>
                     <button
                       onClick={() => {
-                        setMigrateForm({ provider: tenantConfig?.embedding_provider ?? 'gemini', model: '', confirm: false })
+                        setMigrateForm({ provider: tenantConfig?.embedding_provider === 'local' ? 'local' : 'openai', model: '', confirm: false })
                         setShowMigrateForm(true)
                       }}
                       className="flex items-center gap-1 rounded px-2 py-1 text-base text-orange-500 hover:text-orange-700 hover:bg-orange-50 transition-colors"
@@ -761,23 +761,56 @@ export default function AdminLLMSettings() {
               <Field label="新 Provider" required>
                 <select
                   value={migrateForm.provider}
-                  onChange={(e) => setMigrateForm((f) => ({ ...f, provider: e.target.value }))}
+                  onChange={(e) => setMigrateForm((f) => ({ ...f, provider: e.target.value, model: '' }))}
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-gray-400"
                 >
-                  <option value="gemini">Google Gemini</option>
                   <option value="openai">OpenAI</option>
-                  <option value="local">本機模型 (Local)</option>
+                  <option value="local">本機模型 (Local / Ollama)</option>
                 </select>
               </Field>
 
-              <Field label="新 Model" required hint="例：text-embedding-004（Gemini）、text-embedding-3-small（OpenAI）">
+              {migrateForm.provider === 'local' && (
+                <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-base text-blue-800 space-y-1">
+                  <p className="font-semibold">使用本機 Embedding 前請確認：</p>
+                  <ul className="list-disc list-inside space-y-0.5 text-blue-700">
+                    <li>已在「Provider 連線設定」新增並啟用 <strong>本機模型 (Local)</strong>，並填入 API Base URL（例：<code className="bg-blue-100 px-1 rounded">http://&lt;server&gt;:11434</code>）</li>
+                    <li>推薦使用 <code className="bg-blue-100 px-1 rounded">nomic-embed-text</code>（768 維，與系統 schema 一致）</li>
+                    <li>請先在 Ollama 執行 <code className="bg-blue-100 px-1 rounded">ollama pull nomic-embed-text</code></li>
+                  </ul>
+                </div>
+              )}
+
+              <Field
+                label="新 Model"
+                required
+                hint={
+                  migrateForm.provider === 'local'
+                    ? '輸入 Ollama 模型名稱（不含 ollama/ 前綴），例：nomic-embed-text'
+                    : '例：text-embedding-3-small（OpenAI）'
+                }
+              >
                 <input
                   type="text"
-                  placeholder="text-embedding-004"
+                  placeholder={
+                    migrateForm.provider === 'local'
+                      ? 'nomic-embed-text'
+                      : migrateForm.provider === 'openai'
+                        ? 'text-embedding-3-small'
+                        : 'text-embedding-004'
+                  }
                   value={migrateForm.model}
                   onChange={(e) => setMigrateForm((f) => ({ ...f, model: e.target.value }))}
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-base font-mono focus:outline-none focus:ring-2 focus:ring-gray-400"
                 />
+                {migrateForm.provider === 'local' && (
+                  <button
+                    type="button"
+                    onClick={() => setMigrateForm((f) => ({ ...f, model: 'nomic-embed-text' }))}
+                    className="mt-1.5 rounded bg-blue-100 px-2 py-0.5 text-base text-blue-700 hover:bg-blue-200 transition-colors font-mono"
+                  >
+                    nomic-embed-text <span className="font-normal text-blue-500">768 維 ✓</span>
+                  </button>
+                )}
               </Field>
 
               <label className="flex items-start gap-3 cursor-pointer">

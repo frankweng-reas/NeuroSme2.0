@@ -473,7 +473,7 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
   const [editProjectSubmitting, setEditProjectSubmitting] = useState(false)
   const [editProjectError, setEditProjectError] = useState<string | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
-  const [model, setModel] = useState(() => loadStored(agent.id)?.model ?? 'gpt-4o-mini')
+  const [model, setModel] = useState(() => loadStored(agent.id)?.model ?? '')
   const [userPrompt, setUserPrompt] = useState(() => loadStored(agent.id)?.userPrompt ?? '')
   const [role, setRole] = useState(() => loadStored(agent.id)?.role ?? 'manager')
   const [language, setLanguage] = useState(() => loadStored(agent.id)?.language ?? 'zh-TW')
@@ -815,7 +815,7 @@ export default function AgentBusinessUI({ agent }: AgentBusinessUIProps) {
 
   useEffect(() => {
     const stored = loadStored(agent.id)
-    setModel(stored?.model ?? 'gpt-4o-mini')
+    setModel(stored?.model ?? '')
     setUserPrompt(stored?.userPrompt ?? '')
     setRole(stored?.role ?? 'manager')
     setLanguage(stored?.language ?? 'zh-TW')

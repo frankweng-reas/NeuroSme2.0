@@ -61,6 +61,10 @@ class Settings(BaseSettings):
     LOCALAUTH_ADMIN_URL: str = "http://localhost:4000"
     LOCALAUTH_ADMIN_API_KEY: str = ""
 
+    # 語音轉文字（Whisper）服務位址（OpenAI-compatible）
+    # 留空表示停用語音輸入功能；指向 faster-whisper-server 時格式如 http://host:8002
+    WHISPER_BASE_URL: str = ""
+
     # Activation Code 簽名用 secret（HMAC-SHA256）
     # 產生方式：python -c "import secrets; print(secrets.token_hex(32))"
     # 此值需 bake 在 image 裡，不對外公開。

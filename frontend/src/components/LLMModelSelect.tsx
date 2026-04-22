@@ -88,15 +88,16 @@ export default function LLMModelSelect({
     loadState.kind === 'ok' &&
     (optionsOverride != null ? optionsOverride.length === 0 : loadState.options.length === 0)
 
-  // 選項載入成功後，若目前 value 已不在有效清單（例如 provider 已停用），自動切換至第一個可用模型
-  // allowEmpty 時空字串代表「系統預設」，不做自動切換
+  // 選項載入成功後：
+  // 1. value 為空（初始或 fallback）→ 自動選第一個可用模型（= tenant default）
+  // 2. value 不在清單中（provider 已停用）→ 同樣自動切換
+  // allowEmpty 時 value='' 代表「系統預設」，不做自動切換
   useEffect(() => {
     if (loadState.kind !== 'ok') return
     if (hasNoModels) return
     if (allowEmpty && value === '') return
-    if (!value) return
     const valid = loadState.options
-    if (!valid.some((o) => o.value === value)) {
+    if (!value || !valid.some((o) => o.value === value)) {
       onChangeRef.current(allowEmpty ? '' : (valid[0]?.value ?? ''))
     }
   }, [loadState, value, hasNoModels, allowEmpty])

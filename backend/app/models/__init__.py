@@ -28,6 +28,7 @@ from app.models.km_chunk import KmChunk
 from app.models.km_knowledge_base import KmKnowledgeBase
 from app.models.widget_session import WidgetSession
 from app.models.widget_message import WidgetMessage
+from app.models.ordering_session import OrderingSession
 
 __all__ = [
     "Base", "Tenant", "User", "AgentCatalog", "TenantAgent", "UserAgent",
@@ -39,4 +40,5 @@ __all__ = [
     "KmDocument", "KmChunk", "KmKnowledgeBase", "WidgetSession", "WidgetMessage",
     "TenantConfig",
     "ApiKey", "ApiKeyUsage",
+    "OrderingSession",
 ]

@@ -30,10 +30,11 @@ CHUNK_OVERLAP = 200
 # 各文件類型的 chunking 策略與檢索 top_k
 # chunk_size 越小 → top_k 越大（總 context 字元數約 3000–6000）
 CHUNK_STRATEGIES: dict[str, dict] = {
-    "faq":     {"chunk_size": 300,  "overlap": 50,  "top_k": 12},
-    "spec":    {"chunk_size": 800,  "overlap": 100, "top_k": 8},
-    "policy":  {"chunk_size": 800,  "overlap": 150, "top_k": 6},
-    "article": {"chunk_size": 1500, "overlap": 200, "top_k": 4},
+    "faq":       {"chunk_size": 300,  "overlap": 50,  "top_k": 12},
+    "spec":      {"chunk_size": 400,  "overlap": 80,  "top_k": 12},
+    "policy":    {"chunk_size": 800,  "overlap": 150, "top_k": 6},
+    "article":   {"chunk_size": 1500, "overlap": 200, "top_k": 4},
+    "reference": {"chunk_size": 9999, "overlap": 0,   "top_k": 1},
 }
 DOC_TYPES = frozenset(CHUNK_STRATEGIES.keys())
 
@@ -284,10 +285,13 @@ def _get_embed_params(db: Session, tenant_id: str) -> tuple[str, str, str | None
                 api_key = decrypt_api_key(provider_cfg.api_key_encrypted)
             except ValueError:
                 api_key = None
-        if provider == "local":
-            api_key = api_key or "local"
 
-    if provider != "local" and not api_key:
+    # local provider 特殊處理：api_key 可為任意字串；api_base 預設 localhost:11434
+    if provider == "local":
+        api_key = api_key or "local"
+        if not api_base:
+            api_base = "http://localhost:11434"
+    elif not api_key:
         return None
 
     return provider, model_name, api_key, api_base
@@ -338,7 +342,16 @@ def embed_texts_sync(
         )
         return [e.values for e in response.embeddings]
 
-    kwargs: dict = dict(model=model, input=texts, api_key=api_key)
+    if provider == "local":
+        # Ollama embedding：LiteLLM 需要 ollama/ 前綴；api_base 不加 /v1
+        litellm_model = model if model.startswith("ollama/") else f"ollama/{model}"
+        kwargs: dict = dict(model=litellm_model, input=texts, api_key=api_key or "local")
+        if api_base:
+            kwargs["api_base"] = api_base.rstrip("/")
+        response = litellm.embedding(**kwargs)
+        return [item["embedding"] for item in response.data]
+
+    kwargs = dict(model=model, input=texts, api_key=api_key)
     if api_base:
         kwargs["api_base"] = api_base
     if provider == "openai" and "text-embedding-3-small" in model:

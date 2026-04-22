@@ -1,6 +1,6 @@
 """API 路由彙總：掛載 users、agents、source_files、prompt_templates、bi_projects 等 endpoint"""
 from fastapi import APIRouter
-from app.api.endpoints import users, agents, agent_catalog, chat, chat_dev, chat_compute_tool, chat_threads, chat_insights, source_files, prompt_templates, tenants, companies, scheduling, bi_projects, bi_sources, bi_schemas, bi_sample_qa, llm_configs, activation, km, km_kb, widget, widget_admin, api_keys, public_cs
+from app.api.endpoints import users, agents, agent_catalog, chat, chat_dev, chat_compute_tool, chat_threads, chat_insights, source_files, prompt_templates, tenants, companies, scheduling, bi_projects, bi_sources, bi_schemas, bi_sample_qa, llm_configs, activation, km, km_kb, widget, widget_admin, api_keys, public_cs, ordering, speech
 
 router = APIRouter()
 router.include_router(users.router, prefix="/users", tags=["users"])
@@ -28,3 +28,5 @@ router.include_router(widget.router, prefix="/widget", tags=["widget"])
 router.include_router(widget_admin.router, prefix="/widget-admin", tags=["widget-admin"])
 router.include_router(api_keys.router, prefix="/api-keys", tags=["api-keys"])
 router.include_router(public_cs.router, prefix="/public/cs", tags=["public-cs"])
+router.include_router(ordering.router, prefix="/public/ordering", tags=["ordering"])
+router.include_router(speech.router, prefix="/speech", tags=["speech"])

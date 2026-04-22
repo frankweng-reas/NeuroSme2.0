@@ -185,9 +185,22 @@ def get_model_options_for_tenant(
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
 ):
-    """依目前租戶啟用中的 llm_provider_config 組合模型清單（需登入）；無任何設定列時回傳空陣列。"""
+    """依目前租戶啟用中的 llm_provider_config 組合模型清單（需登入）；無任何設定列時回傳空陣列。
+    tenant_configs.default_llm_model 若有設定，會置頂並加「(預設)」標籤。
+    """
     tenant_id = _require_tenant_user(db, current)
-    return _collect_tenant_model_options(db, tenant_id)
+    options = _collect_tenant_model_options(db, tenant_id)
+
+    # 將 tenant 設定的 default model 置頂，標記「(預設)」
+    tc = db.query(TenantConfig).filter(TenantConfig.tenant_id == tenant_id).first()
+    if tc and tc.default_llm_model:
+        default_mid = tc.default_llm_model.strip()
+        if default_mid:
+            rest = [o for o in options if o.value != default_mid]
+            default_label = f"(預設) {_model_display_label(default_mid)}"
+            options = [LLMModelOption(value=default_mid, label=default_label)] + rest
+
+    return options
 
 
 @router.get("/", response_model=list[LLMProviderConfigResponse])
