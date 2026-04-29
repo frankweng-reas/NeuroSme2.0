@@ -1,5 +1,5 @@
 import { apiFetch } from './client'
-import type { LLMProviderConfig } from '@/types'
+import type { LLMProviderConfig, LLMModelEntry } from '@/types'
 
 // ── Tenant Config ─────────────────────────────────────────────────────────────
 
@@ -69,7 +69,7 @@ export interface LLMProviderConfigCreate {
   label?: string | null
   api_key?: string | null
   api_base_url?: string | null
-  available_models?: string[] | null
+  available_models?: LLMModelEntry[] | null
   is_active?: boolean
 }
 
@@ -77,7 +77,7 @@ export interface LLMProviderConfigUpdate {
   label?: string | null
   api_key?: string | null
   api_base_url?: string | null
-  available_models?: string[] | null
+  available_models?: LLMModelEntry[] | null
   is_active?: boolean | null
 }
 
@@ -94,7 +94,10 @@ export async function getLLMProviderOptions(): Promise<Record<string, string[]>>
 export interface LLMModelOption {
   value: string
   label: string
+  note?: string | null
 }
+
+export { type LLMModelEntry }
 
 /** 依租戶 DB 的 llm_provider_config 組合模型清單（需登入） */
 export async function getLLMModelOptions(): Promise<LLMModelOption[]> {

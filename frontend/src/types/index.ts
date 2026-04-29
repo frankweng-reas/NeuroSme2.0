@@ -49,6 +49,11 @@ export interface Company {
   quotation_terms?: string | null
 }
 
+export interface LLMModelEntry {
+  model: string
+  note?: string | null
+}
+
 export interface LLMProviderConfig {
   id: number
   tenant_id: string
@@ -56,7 +61,7 @@ export interface LLMProviderConfig {
   label: string | null
   api_key_masked: string | null
   api_base_url: string | null
-  available_models: string[] | null
+  available_models: LLMModelEntry[] | null
   is_active: boolean
   created_at: string
   updated_at: string

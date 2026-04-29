@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Mic } from 'lucide-react'
 import {
+  HelpCircle,
   KeyRound,
   Pencil,
   Plus,
@@ -15,6 +16,7 @@ import {
   ChevronUp,
   AlertTriangle,
 } from 'lucide-react'
+import HelpModal from '@/components/HelpModal'
 import {
   createLLMConfig,
   deleteLLMConfig,
@@ -37,6 +39,7 @@ import type {
   SpeechTestResult,
   TenantConfig,
 } from '@/api/llmConfigs'
+import type { LLMModelEntry } from '@/types'
 import { getMe } from '@/api/users'
 import { ApiError } from '@/api/client'
 import { useToast } from '@/contexts/ToastContext'
@@ -73,7 +76,7 @@ interface FormState {
   label: string
   api_key: string
   api_base_url: string
-  available_models_text: string
+  available_models_entries: LLMModelEntry[]
   is_active: boolean
 }
 
@@ -82,7 +85,7 @@ const EMPTY_FORM: FormState = {
   label: '',
   api_key: '',
   api_base_url: '',
-  available_models_text: '',
+  available_models_entries: [],
   is_active: true,
 }
 
@@ -147,6 +150,9 @@ export default function AdminLLMSettings() {
   const [showDisableSpeechConfirm, setShowDisableSpeechConfirm] = useState(false)
   const [disablingSpeech, setDisablingSpeech] = useState(false)
 
+  // help modal
+  const [showHelpModal, setShowHelpModal] = useState(false)
+
   // ── Load ──────────────────────────────────────────────────────────────────
 
   const load = useCallback(() => {
@@ -192,7 +198,7 @@ export default function AdminLLMSettings() {
       label: cfg.label ?? '',
       api_key: '',
       api_base_url: cfg.api_base_url ?? '',
-      available_models_text: (cfg.available_models ?? []).join('\n'),
+      available_models_entries: cfg.available_models ?? [],
       is_active: cfg.is_active,
     })
     setShowApiKey(false)
@@ -211,8 +217,7 @@ export default function AdminLLMSettings() {
     if (!form.provider) { showToast('請選擇 Provider', 'error'); return }
     setSaving(true)
     try {
-      const availableModels = form.available_models_text
-        .split('\n').map((s) => s.trim()).filter(Boolean)
+      const availableModels = form.available_models_entries.filter((e) => e.model.trim())
 
       if (editingId !== null) {
         const body: LLMProviderConfigUpdate = {
@@ -434,6 +439,14 @@ export default function AdminLLMSettings() {
             )}
           </div>
         </div>
+        <button
+          onClick={() => setShowHelpModal(true)}
+          className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-base text-gray-500 hover:border-gray-300 hover:text-gray-700 hover:bg-gray-50 transition-colors"
+          title="模型選型指南"
+        >
+          <HelpCircle className="h-4 w-4" />
+          模型選型指南
+        </button>
       </div>
 
       {error && (
@@ -617,10 +630,9 @@ export default function AdminLLMSettings() {
                 const isExpanded = expandedIds.has(cfg.id)
                 const isToggling = togglingIds.has(cfg.id)
                 const colorClass = PROVIDER_COLORS[cfg.provider] ?? 'bg-gray-100 text-gray-800'
-                // models to display: available_models or fallback to provider defaults
-                const models: string[] = cfg.available_models?.length
+                const models: LLMModelEntry[] = cfg.available_models?.length
                   ? cfg.available_models
-                  : (providerOptions[cfg.provider] ?? [])
+                  : (providerOptions[cfg.provider] ?? []).map((m) => ({ model: m }))
 
                 return (
                   <div
@@ -683,14 +695,19 @@ export default function AdminLLMSettings() {
                     {models.length > 0 && (
                       <div className="border-t border-gray-100 px-5 py-3 bg-gray-50 space-y-1.5">
                         <p className="text-base font-medium text-gray-400 mb-2">Models</p>
-                        {models.map((m) => {
-                          const key = testKey(cfg.id, m)
+                        {models.map((entry) => {
+                          const key = testKey(cfg.id, entry.model)
                           const isTesting = testingKey === key
                           return (
-                            <div key={m} className="flex items-center gap-3">
-                              <span className="font-mono text-base text-gray-700 flex-1 truncate">{m}</span>
+                            <div key={entry.model} className="flex items-center gap-3">
+                              <div className="flex-1 min-w-0">
+                                <span className="font-mono text-base text-gray-700 truncate block">{entry.model}</span>
+                                {entry.note && (
+                                  <span className="text-base text-gray-400">{entry.note}</span>
+                                )}
+                              </div>
                               <button
-                                onClick={() => void handleTestModel(cfg.id, m)}
+                                onClick={() => void handleTestModel(cfg.id, entry.model)}
                                 disabled={isTesting || !cfg.is_active}
                                 className="flex items-center gap-1 rounded px-2 py-1 text-base font-medium text-gray-500 hover:text-blue-600 hover:bg-blue-50 disabled:opacity-40 transition-colors shrink-0"
                               >
@@ -731,7 +748,7 @@ export default function AdminLLMSettings() {
                 <select
                   disabled={editingId !== null}
                   value={form.provider}
-                  onChange={(e) => setForm((f) => ({ ...f, provider: e.target.value, available_models_text: '' }))}
+                  onChange={(e) => setForm((f) => ({ ...f, provider: e.target.value, available_models_entries: [] }))}
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-gray-400 disabled:bg-gray-50"
                 >
                   <option value="openai">OpenAI</option>
@@ -800,23 +817,66 @@ export default function AdminLLMSettings() {
                 />
               </Field>
 
-              <Field label="可用 Models（每行一個）">
-                <textarea
-                  rows={4}
-                  placeholder={defaultModelsForProvider.join('\n') || '每行一個 model id'}
-                  value={form.available_models_text}
-                  onChange={(e) => setForm((f) => ({ ...f, available_models_text: e.target.value }))}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-base font-mono focus:outline-none focus:ring-2 focus:ring-gray-400 resize-none"
-                />
-                {defaultModelsForProvider.length > 0 && (
+              <Field label="可用 Models">
+                <div className="space-y-2">
+                  {form.available_models_entries.map((entry, idx) => (
+                    <div key={idx} className="flex items-start gap-2">
+                      <div className="flex-1 space-y-1">
+                        <input
+                          type="text"
+                          placeholder="Model ID，例：gemini/gemini-2.5-flash"
+                          value={entry.model}
+                          onChange={(e) => {
+                            const next = [...form.available_models_entries]
+                            next[idx] = { ...next[idx], model: e.target.value }
+                            setForm((f) => ({ ...f, available_models_entries: next }))
+                          }}
+                          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-base font-mono focus:outline-none focus:ring-2 focus:ring-gray-400"
+                        />
+                        <input
+                          type="text"
+                          placeholder="備註（選填），例：手寫 ✓  印刷 ✓  雲端"
+                          value={entry.note ?? ''}
+                          onChange={(e) => {
+                            const next = [...form.available_models_entries]
+                            next[idx] = { ...next[idx], note: e.target.value }
+                            setForm((f) => ({ ...f, available_models_entries: next }))
+                          }}
+                          className="w-full rounded-lg border border-gray-200 px-3 py-1.5 text-base text-gray-500 focus:outline-none focus:ring-2 focus:ring-gray-300"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = form.available_models_entries.filter((_, i) => i !== idx)
+                          setForm((f) => ({ ...f, available_models_entries: next }))
+                        }}
+                        className="mt-1.5 rounded p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
                   <button
                     type="button"
-                    onClick={() => setForm((f) => ({ ...f, available_models_text: defaultModelsForProvider.join('\n') }))}
-                    className="text-base text-blue-600 hover:underline mt-1"
+                    onClick={() => setForm((f) => ({ ...f, available_models_entries: [...f.available_models_entries, { model: '', note: '' }] }))}
+                    className="flex items-center gap-1.5 rounded-lg border border-dashed border-gray-300 px-3 py-2 text-base text-gray-500 hover:border-gray-400 hover:text-gray-700 transition-colors w-full justify-center"
                   >
-                    使用預設清單
+                    <Plus className="h-3.5 w-3.5" /> 新增 Model
                   </button>
-                )}
+                  {defaultModelsForProvider.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setForm((f) => ({
+                        ...f,
+                        available_models_entries: defaultModelsForProvider.map((m) => ({ model: m, note: '' })),
+                      }))}
+                      className="text-base text-blue-600 hover:underline"
+                    >
+                      使用預設清單
+                    </button>
+                  )}
+                </div>
               </Field>
 
               <Field label="狀態">
@@ -1202,6 +1262,14 @@ export default function AdminLLMSettings() {
           </div>
         </div>
       )}
+
+      {/* ── Online Help：模型選型指南 ── */}
+      <HelpModal
+        open={showHelpModal}
+        onClose={() => setShowHelpModal(false)}
+        url="/help-llm-settings.md"
+        title="AI 模型選型指南"
+      />
     </div>
   )
 }

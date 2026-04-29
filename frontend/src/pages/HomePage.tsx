@@ -19,7 +19,7 @@ const AGENT_DESCRIPTIONS: Record<string, string> = {
   customer:  '客戶行為分析與洞察',
   interview: '面試流程與評核輔助',
   invoice:   '發票與財務單據管理',
-  ocr:       '上傳圖片或 PDF，自動抽取結構化欄位資料',
+  ocr:       '上傳圖片，自動抽取結構化欄位資料',
 }
 
 // 依 group 首次出現順序分配色盤

@@ -16,6 +16,7 @@ from app.models.km_document import KmDocument
 from app.models.km_chunk import KmChunk
 from app.models.user import User
 from app.schemas.llm_config import (
+    LLMModelEntry,
     LLMModelOption,
     LLMProviderConfigCreate,
     LLMProviderConfigResponse,
@@ -90,28 +91,37 @@ def _collect_tenant_model_options(db: Session, tenant_id: str) -> list[LLMModelO
     seen: set[str] = set()
     ordered: list[LLMModelOption] = []
 
-    def add_model(mid: str) -> None:
+    def add_model(mid: str, note: str | None = None) -> None:
         mid = (mid or "").strip()
         if not mid or mid in seen:
             return
         seen.add(mid)
-        ordered.append(LLMModelOption(value=mid, label=_model_display_label(mid)))
+        ordered.append(LLMModelOption(value=mid, label=_model_display_label(mid), note=note or None))
 
     if not rows:
         return []
 
     for cfg in rows:
-        mids: list[str] = []
+        entries: list[tuple[str, str | None]] = []  # (model_id, note)
         raw = cfg.available_models
         if isinstance(raw, list) and len(raw) > 0:
-            mids = [str(x).strip() for x in raw if str(x).strip()]
-        if not mids:
-            mids = list(PROVIDER_DEFAULT_MODELS.get(cfg.provider, []))
+            for item in raw:
+                if isinstance(item, dict):
+                    mid = str(item.get("model", "")).strip()
+                    note = item.get("note") or None
+                    if mid:
+                        entries.append((mid, note))
+                elif isinstance(item, str) and item.strip():
+                    entries.append((item.strip(), None))
+        if not entries:
+            for mid in PROVIDER_DEFAULT_MODELS.get(cfg.provider, []):
+                entries.append((mid, None))
         dm = (cfg.default_model or "").strip()
         if dm:
-            mids = [dm] + [x for x in mids if x != dm]
-        for mid in mids:
-            add_model(mid)
+            dm_note = next((n for m, n in entries if m == dm), None)
+            entries = [(dm, dm_note)] + [(m, n) for m, n in entries if m != dm]
+        for mid, note in entries:
+            add_model(mid, note)
 
     return ordered
 
@@ -152,6 +162,21 @@ def _get_config_for_tenant(db: Session, config_id: int, tenant_id: str) -> LLMPr
     return cfg
 
 
+def _parse_available_models(raw) -> list[LLMModelEntry] | None:
+    """將 DB 中的 JSONB 資料（舊格式 string[] 或新格式 {model,note}[]）統一轉成 LLMModelEntry 列表。"""
+    if not isinstance(raw, list) or not raw:
+        return None
+    result: list[LLMModelEntry] = []
+    for item in raw:
+        if isinstance(item, dict):
+            mid = str(item.get("model", "")).strip()
+            if mid:
+                result.append(LLMModelEntry(model=mid, note=item.get("note") or None))
+        elif isinstance(item, str) and item.strip():
+            result.append(LLMModelEntry(model=item.strip(), note=None))
+    return result or None
+
+
 def _to_response(cfg: LLMProviderConfig) -> LLMProviderConfigResponse:
     masked = None
     if cfg.api_key_encrypted:
@@ -168,7 +193,7 @@ def _to_response(cfg: LLMProviderConfig) -> LLMProviderConfigResponse:
         api_key_masked=masked,
         api_base_url=cfg.api_base_url,
         default_model=cfg.default_model,
-        available_models=cfg.available_models,
+        available_models=_parse_available_models(cfg.available_models),
         is_active=cfg.is_active,
         created_at=cfg.created_at,
         updated_at=cfg.updated_at,
@@ -197,9 +222,10 @@ def get_model_options_for_tenant(
     if tc and tc.default_llm_model:
         default_mid = tc.default_llm_model.strip()
         if default_mid:
+            default_opt = next((o for o in options if o.value == default_mid), None)
             rest = [o for o in options if o.value != default_mid]
             default_label = f"(預設) {_model_display_label(default_mid)}"
-            options = [LLMModelOption(value=default_mid, label=default_label)] + rest
+            options = [LLMModelOption(value=default_mid, label=default_label, note=default_opt.note if default_opt else None)] + rest
 
     return options
 
@@ -238,7 +264,7 @@ def create_llm_config(
         api_key_encrypted=encrypt_api_key(body.api_key) if body.api_key else None,
         api_base_url=body.api_base_url,
         default_model=body.default_model,
-        available_models=body.available_models,
+        available_models=[e.model_dump() for e in body.available_models] if body.available_models else None,
         is_active=body.is_active,
     )
     db.add(cfg)
@@ -265,7 +291,7 @@ def update_llm_config(
     if body.api_base_url is not None:
         cfg.api_base_url = body.api_base_url
     if body.available_models is not None:
-        cfg.available_models = body.available_models
+        cfg.available_models = [e.model_dump() for e in body.available_models]
     if body.is_active is not None:
         cfg.is_active = body.is_active
 

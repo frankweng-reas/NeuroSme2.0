@@ -32,6 +32,8 @@ Environment="OLLAMA_FLASH_ATTENTION=1"
 Environment="OLLAMA_KEEP_ALIVE=-1"
 ```
 
+> **注意**：後來改為雙實例架構，OLLAMA_HOST 改為 `127.0.0.1:11435`，詳見「問題五」。
+
 ```bash
 sudo systemctl daemon-reload && sudo systemctl restart ollama
 ```
@@ -145,12 +147,230 @@ ollama pull gemma4:26b
 
 ---
 
+## 問題四：OLLAMA_NUM_PARALLEL 設定優化與 Vision 並發問題
+
+### 背景
+
+初始設定 `OLLAMA_NUM_PARALLEL=2`，後來評估 VRAM 仍有大量空間，於 2026-04-27 進行壓測調整。
+
+### VRAM 分析
+
+| 項目 | 數值 |
+|------|------|
+| GPU VRAM 總量 | 96 GB（APU unified memory，`mem_info_vram_total`） |
+| gemma4:26b at NUM_PARALLEL=2 | 32 GB |
+| 每個 KV cache（262144 ctx） | ~7.5 GB |
+| 估算公式 | 模型權重 ~17 GB + KV cache × N |
+
+| NUM_PARALLEL | 估計 VRAM | 剩餘 VRAM |
+|------|------|------|
+| 2 | 32 GB | 63 GB |
+| 4 | 47 GB | 48 GB |
+| 6 | 62 GB | 33 GB |
+| 8 | 77 GB | 18 GB |
+
+### 文字壓測結果（4 並發請求 × 2 輪，模型 gemma4:26b，context 262144）
+
+| 指標 | NUM_PARALLEL=2 | NUM_PARALLEL=4 | 改善幅度 |
+|------|----------------|----------------|----------|
+| VRAM 使用 | 32 GB | 46 GB | +14 GB |
+| 整批吞吐量 | ~35 tok/s | ~57 tok/s | **+63%** |
+| TTFT 平均 | 4.48s | 0.74s | **快 6×** |
+| TTFT 最慢 | 8.95s | 0.95s | **快 9×** |
+| 平均回應時間 | 11.61s | 9.15s | 快 21% |
+| 每請求 tok/s 均 | 13.6 | 15.5 | 快 14% |
+
+**根本原因**：設 2 時，4 個並發請求有 2 個需排隊等待空閒 slot，造成 TTFT 飆升（最慢 8.95s）。設 4 後每個請求立即取得 slot，不排隊。
+
+### Vision（OCR）並發問題
+
+**症狀**：`NUM_PARALLEL > 1` 時，只要有任何 vision 請求並發（含 1 vision + 1 text），Ollama 服務端 LLM 推論階段就會 hang，最終回傳 500（1m30s timeout）。
+
+**根本原因**：Ollama v0.21.2 的 scheduler 在 `NUM_PARALLEL > 1` 時嘗試真正平行執行；Vulkan backend（Flash Attention 開啟）處理多模態並發 batch 時存在死鎖問題，視覺 token 整合進 LLM 的路徑會卡死。`NUM_PARALLEL=1` 時循序執行可避免此問題。
+
+**失敗的嘗試**：
+- 降低 `num_ctx` 到 8192 → 無效
+- 關閉 `OLLAMA_FLASH_ATTENTION` → 無法，關掉後 compute graph 超出 Vulkan 單 buffer 限制（38.8 GB），模型無法載入
+- 升級 Ollama v0.20.7 → v0.21.2 → 單次 vision 成功，但並發仍失敗
+
+---
+
+## 問題五：三實例 + Nginx 負載均衡（最終架構）
+
+### 方案說明
+
+為同時滿足「文字高吞吐」、「vision 穩定性」、「3 使用者並發不排隊」，採用 **三 Ollama 實例 + Nginx least_conn** 架構：
+
+```
+外部請求 → nginx :11434 (least_conn)
+                ├── ollama  :11435  (NUM_PARALLEL=1, ~24 GB VRAM)
+                ├── ollama2 :11436  (NUM_PARALLEL=1, ~24 GB VRAM)
+                └── ollama3 :11437  (NUM_PARALLEL=1, ~24 GB VRAM)
+```
+
+- 每個實例 `NUM_PARALLEL=1`，確保 vision 穩定循序處理（無 Vulkan 並發死鎖問題）
+- 三個實例合計可同時處理 **3 個平行請求**，不排隊
+- 總 VRAM：~71 GB / 96 GB（剩餘 ~25 GB 緩衝）
+- embedding model（nomic-embed-text）由 nginx 自動分流到最閒的實例，VRAM 佔用可忽略
+
+### VRAM 規劃
+
+| 實例數 | VRAM 用量 | 剩餘 |
+|--------|-----------|------|
+| 2 個 | ~48 GB | 48 GB |
+| **3 個（目前）** | **~71 GB** | **~25 GB** |
+| 4 個 | ~96 GB | ~0 GB ⚠️ 不建議 |
+
+### Nginx Host Header 注意事項（重要）
+
+Ollama v0.21.x 加入 **Host header 安全驗證**，只接受 `localhost`、`127.0.0.1` 或 `OLLAMA_HOST` 設定值。若 nginx 直接轉發外部 IP 的 Host header（如 `100.127.247.43:11434`），ollama 會回傳 `403 Forbidden`。
+
+**解法**：nginx 固定送 `Host: localhost` 給後端：
+```nginx
+proxy_set_header   Host   "localhost";
+```
+
+### 安裝步驟
+
+#### 1. 修改 ollama (11435) override.conf
+
+```ini
+[Service]
+Environment="OLLAMA_HOST=127.0.0.1:11435"
+Environment="OLLAMA_ORIGINS=*"
+Environment="OLLAMA_VULKAN=1"
+Environment="VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.json"
+Environment="OLLAMA_FLASH_ATTENTION=1"
+Environment="OLLAMA_KEEP_ALIVE=-1"
+Environment="OLLAMA_NUM_PARALLEL=1"
+```
+
+#### 2. 建立 ollama2 / ollama3 service（相同結構，port 不同）
+
+`/etc/systemd/system/ollama2.service`（ollama3 同結構，改 Description 即可）：
+
+```ini
+[Unit]
+Description=Ollama Service (Instance 2)
+After=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/ollama serve
+User=ollama
+Group=ollama
+Restart=always
+RestartSec=3
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
+
+[Install]
+WantedBy=default.target
+```
+
+各自的 override.conf（port 分別為 11436、11437）：
+
+```ini
+[Service]
+Environment="OLLAMA_HOST=127.0.0.1:11436"   # ollama3 改為 11437
+Environment="OLLAMA_ORIGINS=*"
+Environment="OLLAMA_VULKAN=1"
+Environment="VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.json"
+Environment="OLLAMA_FLASH_ATTENTION=1"
+Environment="OLLAMA_KEEP_ALIVE=-1"
+Environment="OLLAMA_NUM_PARALLEL=1"
+```
+
+#### 3. 安裝 nginx + 設定 /etc/nginx/conf.d/ollama-lb.conf
+
+```nginx
+upstream ollama_pool {
+    least_conn;
+    server 127.0.0.1:11435;
+    server 127.0.0.1:11436;
+    server 127.0.0.1:11437;
+}
+
+server {
+    listen 11434 default_server;
+    listen [::]:11434 default_server;
+
+    client_max_body_size 50M;
+    proxy_read_timeout    300s;
+    proxy_connect_timeout  10s;
+    proxy_send_timeout    300s;
+
+    location / {
+        proxy_pass         http://ollama_pool;
+        proxy_http_version 1.1;
+        proxy_set_header   Host              "localhost";
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   Connection        "";
+        proxy_buffering    off;
+    }
+}
+```
+
+#### 4. 啟動
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart ollama
+sudo systemctl enable ollama2 --now
+sudo systemctl enable ollama3 --now
+sudo systemctl restart nginx
+sudo systemctl enable nginx
+```
+
+### 開機自動暖機（ollama-warmup.service）
+
+`/etc/systemd/system/ollama-warmup.service`：
+
+```ini
+[Unit]
+Description=Ollama Vision Warmup (preload model on boot)
+After=ollama.service ollama2.service ollama3.service network-online.target
+Requires=ollama.service ollama2.service ollama3.service
+
+[Service]
+Type=oneshot
+User=test
+ExecStartPre=/bin/sleep 10
+ExecStart=/usr/bin/python3 /usr/local/bin/ollama_vision_warmup.py 127.0.0.1
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+```
+
+暖機腳本 `scripts/ollama_vision_warmup.py` 會對三個實例各發一次文字請求，觸發模型載入 VRAM，讓第一個真實 request 直接推論不需等待。
+
+```bash
+sudo systemctl enable ollama-warmup
+```
+
+### 驗證結果（2026-04-27）
+
+| 測試 | 結果 |
+|------|------|
+| Instance-1 (11435) 暖機 | ✅ 0.5s（已預載） |
+| Instance-2 (11436) 暖機 | ✅ 0.5s（已預載） |
+| Instance-3 (11437) 暖機 | ✅ 首次載入 ~8s |
+| 透過 nginx 同時 1 vision + 1 text | ✅ Vision 2.9s / Text 5.3s |
+| 三個頁面同時送 request | ✅ 分流到 3 個實例，各自獨立處理 |
+| VRAM 穩定使用 | ✅ ~71 GB / 96 GB |
+
+壓測腳本位於 `scripts/benchmark_ollama_parallel.py`，可隨時重新評估。
+
+---
+
 ## 注意事項
 
 - Ollama 啟動時仍會先嘗試 ROCm discovery，約需 **30 秒** 才 timeout 切換到 Vulkan（正常現象）
-- `KEEP_ALIVE=-1`：模型載入後永遠留在 VRAM，重開機後第一個請求才重新載入
-- 兩個模型（26b + 31b）同時常駐共用 72 GB VRAM，GPU 111 GB 放得下
+- `KEEP_ALIVE=-1`：模型載入後永遠留在 VRAM，重開機後 `ollama-warmup.service` 自動預熱三個實例
+- 三實例架構總 VRAM：~71 GB / 96 GB，剩餘 ~25 GB 緩衝
 - `gemma4:e4b` 等待 Ollama 修復 Vulkan MoE 支援後才可用
+- Ollama v0.21.x Host header 安全驗證：nginx 必須送 `Host: localhost`，否則 403
+- Embedding model（nomic-embed-text）自動分流，不需特別設定，VRAM 佔用可忽略
 
 ---
 

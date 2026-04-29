@@ -151,7 +151,7 @@ export default function LLMModelSelect({
       ) : null}
       {displayOptions.map((opt) => (
         <option key={opt.value} value={opt.value}>
-          {opt.label}
+          {opt.note ? `${opt.label}　${opt.note}` : opt.label}
         </option>
       ))}
     </select>

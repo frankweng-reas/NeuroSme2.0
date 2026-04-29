@@ -1,5 +1,9 @@
 # NeuroSme On-Prem 完整部署
 #
+# ⚠ Repo 開發 compose 預設使用 ghcr.io/...:*:latest（需 Registry 權限）；對外發行之 on‑prem 套件為
+#   docker-compose.onprem.yml + neurosme-*:<版本>（由 start.sh 之 docker load 載入）。
+#   若以 scp 更新客戶機，請以「發行 tarball 版本」為底再合併 backend.extra_hosts／註解，勿將本檔直接覆蓋至僅載入離線鏡像的環境（會強制 docker pull）。
+#
 # 架構：
 #   caddy (port 443 HTTPS / port 80 → redirect) → frontend / backend / localauth
 #   backend → neurosme-db (postgres)
@@ -9,6 +13,10 @@
 #   啟動：  bash start.sh（互動式設定 domain/IP 並自動啟動）
 #   升級：  解壓新版後執行 bash start.sh（資料不受影響）
 #   備份：  ~/neurosme-data/  目錄定期備份即可（Mac / Linux 皆適用）
+#
+# Ollama 與 NeuroSme 同機（後端在 Docker 內）時，管理後台 LLM「API Base URL」請填：
+#   http://host.docker.internal:11434
+#   （勿填本機 Tailscale / 公網 IP:11434，避免 hairpin 逾時；backend 已掛 host.docker.internal → 主機）
 #
 # ⚠ 禁止修改本檔案內的 secrets（已由 REAS 預先設定）
 
@@ -40,6 +48,9 @@ services:
   backend:
     image: ghcr.io/reas/neurosme-backend:latest
     restart: unless-stopped
+    # 讓容器內固定用 host.docker.internal 連主機上的 Ollama（網段隨 compose 變化仍可用）
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       DATABASE_URL: postgresql://neurosme:a3f8e2c1d74b96054e1f2c3d4a5b6c7d@neurosme-db:5432/neurosme
       JWT_SECRET: db0b7dde5c731381ba4aac77eb2640a9f74bf2efb20cdf9b3e51e9280b3faeb8

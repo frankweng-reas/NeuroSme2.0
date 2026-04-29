@@ -59,15 +59,15 @@ function formatBytes(bytes: number | null): string {
 
 function StatusBadge({ status }: { status: KmDocument['status'] }) {
   if (status === 'ready')
-    return <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[11px] text-emerald-700">就緒</span>
+    return <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-base text-emerald-700">就緒</span>
   if (status === 'processing' || status === 'pending')
     return (
-      <span className="flex items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[11px] text-amber-700">
-        <Loader2 className="h-2.5 w-2.5 animate-spin" />
+      <span className="flex items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-base text-amber-700">
+        <Loader2 className="h-3 w-3 animate-spin" />
         {status === 'pending' ? '需要重新載入' : '處理中'}
       </span>
     )
-  return <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[11px] text-red-700">錯誤</span>
+  return <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-base text-red-700">錯誤</span>
 }
 
 function buildUserPromptPrefix(settings: {
@@ -112,15 +112,23 @@ export default function AgentKmUI({ agent }: AgentKmUIProps) {
 
   // ── 使用者角色（控制公共上傳權限）────────────────────────────────────────
   const [userRole, setUserRole] = useState<UserRole>('member')
+  const [userId, setUserId] = useState<number | null>(null)
 
   useEffect(() => {
-    getMe().then((me) => setUserRole(me.role)).catch(() => {})
+    getMe()
+      .then((me) => {
+        setUserRole(me.role)
+        setUserId(me.id)
+      })
+      .catch(() => {})
   }, [])
 
   const canUploadPublic = userRole === 'admin' || userRole === 'super_admin' || userRole === 'manager'
 
   // ── 勾選的文件（個人 default check，公共 default uncheck）────────────────
   const [selectedDocIds, setSelectedDocIds] = useState<Set<number>>(new Set())
+  // 確保 localStorage 只還原一次，避免後續 docs reload 覆蓋使用者的勾選
+  const lsInitializedRef = useRef(false)
 
   // ── Chat ──────────────────────────────────────────────────────────────────
   const [messages, setMessages] = useState<Message[]>([])
@@ -182,6 +190,37 @@ export default function AgentKmUI({ agent }: AgentKmUIProps) {
   useEffect(() => {
     loadDocs()
   }, [loadDocs])
+
+  // ── localStorage：勾選狀態還原（userId 與 docs 都就緒後執行一次）──────────
+  useEffect(() => {
+    if (userId === null || docsLoading || lsInitializedRef.current) return
+    lsInitializedRef.current = true
+    const key = `km_selected_docs_${agent.agent_id}_${userId}`
+    const stored = localStorage.getItem(key)
+    if (stored === null) return
+    try {
+      const storedIds: number[] = JSON.parse(stored)
+      setSelectedDocIds((prev) => {
+        const validIds = new Set(docs.map((d) => d.id))
+        // 過濾掉已刪除的 doc，保留有效的
+        const next = new Set(storedIds.filter((id) => validIds.has(id)))
+        // 新增的私人文件（尚未被 localStorage 記錄過）→ 預設勾選
+        docs.forEach((d) => {
+          if (d.scope === 'private' && !next.has(d.id)) next.add(d.id)
+        })
+        return next
+      })
+    } catch {
+      // localStorage 資料損毀，忽略即可，保留 loadDocs 的預設值
+    }
+  }, [userId, docsLoading, agent.agent_id, docs])
+
+  // ── localStorage：勾選狀態儲存（每次變動後寫入）─────────────────────────
+  useEffect(() => {
+    if (userId === null || !lsInitializedRef.current) return
+    const key = `km_selected_docs_${agent.agent_id}_${userId}`
+    localStorage.setItem(key, JSON.stringify([...selectedDocIds]))
+  }, [selectedDocIds, userId, agent.agent_id])
 
   // ── 上傳 ──────────────────────────────────────────────────────────────────
   const handleFileChange = useCallback(
@@ -280,6 +319,30 @@ export default function AgentKmUI({ agent }: AgentKmUIProps) {
       setSelectedDocIds(new Set(readyDocs.map((d) => d.id)))
     }
   }, [allSelected, readyDocs])
+
+  // ── 分組：私人 / 公用 ────────────────────────────────────────────────────
+  const privateDocs = docs.filter((d) => d.scope === 'private')
+  const publicDocs = docs.filter((d) => d.scope === 'public')
+  const readyPrivateDocs = privateDocs.filter((d) => d.status === 'ready')
+  const readyPublicDocs = publicDocs.filter((d) => d.status === 'ready')
+  const allPrivateSelected = readyPrivateDocs.length > 0 && readyPrivateDocs.every((d) => selectedDocIds.has(d.id))
+  const allPublicSelected = readyPublicDocs.length > 0 && readyPublicDocs.every((d) => selectedDocIds.has(d.id))
+
+  const toggleSelectAllPrivate = useCallback(() => {
+    if (allPrivateSelected) {
+      setSelectedDocIds((prev) => { const next = new Set(prev); readyPrivateDocs.forEach((d) => next.delete(d.id)); return next })
+    } else {
+      setSelectedDocIds((prev) => { const next = new Set(prev); readyPrivateDocs.forEach((d) => next.add(d.id)); return next })
+    }
+  }, [allPrivateSelected, readyPrivateDocs])
+
+  const toggleSelectAllPublic = useCallback(() => {
+    if (allPublicSelected) {
+      setSelectedDocIds((prev) => { const next = new Set(prev); readyPublicDocs.forEach((d) => next.delete(d.id)); return next })
+    } else {
+      setSelectedDocIds((prev) => { const next = new Set(prev); readyPublicDocs.forEach((d) => next.add(d.id)); return next })
+    }
+  }, [allPublicSelected, readyPublicDocs])
 
   // ── 傳送訊息 ──────────────────────────────────────────────────────────────
   const handleSendMessage = useCallback(
@@ -389,6 +452,8 @@ export default function AgentKmUI({ agent }: AgentKmUIProps) {
 
   const readyCount = docs.filter((d) => d.status === 'ready').length
   const selectedReadyCount = docs.filter((d) => d.status === 'ready' && selectedDocIds.has(d.id)).length
+  const privateReadyCount = readyPrivateDocs.length
+  const publicReadyCount = readyPublicDocs.length
 
   return (
     <div className="relative flex h-full flex-col p-4 text-[18px]">
@@ -603,7 +668,7 @@ export default function AgentKmUI({ agent }: AgentKmUIProps) {
                   <BookOpen className="h-4 w-4 text-white/80" />
                   <h3 className="text-base font-semibold text-white">知識庫</h3>
                   {readyCount > 0 && (
-                    <span className="rounded-full bg-emerald-500/20 px-1.5 py-0.5 text-[11px] text-emerald-300">
+                    <span className="rounded-full bg-emerald-500/20 px-1.5 py-0.5 text-base text-emerald-300">
                       {readyCount}
                     </span>
                   )}
@@ -623,16 +688,16 @@ export default function AgentKmUI({ agent }: AgentKmUIProps) {
 
           {!sidebarCollapsed && (
             <>
-              {/* 全選 / 全不選 */}
+              {/* 全域計數 + 全選 / 全不選 */}
               {readyCount > 0 && (
                 <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-3 py-1.5">
-                  <span className="text-[11px] text-white/50">
+                  <span className="text-base text-white/50">
                     已勾選 {selectedReadyCount} / {readyCount}
                   </span>
                   <button
                     type="button"
                     onClick={toggleSelectAll}
-                    className="text-[11px] text-white/60 transition-colors hover:text-white/90"
+                    className="text-base text-white/60 transition-colors hover:text-white/90"
                   >
                     {allSelected ? '全不選' : '全選'}
                   </button>
@@ -646,73 +711,167 @@ export default function AgentKmUI({ agent }: AgentKmUIProps) {
                     <Loader2 className="h-5 w-5 animate-spin text-white/60" />
                   </div>
                 ) : docs.length === 0 ? (
-                  <p className="px-2 py-4 text-center text-xs text-white/50">尚無文件</p>
+                  <p className="px-2 py-4 text-center text-base text-white/50">尚無文件</p>
                 ) : (
-                  <ul className="space-y-0.5">
-                    {docs.map((doc) => (
-                      <li
-                        key={doc.id}
-                        className="group flex items-start gap-2 rounded-lg px-2 py-2 transition-colors hover:bg-white/10"
-                      >
-                        {/* Checkbox */}
-                        <input
-                          type="checkbox"
-                          checked={selectedDocIds.has(doc.id)}
-                          disabled={doc.status !== 'ready'}
-                          onChange={(e) => {
-                            setSelectedDocIds((prev) => {
-                              const next = new Set(prev)
-                              if (e.target.checked) next.add(doc.id)
-                              else next.delete(doc.id)
-                              return next
-                            })
-                          }}
-                          className="mt-0.5 h-3.5 w-3.5 shrink-0 cursor-pointer accent-emerald-400 disabled:opacity-30"
-                          aria-label={`選取 ${doc.filename}`}
-                        />
-                        {/* Scope icon */}
-                        {doc.scope === 'private'
-                          ? <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-white/40" />
-                          : <Globe className="mt-0.5 h-3.5 w-3.5 shrink-0 text-sky-400/70" />
-                        }
-                        {/* File info */}
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-base text-white" title={doc.filename}>
-                            {doc.filename}
-                          </p>
-                          <div className="mt-0.5 flex flex-wrap items-center gap-1">
-                            <StatusBadge status={doc.status} />
-                            {doc.chunk_count != null && doc.status === 'ready' && (
-                              <span className="text-[11px] text-white/50">{doc.chunk_count} 段</span>
+                  <div className="space-y-3">
+
+                    {/* ── 私人文件 ── */}
+                    {privateDocs.length > 0 && (
+                      <div>
+                        <div className="mb-1 flex items-center justify-between px-1 py-0.5">
+                          <span className="flex items-center gap-1 text-base font-semibold text-amber-400/90">
+                            <Lock className="h-4 w-4" />
+                            私人文件
+                            {privateReadyCount > 0 && (
+                              <span className="ml-0.5 text-white/40">({privateReadyCount})</span>
                             )}
-                            {doc.size_bytes != null && (
-                              <span className="text-[11px] text-white/40">{formatBytes(doc.size_bytes)}</span>
-                            )}
-                          </div>
-                          {doc.status === 'error' && doc.error_message && (
-                            <p className="mt-0.5 truncate text-[11px] text-red-300" title={doc.error_message}>
-                              {doc.error_message}
-                            </p>
+                          </span>
+                          {privateReadyCount > 0 && (
+                            <button
+                              type="button"
+                              onClick={toggleSelectAllPrivate}
+                              className="text-base text-white/50 transition-colors hover:text-white/80"
+                            >
+                              {allPrivateSelected ? '全不選' : '全選'}
+                            </button>
                           )}
                         </div>
-                        {/* Delete */}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (doc.scope === 'public' && userRole !== 'admin' && userRole !== 'super_admin') {
-                              setErrorModal({ title: '無法刪除', message: '公共文件只有管理員可以刪除。' })
-                              return
-                            }
-                            setDeleteTarget(doc)
-                          }}
-                          className="shrink-0 rounded p-1 text-white/40 opacity-0 transition-colors group-hover:opacity-100 hover:bg-white/15 hover:text-red-300"
-                          aria-label={`刪除 ${doc.filename}`}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
+                        <ul className="space-y-0.5">
+                          {privateDocs.map((doc) => (
+                            <li
+                              key={doc.id}
+                              className="group flex items-start gap-2 rounded-r-lg border-l-2 border-amber-400/50 pl-2 pr-2 py-2 transition-colors hover:bg-white/10"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={selectedDocIds.has(doc.id)}
+                                disabled={doc.status !== 'ready'}
+                                onChange={(e) => {
+                                  setSelectedDocIds((prev) => {
+                                    const next = new Set(prev)
+                                    if (e.target.checked) next.add(doc.id)
+                                    else next.delete(doc.id)
+                                    return next
+                                  })
+                                }}
+                                className="mt-0.5 h-3.5 w-3.5 shrink-0 cursor-pointer accent-amber-400 disabled:opacity-30"
+                                aria-label={`選取 ${doc.filename}`}
+                              />
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-base text-white" title={doc.filename}>
+                                  {doc.filename}
+                                </p>
+                                <div className="mt-0.5 flex flex-wrap items-center gap-1">
+                                  <StatusBadge status={doc.status} />
+                                  {doc.chunk_count != null && doc.status === 'ready' && (
+                                    <span className="text-base text-white/50">{doc.chunk_count} 段</span>
+                                  )}
+                                  {doc.size_bytes != null && (
+                                    <span className="text-base text-white/40">{formatBytes(doc.size_bytes)}</span>
+                                  )}
+                                </div>
+                                {doc.status === 'error' && doc.error_message && (
+                                  <p className="mt-0.5 truncate text-base text-red-300" title={doc.error_message}>
+                                    {doc.error_message}
+                                  </p>
+                                )}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setDeleteTarget(doc)}
+                                className="shrink-0 rounded p-1 text-white/40 opacity-0 transition-colors group-hover:opacity-100 hover:bg-white/15 hover:text-red-300"
+                                aria-label={`刪除 ${doc.filename}`}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {/* ── 公用文件 ── */}
+                    {publicDocs.length > 0 && (
+                      <div>
+                        <div className="mb-1 flex items-center justify-between px-1 py-0.5">
+                          <span className="flex items-center gap-1 text-base font-semibold text-sky-400/90">
+                            <Globe className="h-4 w-4" />
+                            公用文件
+                            {publicReadyCount > 0 && (
+                              <span className="ml-0.5 text-white/40">({publicReadyCount})</span>
+                            )}
+                          </span>
+                          {publicReadyCount > 0 && (
+                            <button
+                              type="button"
+                              onClick={toggleSelectAllPublic}
+                              className="text-base text-white/50 transition-colors hover:text-white/80"
+                            >
+                              {allPublicSelected ? '全不選' : '全選'}
+                            </button>
+                          )}
+                        </div>
+                        <ul className="space-y-0.5">
+                          {publicDocs.map((doc) => (
+                            <li
+                              key={doc.id}
+                              className="group flex items-start gap-2 rounded-r-lg border-l-2 border-sky-400/50 pl-2 pr-2 py-2 transition-colors hover:bg-white/10"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={selectedDocIds.has(doc.id)}
+                                disabled={doc.status !== 'ready'}
+                                onChange={(e) => {
+                                  setSelectedDocIds((prev) => {
+                                    const next = new Set(prev)
+                                    if (e.target.checked) next.add(doc.id)
+                                    else next.delete(doc.id)
+                                    return next
+                                  })
+                                }}
+                                className="mt-0.5 h-3.5 w-3.5 shrink-0 cursor-pointer accent-sky-400 disabled:opacity-30"
+                                aria-label={`選取 ${doc.filename}`}
+                              />
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-base text-white" title={doc.filename}>
+                                  {doc.filename}
+                                </p>
+                                <div className="mt-0.5 flex flex-wrap items-center gap-1">
+                                  <StatusBadge status={doc.status} />
+                                  {doc.chunk_count != null && doc.status === 'ready' && (
+                                    <span className="text-base text-white/50">{doc.chunk_count} 段</span>
+                                  )}
+                                  {doc.size_bytes != null && (
+                                    <span className="text-base text-white/40">{formatBytes(doc.size_bytes)}</span>
+                                  )}
+                                </div>
+                                {doc.status === 'error' && doc.error_message && (
+                                  <p className="mt-0.5 truncate text-base text-red-300" title={doc.error_message}>
+                                    {doc.error_message}
+                                  </p>
+                                )}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (userRole !== 'admin' && userRole !== 'super_admin') {
+                                    setErrorModal({ title: '無法刪除', message: '公共文件只有管理員可以刪除。' })
+                                    return
+                                  }
+                                  setDeleteTarget(doc)
+                                }}
+                                className="shrink-0 rounded p-1 text-white/40 opacity-0 transition-colors group-hover:opacity-100 hover:bg-white/15 hover:text-red-300"
+                                aria-label={`刪除 ${doc.filename}`}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                  </div>
                 )}
               </div>
 
@@ -738,9 +897,9 @@ export default function AgentKmUI({ agent }: AgentKmUIProps) {
                 <button
                   type="button"
                   onClick={loadDocs}
-                  className="mt-1 flex w-full items-center justify-center gap-1 py-1 text-[11px] text-white/40 transition-colors hover:text-white/70"
+                  className="mt-1 flex w-full items-center justify-center gap-1 py-1 text-base text-white/40 transition-colors hover:text-white/70"
                 >
-                  <RefreshCw className="h-3 w-3" />
+                  <RefreshCw className="h-4 w-4" />
                   重新整理
                 </button>
               </div>
