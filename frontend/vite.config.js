@@ -1,13 +1,28 @@
+import fs from 'node:fs';
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 import { VitePWA } from 'vite-plugin-pwa';
+function readRepoRootVersion() {
+    try {
+        return fs.readFileSync(path.join(__dirname, '..', 'VERSION'), 'utf-8').trim();
+    }
+    catch (_a) {
+        return 'dev';
+    }
+}
 export default defineConfig(function (_a) {
+    var _b, _c;
     var mode = _a.mode;
     var env = loadEnv(mode, process.cwd(), '');
     var apiPort = env.VITE_API_PORT || '8000';
     var localAuthPort = env.VITE_LOCALAUTH_PORT || '4000';
+    // Docker Dockerfile 會以 ARG/ENV 注入；本地開發無則自 ../../VERSION 讀（build context 僅 frontend 時此檔不存在，依賴 Dockerfile）
+    var viteAppVersion = (_c = (_b = process.env.VITE_APP_VERSION) !== null && _b !== void 0 ? _b : env.VITE_APP_VERSION) !== null && _c !== void 0 ? _c : readRepoRootVersion();
     return {
+        define: {
+            'import.meta.env.VITE_APP_VERSION': JSON.stringify(viteAppVersion),
+        },
         plugins: [
             react(),
             VitePWA({
@@ -58,10 +73,15 @@ export default defineConfig(function (_a) {
             headers: {
                 "Cache-Control": "no-cache",
             },
+            fs: {
+                allow: ['..'], // 允許存取上層目錄（VERSION 檔位於此）
+            },
             proxy: {
                 '/api': {
                     target: "http://localhost:".concat(apiPort),
                     changeOrigin: true,
+                    timeout: 300000, // 等待連線建立（ms）
+                    proxyTimeout: 300000, // 等待 backend 回應（ms）
                 },
                 '/auth': {
                     target: "http://localhost:".concat(localAuthPort),

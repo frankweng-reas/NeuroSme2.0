@@ -10,7 +10,9 @@ import {
 } from 'lucide-react'
 import NsChat, { type NsChatMessage } from '@/components/NsChat'
 import VoiceInput from '@/components/VoiceInput'
+import { transcribeAudio, getSpeechStatus } from '@/api/speech'
 import ErrorModal from '@/components/ErrorModal'
+import HelpModal from '@/components/HelpModal'
 import AgentHeader from '@/components/AgentHeader'
 import LLMModelSelect from '@/components/LLMModelSelect'
 import {
@@ -311,6 +313,8 @@ export default function AgentChatUI({ agent }: AgentChatUIProps) {
   const [attachPanelFeedback, setAttachPanelFeedback] = useState<AttachPanelFeedback | null>(null)
   const [errorModal, setErrorModal] = useState<{ title: string; message: string } | null>(null)
   const [voiceTranscript, setVoiceTranscript] = useState('')
+  const [voiceAutoSendText, setVoiceAutoSendText] = useState('')
+  const [showHelpModal, setShowHelpModal] = useState(false)
   const chatFileInputRef = useRef<HTMLInputElement>(null)
   const attachFileOpIdRef = useRef(0)
   /** stored_file id → 預覽用 object URL（對話內圖片附件） */
@@ -1167,10 +1171,19 @@ export default function AgentChatUI({ agent }: AgentChatUIProps) {
           </div>
         ) : null}
         <VoiceInput
-          onTranscript={(text) => {
-            setVoiceTranscript(text)
-            // NsChat 消費後重設，讓下次語音仍可觸發 useEffect
-            setTimeout(() => setVoiceTranscript(''), 50)
+          transcribe={(blob, filename, lang) =>
+            transcribeAudio(blob, filename, lang).then((r) => r.text)
+          }
+          checkStatus={getSpeechStatus}
+          onTranscript={(text, autoSend) => {
+            if (autoSend) {
+              setVoiceAutoSendText(text)
+              setTimeout(() => setVoiceAutoSendText(''), 50)
+            } else {
+              setVoiceTranscript(text)
+              // NsChat 消費後重設，讓下次語音仍可觸發 useEffect
+              setTimeout(() => setVoiceTranscript(''), 50)
+            }
           }}
           onError={(msg) => showErrorModal(msg, '語音輸入失敗')}
           disabled={isLoading}
@@ -1315,12 +1328,12 @@ export default function AgentChatUI({ agent }: AgentChatUIProps) {
           </div>
         </div>
       )}
-      <AgentHeader agent={agent} headerBackgroundColor="#1C3939" />
+      <AgentHeader agent={agent} headerBackgroundColor="#1C3939" onOnlineHelpClick={() => setShowHelpModal(true)} />
 
       <div className="mt-4 flex min-h-0 flex-1 gap-4 overflow-hidden">
         <div
           className={`flex shrink-0 flex-col overflow-hidden rounded-xl border border-gray-300/50 shadow-md transition-[width] duration-200 ${
-            sidebarCollapsed ? 'w-12' : 'w-64'
+            sidebarCollapsed ? 'w-12' : 'w-96'
           }`}
           style={{ backgroundColor: '#1C3939' }}
         >
@@ -1534,6 +1547,7 @@ export default function AgentChatUI({ agent }: AgentChatUIProps) {
               composerAboveForm={chatComposerAbove}
               composerLeading={chatComposerLeading}
               appendInputText={voiceTranscript}
+              appendAndSendText={voiceAutoSendText}
               attachmentBlobUrls={attachmentBlobUrls}
               onCopySuccess={() => showToast('已複製到剪貼簿')}
               onCopyError={() =>
@@ -1551,6 +1565,12 @@ export default function AgentChatUI({ agent }: AgentChatUIProps) {
           )}
         </div>
       </div>
+      <HelpModal
+        open={showHelpModal}
+        onClose={() => setShowHelpModal(false)}
+        url="/help-chat-agent.md"
+        title="通用對話助理使用說明"
+      />
     </div>
   )
 }

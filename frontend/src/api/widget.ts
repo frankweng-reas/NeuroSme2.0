@@ -25,6 +25,7 @@ export interface WidgetInfo {
   logo_url: string | null
   color: string
   lang: string
+  voice_enabled: boolean
 }
 
 export interface WidgetSessionData {
@@ -37,6 +38,31 @@ export interface WidgetSessionData {
 
 export async function getWidgetInfo(token: string): Promise<WidgetInfo> {
   return widgetFetch<WidgetInfo>(`/${token}/info`)
+}
+
+export async function widgetTranscribeAudio(
+  token: string,
+  audioBlob: Blob,
+  filename = 'audio.webm',
+  language?: string,
+): Promise<string> {
+  const form = new FormData()
+  form.append('file', audioBlob, filename)
+  if (language) form.append('language', language)
+  const res = await fetch(`${BASE}/${token}/speech`, {
+    method: 'POST',
+    body: form,
+  })
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`
+    try {
+      const j = await res.json()
+      if (j.detail) detail = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail)
+    } catch {}
+    throw new Error(detail)
+  }
+  const data = await res.json()
+  return (data.text as string) ?? ''
 }
 
 export function checkWidgetSession(token: string, sessionId: string): Promise<{ valid: boolean }> {

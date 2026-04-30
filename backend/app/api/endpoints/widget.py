@@ -6,14 +6,19 @@ import uuid
 from datetime import datetime, timezone
 from typing import AsyncIterator
 
+import httpx
 import litellm
-from fastapi import APIRouter, Depends, HTTPException
+import opencc as _opencc
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal, get_db
 from app.models.km_knowledge_base import KmKnowledgeBase
+from app.models.tenant_config import TenantConfig
+
+_s2tw = _opencc.OpenCC("s2twp")
 from app.models.widget_message import WidgetMessage
 from app.models.widget_session import WidgetSession
 from app.services.agent_usage import log_agent_usage
@@ -45,6 +50,7 @@ class WidgetInfoResponse(BaseModel):
     logo_url: str | None
     color: str
     lang: str
+    voice_enabled: bool
 
     model_config = {"from_attributes": True}
 
@@ -83,6 +89,7 @@ def widget_info(token: str, db: Session = Depends(get_db)):
         logo_url=kb.widget_logo_url,
         color=kb.widget_color or "#1A3A52",
         lang=kb.widget_lang or "zh-TW",
+        voice_enabled=kb.widget_voice_enabled or False,
     )
 
 
@@ -302,3 +309,118 @@ async def widget_chat(
                 s.close()
 
     return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+# ── Widget Speech（語音轉文字，public_token 認證）────────────────────────────
+
+_WIDGET_SPEECH_MAX_BYTES = 25 * 1024 * 1024  # 25 MB
+
+
+class WidgetSpeechResponse(BaseModel):
+    text: str
+    language: str = ""
+    duration: float = 0.0
+
+
+@router.post("/{token}/speech", response_model=WidgetSpeechResponse)
+async def widget_speech(
+    token: str,
+    file: UploadFile,
+    language: str | None = None,
+    db: Session = Depends(get_db),
+):
+    """Widget 語音轉文字（以 public_token 驗證，使用租戶語音設定）"""
+    kb = _get_kb_by_token(token, db)
+    tenant_id = kb.tenant_id
+    tc = db.query(TenantConfig).filter(TenantConfig.tenant_id == tenant_id).first()
+
+    provider = (tc and tc.speech_provider) or ""
+    if not provider:
+        raise HTTPException(status_code=503, detail="此 Widget 尚未啟用語音功能，請管理員在「AI 設定」中設定語音模型")
+
+    model = (tc and tc.speech_model) or (
+        "whisper-1" if provider == "openai" else "Systran/faster-whisper-medium"
+    )
+
+    if provider == "openai":
+        from app.core.encryption import decrypt_api_key
+        from app.models.llm_provider_config import LLMProviderConfig
+        llm_cfg = (
+            db.query(LLMProviderConfig)
+            .filter(
+                LLMProviderConfig.tenant_id == tenant_id,
+                LLMProviderConfig.provider == "openai",
+                LLMProviderConfig.is_active.is_(True),
+            )
+            .first()
+        )
+        if not llm_cfg or not llm_cfg.api_key_encrypted:
+            raise HTTPException(status_code=503, detail="語音功能需要 OpenAI API Key，請管理員設定")
+        try:
+            api_key = decrypt_api_key(llm_cfg.api_key_encrypted)
+        except Exception:
+            raise HTTPException(status_code=500, detail="OpenAI API Key 解密失敗")
+        base_url = (llm_cfg.api_base_url or "https://api.openai.com").rstrip("/")
+    else:
+        base_url = (tc.speech_base_url or "").rstrip("/")
+        if not base_url:
+            raise HTTPException(status_code=503, detail="語音服務 Base URL 未設定")
+        api_key = None
+        if tc.speech_api_key_encrypted:
+            try:
+                from app.core.encryption import decrypt_api_key
+                api_key = decrypt_api_key(tc.speech_api_key_encrypted)
+            except Exception:
+                logger.warning("widget speech: API key 解密失敗")
+
+    audio_bytes = await file.read()
+    if len(audio_bytes) == 0:
+        raise HTTPException(status_code=400, detail="音頻檔案為空")
+    if len(audio_bytes) > _WIDGET_SPEECH_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="音頻檔案過大（上限 25 MB）")
+
+    filename = file.filename or "audio.webm"
+    content_type = (file.content_type or "audio/webm").lower()
+    logger.info("widget speech: token=%s tenant=%s size=%d", token[:8], tenant_id, len(audio_bytes))
+
+    headers: dict = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    url = f"{base_url}/v1/audio/transcriptions"
+    voice_prompt = kb.widget_voice_prompt or ""
+    post_data: dict = {
+        "model": model,
+        "response_format": "verbose_json",
+        "temperature": "0",
+        "prompt": voice_prompt or "以下是繁體中文的語音記錄。",
+    }
+    if language:
+        post_data["language"] = language
+    if provider != "openai":
+        post_data["vad_filter"] = "true"
+        if voice_prompt:
+            post_data["hotwords"] = voice_prompt
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                url,
+                headers=headers,
+                files={"file": (filename, audio_bytes, content_type)},
+                data=post_data,
+            )
+        if resp.status_code != 200:
+            logger.error("widget speech: whisper error %d: %s", resp.status_code, resp.text[:300])
+            raise HTTPException(status_code=502, detail=f"語音轉文字服務異常（{resp.status_code}）")
+    except httpx.ConnectError as exc:
+        raise HTTPException(status_code=503, detail="無法連線至語音轉文字服務") from exc
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail="語音轉文字服務逾時") from exc
+
+    data = resp.json()
+    text = _s2tw.convert((data.get("text") or "").strip())
+    lang = data.get("language") or ""
+    duration = float(data.get("duration") or 0.0)
+    logger.info("widget speech: text=%r lang=%s dur=%.1fs", text[:60], lang, duration)
+    return WidgetSpeechResponse(text=text, language=lang, duration=duration)

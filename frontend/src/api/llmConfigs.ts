@@ -99,9 +99,14 @@ export interface LLMModelOption {
 
 export { type LLMModelEntry }
 
-/** 依租戶 DB 的 llm_provider_config 組合模型清單（需登入） */
+/** 依租戶 DB 的 llm_provider_config 組合模型清單（需登入），依使用者 allowed_models 過濾 */
 export async function getLLMModelOptions(): Promise<LLMModelOption[]> {
   return apiFetch<LLMModelOption[]>('/llm-configs/model-options')
+}
+
+/** 管理介面專用：回傳租戶全部模型，不套用 per-user 過濾（需 admin） */
+export async function getAllLLMModelOptions(): Promise<LLMModelOption[]> {
+  return apiFetch<LLMModelOption[]>('/llm-configs/all-model-options')
 }
 
 /** 新增 LLM provider 設定 */

@@ -1,6 +1,6 @@
 /** Admin：會員管理 — 列表、新增、修改、刪除 */
 import { useCallback, useEffect, useState } from 'react'
-import { Pencil, Trash2, UserPlus, X } from 'lucide-react'
+import { Pencil, Trash2, UserPlus, Users, X } from 'lucide-react'
 import { ApiError } from '@/api/client'
 import { createUser, deleteUser, listUsers, updateUser } from '@/api/users'
 import { useToast } from '@/contexts/ToastContext'
@@ -151,7 +151,10 @@ export default function AdminUsers() {
     <div className="flex h-full flex-col">
       {/* Header */}
       <div className="mb-6 flex items-center justify-between">
-        <h2 className="text-xl font-semibold text-gray-800">會員管理</h2>
+        <div className="flex items-center gap-3">
+          <Users className="h-6 w-6 text-gray-600" />
+          <h2 className="text-lg font-bold text-gray-800">使用者管理</h2>
+        </div>
         <button
           type="button"
           onClick={openAddModal}

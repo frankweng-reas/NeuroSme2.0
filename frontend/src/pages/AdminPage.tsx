@@ -9,8 +9,7 @@ import {
   ChevronsRight,
   KeyRound,
   KeySquare,
-  ShieldCheck,
-  TrendingUp,
+  Lock,
   UserCircle,
   Users,
 } from 'lucide-react'
@@ -22,11 +21,10 @@ import ProfileModal from '@/components/ProfileModal'
 
 const SIDEBAR_ITEMS = [
   { to: '/admin/tenant-settings', label: 'REAS-系統 Tenants 設定', icon: Building2, superAdminOnly: true },
-  { to: '/admin/llm-settings', label: 'LLM 設定（租戶）', icon: KeyRound, superAdminOnly: false },
-  { to: '/admin/users', label: '會員管理', icon: Users, superAdminOnly: false },
-  { to: '/admin/agent-permissions', label: 'Agent 權限設定', icon: ShieldCheck, superAdminOnly: false },
-  { to: '/admin/chat-insights', label: 'Chat 用量洞察', icon: BarChart3, superAdminOnly: false },
-  { to: '/admin/agent-insights', label: 'Agents 用量洞察', icon: TrendingUp, superAdminOnly: false },
+  { to: '/admin/llm-settings', label: 'LLM 設定', icon: KeyRound, superAdminOnly: false },
+  { to: '/admin/users', label: '使用者管理', icon: Users, superAdminOnly: false },
+  { to: '/admin/user-permissions', label: '使用者權限設定', icon: Lock, superAdminOnly: false },
+  { to: '/admin/agent-insights', label: 'Agents 用量洞察', icon: BarChart3, superAdminOnly: false },
 ] as const
 
 const SIDEBAR_ITEMS_SECONDARY: Array<{
@@ -140,16 +138,16 @@ export default function AdminPage() {
                 title={sidebarCollapsed ? label : undefined}
                 className={({ isActive }) =>
                   `flex items-center text-white transition-colors ${
-                    sidebarCollapsed ? 'justify-center px-2 py-3' : 'gap-3 px-5 py-3'
+                    sidebarCollapsed ? 'justify-center px-2 py-4' : 'gap-3 px-5 py-4'
                   } ${isActive ? 'bg-white/20 font-semibold' : 'hover:bg-white/10'}`
                 }
               >
-                <Icon className="h-5 w-5 flex-shrink-0" />
-                {!sidebarCollapsed && <span className="min-w-0">{label}</span>}
+                <Icon className="h-6 w-6 flex-shrink-0" />
+                {!sidebarCollapsed && <span className="min-w-0 text-lg">{label}</span>}
               </NavLink>
             ))}
             <div
-              className={`my-2 border-t border-white/20 ${sidebarCollapsed ? 'mx-2 w-8' : 'mx-4'}`}
+              className={`my-4 border-t border-white/20 ${sidebarCollapsed ? 'mx-2 w-8' : 'mx-4'}`}
             />
             {/* 啟用授權：admin only（非 super_admin） */}
             {user?.role === 'admin' && (
@@ -158,11 +156,11 @@ export default function AdminPage() {
                 onClick={() => setShowActivation(true)}
                 title={sidebarCollapsed ? '啟用授權' : undefined}
                 className={`flex items-center text-white transition-colors hover:bg-white/10 ${
-                  sidebarCollapsed ? 'justify-center px-2 py-3' : 'gap-3 px-5 py-3'
+                  sidebarCollapsed ? 'justify-center px-2 py-4' : 'gap-3 px-5 py-4'
                 }`}
               >
-                <KeySquare className="h-5 w-5 flex-shrink-0" />
-                {!sidebarCollapsed && <span className="min-w-0">啟用授權</span>}
+                <KeySquare className="h-6 w-6 flex-shrink-0" />
+                {!sidebarCollapsed && <span className="min-w-0 text-lg">啟用授權</span>}
               </button>
             )}
             {visibleSecondaryItems.map(({ to, label, icon: Icon }) => (
@@ -172,12 +170,12 @@ export default function AdminPage() {
                 title={sidebarCollapsed ? label : undefined}
                 className={({ isActive }) =>
                   `flex items-center text-white transition-colors ${
-                    sidebarCollapsed ? 'justify-center px-2 py-3' : 'gap-3 px-5 py-3'
+                    sidebarCollapsed ? 'justify-center px-2 py-4' : 'gap-3 px-5 py-4'
                   } ${isActive ? 'bg-white/20 font-semibold' : 'hover:bg-white/10'}`
                 }
               >
-                <Icon className="h-5 w-5 flex-shrink-0" />
-                {!sidebarCollapsed && <span className="min-w-0">{label}</span>}
+                <Icon className="h-6 w-6 flex-shrink-0" />
+                {!sidebarCollapsed && <span className="min-w-0 text-lg">{label}</span>}
               </NavLink>
             ))}
 

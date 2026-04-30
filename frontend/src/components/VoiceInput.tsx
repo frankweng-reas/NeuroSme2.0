@@ -7,14 +7,21 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Mic, MicOff, Loader2, RotateCcw, Check, X, ChevronDown } from 'lucide-react'
-import { transcribeAudio, getSpeechStatus } from '@/api/speech'
 import type { SpeechStatus } from '@/api/speech'
 import { ApiError } from '@/api/client'
 
 interface VoiceInputProps {
-  onTranscript: (text: string) => void
+  /** 錄音完成後的辨識函式（依賴注入），回傳辨識文字 */
+  transcribe: (blob: Blob, filename: string, lang?: string) => Promise<string>
+  onTranscript: (text: string, autoSend?: boolean) => void
   onError?: (msg: string) => void
   disabled?: boolean
+  /** 可選：查詢語音服務狀態（提供時顯示 provider badge） */
+  checkStatus?: () => Promise<SpeechStatus>
+  /** 觸發按鈕的自訂 className */
+  buttonClassName?: string
+  /** 隱藏語言選單，固定使用自動偵測 */
+  hideLangSelector?: boolean
 }
 
 type ModalState = 'closed' | 'idle' | 'recording' | 'processing' | 'result'
@@ -27,11 +34,20 @@ const LANG_OPTIONS: LangOption[] = [
 ]
 const LANG_STORAGE_KEY = 'voice-input-lang'
 
-export default function VoiceInput({ onTranscript, onError, disabled }: VoiceInputProps) {
+export default function VoiceInput({
+  transcribe,
+  onTranscript,
+  onError,
+  disabled,
+  checkStatus,
+  buttonClassName,
+  hideLangSelector = false,
+}: VoiceInputProps) {
   const [modalState, setModalState] = useState<ModalState>('closed')
   const [seconds, setSeconds] = useState(0)
   const [transcript, setTranscript] = useState('')
   const [lang, setLang] = useState<string>(() => {
+    if (hideLangSelector) return ''
     try { return localStorage.getItem(LANG_STORAGE_KEY) ?? '' } catch { return '' }
   })
   const [langMenuOpen, setLangMenuOpen] = useState(false)
@@ -54,13 +70,13 @@ export default function VoiceInput({ onTranscript, onError, disabled }: VoiceInp
   }, [])
   useEffect(() => () => { clearTimer(); stopStream() }, [clearTimer, stopStream])
 
-  // Modal 開啟時取得語音服務狀態
+  // Modal 開啟時取得語音服務狀態（僅在提供 checkStatus 時）
   useEffect(() => {
-    if (modalState !== 'idle') return
-    getSpeechStatus()
+    if (modalState !== 'idle' || !checkStatus) return
+    checkStatus()
       .then((s) => setSpeechStatus(s))
       .catch(() => setSpeechStatus({ enabled: false, reason: '無法取得服務狀態' }))
-  }, [modalState])
+  }, [modalState, checkStatus])
 
   // ESC 關閉
   useEffect(() => {
@@ -152,8 +168,7 @@ export default function VoiceInput({ onTranscript, onError, disabled }: VoiceInp
     chunksRef.current = []
 
     try {
-      const result = await transcribeAudio(blob, `recording.${ext}`, lang || undefined)
-      const text = (result.text || '').trim()
+      const text = (await transcribe(blob, `recording.${ext}`, lang || undefined)).trim()
       if (text) {
         setTranscript(text)
         setModalState('result')
@@ -170,7 +185,7 @@ export default function VoiceInput({ onTranscript, onError, disabled }: VoiceInp
 
   const handleConfirm = useCallback(() => {
     const text = transcript.trim()
-    if (text) onTranscript(text)
+    if (text) onTranscript(text, true)
     handleClose()
   }, [transcript, onTranscript, handleClose])
 
@@ -202,7 +217,7 @@ export default function VoiceInput({ onTranscript, onError, disabled }: VoiceInp
         disabled={disabled}
         aria-label="語音輸入"
         title="語音輸入"
-        className="rounded-lg border border-gray-300 bg-white p-2 text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50"
+        className={buttonClassName ?? 'rounded-lg border border-gray-300 bg-white p-2 text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50'}
       >
         <Mic className="h-5 w-5" />
       </button>
@@ -244,8 +259,8 @@ export default function VoiceInput({ onTranscript, onError, disabled }: VoiceInp
                 <>
                   <p className="mb-6 text-base font-medium text-gray-500">語音輸入</p>
 
-                  {/* 語言選擇 */}
-                  <div className="relative mb-8" ref={langMenuRef}>
+                  {/* 語言選擇（widget 隱藏，固定自動偵測） */}
+                  {!hideLangSelector && <div className="relative mb-8" ref={langMenuRef}>
                     <button
                       type="button"
                       onClick={() => setLangMenuOpen((o) => !o)}
@@ -276,13 +291,13 @@ export default function VoiceInput({ onTranscript, onError, disabled }: VoiceInp
                         ))}
                       </div>
                     )}
-                  </div>
+                  </div>}
 
                   {/* 大麥克風按鈕 */}
                   <button
                     type="button"
                     onClick={() => void handleStartRecording()}
-                    disabled={speechStatus !== null && !speechStatus.enabled}
+                    disabled={checkStatus !== undefined && speechStatus !== null && !speechStatus.enabled}
                     className="group relative flex h-28 w-28 items-center justify-center rounded-full bg-[#1C3939] shadow-lg transition-all hover:scale-105 hover:bg-[#163130] active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
                     aria-label="開始錄音"
                   >

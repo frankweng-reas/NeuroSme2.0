@@ -9,13 +9,12 @@ import ProtectedRoute from './components/ProtectedRoute'
 import HomePage from './pages/HomePage'
 import AgentPage from './pages/AgentPage'
 import AdminPage from './pages/AdminPage'
-import AdminAgentPermissions from './pages/admin/AdminAgentPermissions'
 import AdminAgentCatalog from './pages/admin/AdminAgentCatalog'
 import AdminCompanies from './pages/admin/AdminCompanies'
 import AdminLLMSettings from './pages/admin/AdminLLMSettings'
+import AdminUserPermissions from './pages/admin/AdminUserPermissions'
 import AdminTenantSettings from './pages/admin/AdminTenantSettings'
 import AdminUsers from './pages/admin/AdminUsers'
-import AdminChatInsights from './pages/admin/AdminChatInsights'
 import AdminAgentInsights from './pages/admin/AdminAgentInsights'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
@@ -77,13 +76,12 @@ function App() {
                   </ProtectedRoute>
                 }
               >
-                <Route index element={<Navigate to="agent-permissions" replace />} />
+                <Route index element={<Navigate to="user-permissions" replace />} />
                 <Route path="agents" element={<SuperAdminRoute><AdminAgentCatalog /></SuperAdminRoute>} />
-                <Route path="agent-permissions" element={<AdminAgentPermissions />} />
+                <Route path="user-permissions" element={<AdminUserPermissions />} />
                 <Route path="companies" element={<AdminCompanies />} />
                 <Route path="tenant-settings" element={<SuperAdminRoute><AdminTenantSettings /></SuperAdminRoute>} />
                 <Route path="llm-settings" element={<AdminLLMSettings />} />
-                <Route path="chat-insights" element={<AdminChatInsights />} />
                 <Route path="agent-insights" element={<AdminAgentInsights />} />
                 <Route path="users" element={<AdminUsers />} />
               </Route>

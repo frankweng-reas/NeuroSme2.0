@@ -52,12 +52,17 @@ export async function chatCompletions(req: ChatRequest): Promise<ChatResponse> {
   })
 }
 
+export interface ChatSource {
+  filename: string
+}
+
 export interface ChatStreamDone {
   content: string
   model: string
   usage: ChatUsage | null
   finish_reason: string | null
   llm_request_id: string | null
+  sources: ChatSource[]
 }
 
 const CHAT_STREAM_TIMEOUT_MS = 300_000
@@ -90,6 +95,7 @@ export async function chatCompletionsStream(
       usage?: ChatUsage | null
       finish_reason?: string | null
       llm_request_id?: string | null
+      sources?: ChatSource[]
     }
     try {
       data = JSON.parse(jsonStr) as typeof data
@@ -108,6 +114,7 @@ export async function chatCompletionsStream(
           usage: data.usage ?? null,
           finish_reason: data.finish_reason ?? null,
           llm_request_id: data.llm_request_id ?? null,
+          sources: data.sources ?? [],
         })
       )
       return true

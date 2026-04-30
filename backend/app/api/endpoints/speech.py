@@ -16,7 +16,7 @@ import opencc as _opencc
 
 # 簡體 → 繁體轉換器（s2twp: 簡體轉台灣繁體+詞彙替換）
 _s2tw = _opencc.OpenCC("s2twp")
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -66,7 +66,8 @@ def _get_tenant_id(db: Session, current_user: User) -> str:
 )
 async def transcribe_audio(
     file: UploadFile,
-    language: str | None = None,
+    language: str | None = Form(None),
+    voice_prompt: str | None = Form(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -145,11 +146,20 @@ async def transcribe_audio(
         headers["Authorization"] = f"Bearer {api_key}"
 
     url = f"{base_url}/v1/audio/transcriptions"
-    post_data: dict = {"model": model, "response_format": "verbose_json"}
+    post_data: dict = {
+        "model": model,
+        "response_format": "verbose_json",
+        "temperature": "0",
+        "prompt": voice_prompt or "以下是繁體中文的語音記錄。",
+    }
     if language:
         post_data["language"] = language
-    # 引導 Whisper 輸出繁體中文（不加此提示預設輸出簡體）
-    post_data["initial_prompt"] = "以下是繁體中文的語音記錄。"
+    if provider != "openai":
+        post_data["vad_filter"] = "true"
+        if voice_prompt:
+            post_data["hotwords"] = voice_prompt
+
+    logger.info("speech/transcribe: post_data=%s", {k: v for k, v in post_data.items() if k != 'file'})
 
     started_at = time.monotonic()
     status = "success"

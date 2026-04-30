@@ -36,7 +36,7 @@ CHUNK_STRATEGIES: dict[str, dict] = {
     "spec":      {"chunk_size": 400,  "overlap": 80,  "top_k": 12},
     "policy":    {"chunk_size": 800,  "overlap": 150, "top_k": 6},
     "article":   {"chunk_size": 1500, "overlap": 200, "top_k": 4},
-    "reference": {"chunk_size": 9999, "overlap": 0,   "top_k": 1},
+    "reference": {"chunk_size": 60000, "overlap": 0,   "top_k": 10},
 }
 DOC_TYPES = frozenset(CHUNK_STRATEGIES.keys())
 
@@ -264,6 +264,10 @@ def _get_embed_params(db: Session, tenant_id: str) -> tuple[str, str, str | None
 
     provider = tc.embedding_provider
     model_name = tc.embedding_model  # 直接使用，不加前綴
+
+    # 尚未設定 embedding，回傳 None
+    if not provider or not model_name:
+        return None
 
     # 取對應 provider 的 API key
     provider_cfg = (
@@ -576,7 +580,7 @@ def km_retrieve_sync(
             )
         if knowledge_base_id is not None:
             q = q.filter(KmDocument.knowledge_base_id == knowledge_base_id)
-        elif selected_doc_ids:
+        if selected_doc_ids:
             q = q.filter(KmDocument.id.in_(selected_doc_ids))
         results = (
             q.order_by(KmChunk.embedding.cosine_distance(query_embedding))

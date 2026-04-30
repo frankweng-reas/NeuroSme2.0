@@ -5,7 +5,7 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 
 
-VALID_PROVIDERS = {"openai", "gemini", "twcc", "local"}
+VALID_PROVIDERS = {"openai", "gemini", "twcc", "local", "anthropic"}
 
 
 class LLMModelEntry(BaseModel):

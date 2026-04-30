@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
@@ -22,6 +22,8 @@ class KmKnowledgeBase(Base):
     widget_logo_url = Column(Text, nullable=True)
     widget_color = Column(String(20), nullable=True, default="#1A3A52")
     widget_lang = Column(String(10), nullable=True, default="zh-TW")
+    widget_voice_enabled = Column(Boolean, nullable=False, default=False)
+    widget_voice_prompt = Column(Text, nullable=True)
 
     documents = relationship("KmDocument", back_populates="knowledge_base", lazy="dynamic")
-    widget_sessions = relationship("WidgetSession", back_populates="knowledge_base", lazy="dynamic")
+    widget_sessions = relationship("WidgetSession", back_populates="knowledge_base", lazy="dynamic", passive_deletes=True)

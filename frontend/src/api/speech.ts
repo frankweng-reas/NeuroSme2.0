@@ -14,10 +14,16 @@ export interface SpeechStatus {
   reason?: string
 }
 
-export async function transcribeAudio(audioBlob: Blob, filename = 'audio.webm', language?: string): Promise<TranscribeResult> {
+export async function transcribeAudio(
+  audioBlob: Blob,
+  filename = 'audio.webm',
+  language?: string,
+  voicePrompt?: string,
+): Promise<TranscribeResult> {
   const form = new FormData()
   form.append('file', audioBlob, filename)
   if (language) form.append('language', language)
+  if (voicePrompt) form.append('voice_prompt', voicePrompt)
   return apiFetch<TranscribeResult>('/speech/transcribe', {
     method: 'POST',
     body: form,

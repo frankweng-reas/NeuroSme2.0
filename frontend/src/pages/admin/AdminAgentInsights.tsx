@@ -28,6 +28,7 @@ import {
 } from '@/api/agentInsights'
 import { useToast } from '@/contexts/ToastContext'
 import { formatIsoInTaipeiDateTime, taipeiTodayYmd, taipeiYmdMinusCalendarDays } from '@/utils/taipeiDate'
+import { BarChart3 } from 'lucide-react'
 
 // ── constants ────────────────────────────────────────────────────────────────
 
@@ -1112,9 +1113,12 @@ export default function AdminAgentInsights() {
 
   return (
     <div className="space-y-4 p-4">
-      <div>
-        <h2 className="text-lg font-semibold text-gray-800">Agents 用量洞察</h2>
-        <p className="text-xs text-gray-500">資料來源：agent_usage_logs（所有 Agent 的 LLM 與 Embedding 呼叫）</p>
+      <div className="flex items-center gap-3">
+        <BarChart3 className="h-6 w-6 text-gray-600" />
+        <div>
+          <h2 className="text-lg font-bold text-gray-800">Agents 用量洞察</h2>
+          <p className="text-xs text-gray-500">資料來源：agent_usage_logs（所有 Agent 的 LLM 與 Embedding 呼叫）</p>
+        </div>
       </div>
 
       <DateRangePicker

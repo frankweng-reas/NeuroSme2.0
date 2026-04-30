@@ -1,5 +1,6 @@
 """User ORM：對應 users 表"""
 from sqlalchemy import Column, ForeignKey, Integer, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from app.core.database import Base
 from app.models.base import TimestampMixin
@@ -16,5 +17,7 @@ class User(Base, TimestampMixin):
     tenant_id = Column(String(100), ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True)
     display_name = Column(String(100), nullable=True)
     avatar_b64 = Column(Text, nullable=True)
+    # null = 繼承租戶全部模型；[] = 無法使用任何模型；["model1",...] = 僅限指定模型
+    allowed_models = Column(JSONB, nullable=True)
 
     tenant = relationship("Tenant", backref="users")

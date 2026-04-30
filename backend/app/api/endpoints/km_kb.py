@@ -12,6 +12,8 @@ from app.core.security import get_current_user
 from app.models.km_document import KmDocument
 from app.models.km_knowledge_base import KmKnowledgeBase
 from app.models.user import User
+from app.models.widget_session import WidgetSession
+from app.models.km_chunk import KmChunk
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -38,6 +40,8 @@ class KbUpdate(BaseModel):
     widget_logo_url: str | None = None
     widget_color: str | None = None
     widget_lang: str | None = None
+    widget_voice_enabled: bool | None = None
+    widget_voice_prompt: str | None = None
 
 
 class KbResponse(BaseModel):
@@ -54,6 +58,8 @@ class KbResponse(BaseModel):
     widget_logo_url: str | None
     widget_color: str | None
     widget_lang: str | None
+    widget_voice_enabled: bool
+    widget_voice_prompt: str | None
 
     model_config = {"from_attributes": True}
 
@@ -74,6 +80,8 @@ def _to_response(kb: KmKnowledgeBase, db: Session) -> KbResponse:
         widget_logo_url=kb.widget_logo_url,
         widget_color=kb.widget_color,
         widget_lang=kb.widget_lang,
+        widget_voice_enabled=kb.widget_voice_enabled or False,
+        widget_voice_prompt=kb.widget_voice_prompt,
     )
 
 
@@ -161,6 +169,10 @@ def update_knowledge_base(
         kb.widget_color = body.widget_color or None
     if body.widget_lang is not None:
         kb.widget_lang = body.widget_lang or None
+    if body.widget_voice_enabled is not None:
+        kb.widget_voice_enabled = body.widget_voice_enabled
+    if body.widget_voice_prompt is not None:
+        kb.widget_voice_prompt = body.widget_voice_prompt or None
     db.commit()
     db.refresh(kb)
     return _to_response(kb, db)
@@ -182,6 +194,14 @@ def delete_knowledge_base(
     ).first()
     if not kb:
         raise HTTPException(status_code=404, detail="知識庫不存在")
+
+    # 先刪 widget_sessions（含 messages，由 ORM cascade 處理）
+    for s in db.query(WidgetSession).filter(WidgetSession.kb_id == kb_id).all():
+        db.delete(s)
+
+    # 再刪文件（chunks 由 DB ondelete=CASCADE 自動清除）
+    for doc in db.query(KmDocument).filter(KmDocument.knowledge_base_id == kb_id).all():
+        db.delete(doc)
 
     db.delete(kb)
     db.commit()

@@ -73,3 +73,22 @@ export async function updateMyProfile(payload: UpdateProfilePayload): Promise<Us
     body: JSON.stringify(payload),
   })
 }
+
+/** 取得該 user 的模型權限清單（null = 繼承租戶全部模型） */
+export async function getUserModelPermissions(userId: number): Promise<string[] | null> {
+  const res = await apiFetch<{ user_id: number; allowed_models: string[] | null }>(
+    `/users/${userId}/model-permissions`
+  )
+  return res.allowed_models
+}
+
+/** 更新該 user 的模型權限清單（null = 繼承租戶全部模型） */
+export async function updateUserModelPermissions(
+  userId: number,
+  allowedModels: string[] | null,
+): Promise<void> {
+  await apiFetch(`/users/${userId}/model-permissions`, {
+    method: 'PUT',
+    body: JSON.stringify({ allowed_models: allowedModels }),
+  })
+}

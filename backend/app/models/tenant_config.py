@@ -18,8 +18,8 @@ class TenantConfig(Base):
     default_llm_model = Column(String(255), nullable=True)     # 例：gemini/gemini-2.5-flash
 
     # Embedding（第一次寫入後鎖定，更換需走遷移流程）
-    embedding_provider = Column(String(50), nullable=False, server_default="openai")
-    embedding_model = Column(String(255), nullable=False, server_default="text-embedding-3-small")
+    embedding_provider = Column(String(50), nullable=True)     # null = 尚未設定
+    embedding_model = Column(String(255), nullable=True)       # null = 尚未設定
     embedding_locked_at = Column(DateTime(timezone=True), nullable=True)   # null = 尚未鎖定
     embedding_version = Column(Integer, nullable=False, server_default="1")
 

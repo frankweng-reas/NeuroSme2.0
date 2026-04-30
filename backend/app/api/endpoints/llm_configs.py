@@ -48,6 +48,11 @@ PROVIDER_DEFAULT_MODELS: dict[str, list[str]] = {
         "gemini/gemini-2.5-flash",
         "gemini/gemini-pro",
     ],
+    "anthropic": [
+        "claude-opus-4-5",
+        "claude-sonnet-4-5",
+        "claude-3-5-haiku-20241022",
+    ],
     "twcc": ["twcc/Llama3.3-FFM-70B-32K"],
     "local": [
         "local/gemma3:4b",
@@ -211,13 +216,43 @@ def get_model_options_for_tenant(
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
 ):
-    """依目前租戶啟用中的 llm_provider_config 組合模型清單（需登入）；無任何設定列時回傳空陣列。
-    tenant_configs.default_llm_model 若有設定，會置頂並加「(預設)」標籤。
+    """依目前租戶啟用中的 llm_provider_config 組合模型清單（需登入）。
+    使用者若有 allowed_models 設定（非 null），則只回傳該清單內的模型；
+    allowed_models = null 表示繼承租戶全部模型。
+    admin / super_admin 同樣適用此規則。
     """
     tenant_id = _require_tenant_user(db, current)
     options = _collect_tenant_model_options(db, tenant_id)
 
+    # Per-user 過濾：所有角色一律依 allowed_models 決定；null = 不限制
+    u = db.query(User).filter(User.id == current.id).first()
+    raw_allowed = getattr(u, "allowed_models", None) if u else None
+    if isinstance(raw_allowed, list):
+        allowed_set = {str(m) for m in raw_allowed if isinstance(m, str)}
+        options = [o for o in options if o.value in allowed_set]
+
     # 將 tenant 設定的 default model 置頂，標記「(預設)」
+    tc = db.query(TenantConfig).filter(TenantConfig.tenant_id == tenant_id).first()
+    if tc and tc.default_llm_model:
+        default_mid = tc.default_llm_model.strip()
+        if default_mid:
+            default_opt = next((o for o in options if o.value == default_mid), None)
+            rest = [o for o in options if o.value != default_mid]
+            default_label = f"(預設) {_model_display_label(default_mid)}"
+            options = [LLMModelOption(value=default_mid, label=default_label, note=default_opt.note if default_opt else None)] + rest
+
+    return options
+
+
+@router.get("/all-model-options", response_model=list[LLMModelOption])
+def get_all_model_options_for_admin(
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    """管理介面專用：回傳租戶全部可用模型，不套用 per-user 過濾（需 admin / super_admin）。"""
+    tenant_id = _require_tenant_admin(db, current)
+    options = _collect_tenant_model_options(db, tenant_id)
+
     tc = db.query(TenantConfig).filter(TenantConfig.tenant_id == tenant_id).first()
     if tc and tc.default_llm_model:
         default_mid = tc.default_llm_model.strip()
@@ -256,6 +291,18 @@ def create_llm_config(
     tenant_id = _require_tenant_admin(db, current)
     if body.provider not in VALID_PROVIDERS:
         raise HTTPException(status_code=400, detail=f"不支援的 provider，有效值：{sorted(VALID_PROVIDERS)}")
+
+    # 同一租戶同一 provider 不允許重複新增
+    existing = (
+        db.query(LLMProviderConfig)
+        .filter(LLMProviderConfig.tenant_id == tenant_id, LLMProviderConfig.provider == body.provider)
+        .first()
+    )
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"此租戶已有 {body.provider} 的 Provider 設定，請直接編輯現有設定。",
+        )
 
     cfg = LLMProviderConfig(
         tenant_id=tenant_id,
@@ -438,14 +485,12 @@ async def test_llm_config(
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _get_or_create_tenant_config(db: Session, tenant_id: str) -> TenantConfig:
-    """取得或自動建立 tenant_configs 列（應由 migration 補建，此為防禦性備援）。"""
+    """取得或自動建立 tenant_configs 列（應由 migration 補建，此為防禦性備援）。
+    不預填 embedding 設定，由用戶在管理介面手動設定。
+    """
     tc = db.query(TenantConfig).filter(TenantConfig.tenant_id == tenant_id).first()
     if not tc:
-        tc = TenantConfig(
-            tenant_id=tenant_id,
-            embedding_provider="openai",
-            embedding_model="text-embedding-3-small",
-        )
+        tc = TenantConfig(tenant_id=tenant_id)
         db.add(tc)
         db.commit()
         db.refresh(tc)
@@ -608,7 +653,7 @@ async def test_embedding_config(
     try:
         # 在 executor 中執行同步的 embed_texts_sync，避免 blocking event loop
         loop = asyncio.get_event_loop()
-        vectors = await loop.run_in_executor(
+        result, _tokens = await loop.run_in_executor(
             None,
             lambda: embed_texts_sync(
                 ["測試連線 OK"],
@@ -619,7 +664,7 @@ async def test_embedding_config(
             ),
         )
         elapsed_ms = int((time.monotonic() - t0) * 1000)
-        dim = len(vectors[0]) if vectors else 0
+        dim = len(result[0]) if result else 0
         return {"ok": True, "elapsed_ms": elapsed_ms, "model": embed_model, "dimensions": dim}
     except Exception as e:
         elapsed_ms = int((time.monotonic() - t0) * 1000)

@@ -48,3 +48,14 @@ class UserUpdate(BaseModel):
     """管理員修改使用者：顯示名稱、角色"""
     username: Optional[str] = None
     role: Optional[str] = None
+
+
+class UserModelPermissionsUpdate(BaseModel):
+    """更新使用者可使用的模型清單；null = 繼承租戶全部模型"""
+    allowed_models: Optional[list[str]] = None
+
+
+class UserModelPermissionsResponse(BaseModel):
+    """使用者模型權限回應"""
+    user_id: int
+    allowed_models: Optional[list[str]] = None

@@ -10,10 +10,10 @@ class TenantConfigResponse(BaseModel):
     tenant_id: str
     default_llm_provider: Optional[str]
     default_llm_model: Optional[str]
-    embedding_provider: str
-    embedding_model: str
-    embedding_locked_at: Optional[datetime]
-    embedding_version: int
+    embedding_provider: Optional[str] = None
+    embedding_model: Optional[str] = None
+    embedding_locked_at: Optional[datetime] = None
+    embedding_version: int = 1
     # Speech（api_key 以遮罩形式回傳）
     speech_provider: Optional[str] = None
     speech_base_url: Optional[str] = None

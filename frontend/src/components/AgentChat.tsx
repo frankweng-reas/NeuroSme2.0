@@ -113,6 +113,7 @@ export interface Message {
   content: string
   meta?: ResponseMeta
   chartData?: ChartData
+  sources?: { filename: string }[]
 }
 
 /** 三階段 loading 文字（意圖解析 → 計算 → 分析建議） */
@@ -166,6 +167,12 @@ interface AgentChatProps {
   composerLeading?: React.ReactNode
   /** 外部注入文字（每次值變化時 append 到輸入框並 focus） */
   appendInputText?: string
+  /** 外部取代文字（每次值變化時完整取代輸入框內容，適合語音輸入） */
+  replaceInputText?: string
+  /** 帶入文字並自動送出（語音確認後直接送出） */
+  appendAndSendText?: string
+  /** 緊湊模式：移除訊息區卡片邊框與外距，適合全螢幕 Widget */
+  compact?: boolean
 }
 
 export default function AgentChat({
@@ -192,6 +199,9 @@ export default function AgentChat({
   showPdf = true,
   composerLeading,
   appendInputText,
+  replaceInputText,
+  appendAndSendText,
+  compact = false,
 }: AgentChatProps) {
   const [input, setInput] = useState('')
   const [isAtBottom, setIsAtBottom] = useState(true)
@@ -247,12 +257,28 @@ export default function AgentChat({
     setIsAtBottom(true)
   }
 
-  // 外部注入文字（語音輸入等）
+  // 外部注入文字（append 模式）
   useEffect(() => {
     if (!appendInputText) return
     setInput((prev) => prev ? `${prev} ${appendInputText}` : appendInputText)
     setTimeout(() => chatInputRef.current?.focus(), 0)
   }, [appendInputText])
+
+  // 外部取代文字（語音輸入：直接替換整個輸入框）
+  useEffect(() => {
+    if (replaceInputText === undefined || replaceInputText === '') return
+    setInput(replaceInputText)
+    setTimeout(() => chatInputRef.current?.focus(), 0)
+  }, [replaceInputText])
+
+  // 語音確認自動送出
+  useEffect(() => {
+    if (!appendAndSendText) return
+    const text = appendAndSendText.trim()
+    if (!text || isLoading || submitDisabled) return
+    onSubmit(text)
+    setInput('')
+  }, [appendAndSendText])
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -281,12 +307,12 @@ export default function AgentChat({
           {headerActions}
         </header>
       )}
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-4">
-        <div className="relative mb-4 flex-1 min-h-0">
+      <div className={`flex min-h-0 flex-1 flex-col overflow-hidden ${compact ? 'p-0' : 'p-3 sm:p-4'}`}>
+        <div className={`relative flex-1 min-h-0 ${compact ? 'mb-2' : 'mb-4'}`}>
           <div
             ref={chatScrollRef}
             onScroll={handleChatScroll}
-            className="h-full overflow-y-auto rounded-xl border border-gray-200/80 bg-gray-50/60 ring-1 ring-gray-200/40 p-4"
+            className={`h-full overflow-y-auto p-4 ${compact ? 'bg-gray-50' : 'rounded-xl border border-gray-200/80 bg-gray-50/60 ring-1 ring-gray-200/40'}`}
           >
             {messages.length === 0 ? (
               <p
@@ -531,7 +557,7 @@ export default function AgentChat({
             )}
           </div>
         )}
-        <form onSubmit={handleSubmit} className="flex gap-2">
+        <form onSubmit={handleSubmit} className={`flex gap-1.5 sm:gap-2 ${compact ? 'px-3 pb-2 sm:px-4' : ''}`}>
           {composerLeading}
           <input
             ref={chatInputRef}
@@ -542,14 +568,14 @@ export default function AgentChat({
               if (e.key === 'Enter' && e.nativeEvent.isComposing) e.preventDefault()
             }}
             placeholder="輸入訊息..."
-            className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-[18px] focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400"
+            className="min-h-[44px] min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 text-[16px] focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400 sm:px-4 sm:text-[18px]"
             disabled={isLoading}
           />
           <button
             type="submit"
             title={submitDisabled ? submitDisabledTitle : undefined}
             disabled={isLoading || !input.trim() || submitDisabled}
-            className="rounded-2xl bg-gray-800 px-5 py-2 text-[18px] font-medium text-white transition-colors hover:bg-gray-900 disabled:opacity-40"
+            className="min-h-[44px] min-w-[64px] rounded-2xl bg-gray-800 px-4 py-2 text-[16px] font-medium text-white transition-colors hover:bg-gray-900 disabled:opacity-40 sm:px-5 sm:text-[18px]"
           >
             送出
           </button>

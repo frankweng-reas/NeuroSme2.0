@@ -41,6 +41,7 @@ import ErrorModal from '@/components/ErrorModal'
 import HelpModal from '@/components/HelpModal'
 import LLMModelSelect from '@/components/LLMModelSelect'
 import VoiceInput from '@/components/VoiceInput'
+import { transcribeAudio, getSpeechStatus } from '@/api/speech'
 import type { Agent, UserRole } from '@/types'
 import {
   listWidgetSessions,
@@ -117,6 +118,8 @@ export default function AgentCsUI({ agent }: AgentCsUIProps) {
   const [settingsWidgetColor, setSettingsWidgetColor] = useState('#1A3A52')
   const [settingsWidgetLang, setSettingsWidgetLang] = useState('zh-TW')
   const [settingsWidgetLogoUrl, setSettingsWidgetLogoUrl] = useState('')
+  const [settingsWidgetVoiceEnabled, setSettingsWidgetVoiceEnabled] = useState(false)
+  const [settingsWidgetVoicePrompt, setSettingsWidgetVoicePrompt] = useState('')
   const [settingsSaving, setSettingsSaving] = useState(false)
   const [tokenGenerating, setTokenGenerating] = useState(false)
   const [showHelpModal, setShowHelpModal] = useState(false)
@@ -207,9 +210,12 @@ export default function AgentCsUI({ agent }: AgentCsUIProps) {
         widget_color: settingsWidgetColor,
         widget_lang: settingsWidgetLang,
         widget_logo_url: settingsWidgetLogoUrl || undefined,
+        widget_voice_enabled: settingsWidgetVoiceEnabled,
+        widget_voice_prompt: settingsWidgetVoicePrompt || undefined,
       })
       setKbs((prev) => prev.map((kb) => kb.id === updated.id ? updated : kb))
-      setSettingsKb(updated)
+      setSettingsKb(null)
+      showToast('設定已儲存')
     } catch (err) {
       const msg = err instanceof Error ? err.message : '儲存失敗'
       setErrorModal({ title: '儲存設定失敗', message: msg })
@@ -252,6 +258,7 @@ export default function AgentCsUI({ agent }: AgentCsUIProps) {
 
   // ── 中欄：文件管理 ─────────────────────────────────────────────────────────
   const [docs, setDocs] = useState<KmDocument[]>([])
+  const [selectedDocIds, setSelectedDocIds] = useState<Set<number>>(new Set())
   const [docsLoading, setDocsLoading] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
@@ -262,11 +269,29 @@ export default function AgentCsUI({ agent }: AgentCsUIProps) {
   const [deleteDocTarget, setDeleteDocTarget] = useState<KmDocument | null>(null)
   const [deleteDocLoading, setDeleteDocLoading] = useState(false)
 
+  const storageKey = (kbId: number) => `cs-selected-docs-${kbId}`
+
   const loadDocs = useCallback((kbId: number) => {
     setDocsLoading(true)
     listKbDocuments(kbId)
-      .then(setDocs)
-      .catch(() => setDocs([]))
+      .then((loaded) => {
+        setDocs(loaded)
+        const readyIds = loaded.filter((d) => d.status === 'ready').map((d) => d.id)
+        const saved = localStorage.getItem(storageKey(kbId))
+        if (saved) {
+          try {
+            const parsed: number[] = JSON.parse(saved)
+            // 過濾掉已不存在的 doc id（文件可能已被刪除）
+            const valid = parsed.filter((id) => readyIds.includes(id))
+            setSelectedDocIds(new Set(valid))
+          } catch {
+            setSelectedDocIds(new Set(readyIds))
+          }
+        } else {
+          setSelectedDocIds(new Set(readyIds))
+        }
+      })
+      .catch(() => { setDocs([]); setSelectedDocIds(new Set()) })
       .finally(() => setDocsLoading(false))
   }, [])
 
@@ -303,16 +328,19 @@ export default function AgentCsUI({ agent }: AgentCsUIProps) {
         setUploadCurrent(i + 1)
         setUploadProgress(0)
 
-        // 依檔名自動偵測文件類型
+        // 依檔名自動偵測文件類型（僅在使用者未明確選擇類型時套用）
         const lower = file.name.toLowerCase()
         let detectedType = uploadDocType
-        if (/faq|q[&＆]a|問答/.test(lower)) detectedType = 'faq'
-        else if (/spec|規格|technical|datasheet/.test(lower)) detectedType = 'spec'
-        else if (/policy|政策|條款|terms|contract/.test(lower)) detectedType = 'policy'
+        if (uploadDocType === 'article') {
+          if (/faq|q[&＆]a|問答/.test(lower)) detectedType = 'faq'
+          else if (/spec|規格|technical|datasheet/.test(lower)) detectedType = 'spec'
+          else if (/policy|政策|條款|terms|contract/.test(lower)) detectedType = 'policy'
+        }
 
         try {
           const doc = await uploadKmDocument(file, 'public', (pct) => setUploadProgress(pct), [], selectedKbId, detectedType)
           setDocs((prev) => [doc, ...prev])
+          if (doc.status === 'ready') setSelectedDocIds((prev) => new Set([...prev, doc.id]))
           setKbs((prev) => prev.map((kb) =>
             kb.id === selectedKbId
               ? { ...kb, doc_count: kb.doc_count + 1, ready_count: doc.status === 'ready' ? kb.ready_count + 1 : kb.ready_count }
@@ -349,6 +377,7 @@ export default function AgentCsUI({ agent }: AgentCsUIProps) {
     try {
       await deleteKmDocument(deleteDocTarget.id)
       setDocs((prev) => prev.filter((d) => d.id !== deleteDocTarget.id))
+      setSelectedDocIds((prev) => { const next = new Set(prev); next.delete(deleteDocTarget.id); return next })
       setKbs((prev) => prev.map((kb) =>
         kb.id === selectedKbId
           ? {
@@ -371,6 +400,7 @@ export default function AgentCsUI({ agent }: AgentCsUIProps) {
   const [messages, setMessages] = useState<Message[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [voiceTranscript, setVoiceTranscript] = useState('')
+  const [voiceAutoSendText, setVoiceAutoSendText] = useState('')
   const [showClearConfirm, setShowClearConfirm] = useState(false)
   const [threadId, setThreadId] = useState<string | null>(null)
 
@@ -407,6 +437,15 @@ export default function AgentCsUI({ agent }: AgentCsUIProps) {
         return
       }
 
+      if (selectedDocIds.size === 0) {
+        setMessages((prev) => [
+          ...prev,
+          { role: 'user', content: text },
+          { role: 'assistant', content: '目前沒有勾選任何文件，請至少勾選一份文件後再提問。' },
+        ])
+        return
+      }
+
       setMessages((prev) => [...prev, { role: 'user', content: text }])
       setIsLoading(true)
       if (threadId) appendChatMessage(threadId, { role: 'user', content: text }).catch(() => {})
@@ -427,6 +466,7 @@ export default function AgentCsUI({ agent }: AgentCsUIProps) {
             messages: messages.map((m) => ({ role: m.role, content: m.content })),
             content: text,
             knowledge_base_id: kbId,
+            selected_doc_ids: [...selectedDocIds],
             chat_thread_id: threadId ?? '',
           },
           {
@@ -445,7 +485,12 @@ export default function AgentCsUI({ agent }: AgentCsUIProps) {
                   : undefined
               setMessages((prev) => {
                 const next = [...prev]
-                if (next[startIdx]) next[startIdx] = { ...next[startIdx], content: done.content, meta }
+                if (next[startIdx]) next[startIdx] = {
+                  ...next[startIdx],
+                  content: done.content,
+                  meta,
+                  sources: done.sources?.length ? done.sources : undefined,
+                }
                 return next
               })
               if (threadId && done.content)
@@ -465,7 +510,7 @@ export default function AgentCsUI({ agent }: AgentCsUIProps) {
         setIsLoading(false)
       }
     },
-    [agent.agent_id, isLoading, messages, docs, threadId]
+    [agent.agent_id, isLoading, messages, docs, selectedDocIds, threadId]
   )
 
   // ── Toast / ErrorModal ─────────────────────────────────────────────────────
@@ -632,7 +677,7 @@ export default function AgentCsUI({ agent }: AgentCsUIProps) {
       <ConfirmModal
         open={deleteKbTarget !== null}
         title="刪除知識庫"
-        message={`確定要刪除「${deleteKbTarget?.name}」嗎？\n知識庫內的文件不會被刪除，但將失去分類。`}
+        message={`確定要刪除「${deleteKbTarget?.name}」嗎？\n知識庫內的所有文件也將一併刪除，此操作無法復原。`}
         confirmText="刪除"
         variant="danger"
         onConfirm={handleDeleteKb}
@@ -694,7 +739,6 @@ export default function AgentCsUI({ agent }: AgentCsUIProps) {
         <div
           className="fixed inset-0 z-[60] flex items-center justify-center bg-black/45 p-4"
           role="presentation"
-          onMouseDown={(e) => { if (e.target === e.currentTarget) setSettingsKb(null) }}
         >
           <div
             className="flex w-full max-w-5xl flex-col rounded-xl border border-gray-200 bg-white shadow-xl max-h-[90vh]"
@@ -728,7 +772,6 @@ export default function AgentCsUI({ agent }: AgentCsUIProps) {
                   emptyLabel="無"
                   selectClassName="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-base focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
                 />
-                <p className="mt-1 text-base text-gray-400">Widget 將使用此模型，未設定則使用系統預設</p>
               </div>
               {/* System Prompt */}
               <div>
@@ -741,7 +784,7 @@ export default function AgentCsUI({ agent }: AgentCsUIProps) {
                   onChange={(e) => setSettingsPrompt(e.target.value)}
                   rows={8}
                   placeholder="你是 XX 公司的客服助手，請根據知識庫文件回答問題…"
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-base text-gray-800 placeholder-gray-300 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                  className="w-full rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 font-mono text-base text-gray-800 placeholder-amber-300 focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
                 />
               </div>
               {/* ── Widget 設定 ── */}
@@ -794,7 +837,7 @@ export default function AgentCsUI({ agent }: AgentCsUIProps) {
                   </div>
                 </div>
                 <div className="mb-3">
-                  <label className="mb-1 block text-base font-medium text-gray-700">顯示名稱</label>
+                  <label className="mb-1 block text-base font-medium text-gray-700">Widget 顯示名稱</label>
                   <input
                     type="text"
                     value={settingsWidgetTitle}
@@ -835,6 +878,35 @@ export default function AgentCsUI({ agent }: AgentCsUIProps) {
                     </select>
                   </div>
                 </div>
+                <hr className="border-gray-200" />
+                <div className="mb-3">
+                  <label className="flex cursor-pointer items-center gap-2.5">
+                    <input
+                      type="checkbox"
+                      checked={settingsWidgetVoiceEnabled}
+                      onChange={(e) => setSettingsWidgetVoiceEnabled(e.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300 accent-sky-500"
+                    />
+                    <span className="text-base font-medium text-gray-700">啟用語音</span>
+                    <span className="text-sm text-gray-400">（顯示麥克風按鈕）</span>
+                  </label>
+                  {settingsWidgetVoiceEnabled && (
+                    <div className="mt-2">
+                      <label className="mb-1 block text-base font-medium text-gray-700">
+                        語音辨識提示詞
+                        <span className="ml-1 font-normal text-gray-400">（選填：列出業務常見詞彙，提升辨識準確率）</span>
+                      </label>
+                      <textarea
+                        value={settingsWidgetVoicePrompt}
+                        onChange={(e) => setSettingsWidgetVoicePrompt(e.target.value)}
+                        rows={3}
+                        placeholder={`例：常見詞彙：專有名詞A、專有名詞B、產品名稱...`}
+                        className="w-full resize-y rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-800 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                      />
+                    </div>
+                  )}
+                </div>
+                <hr className="border-gray-200" />
                 <div>
                   <label className="mb-1 block text-base font-medium text-gray-700">Widget 連結</label>
                   {settingsKb?.public_token ? (
@@ -945,7 +1017,7 @@ export default function AgentCsUI({ agent }: AgentCsUIProps) {
         {/* ══ 左欄：知識庫列表 ═══════════════════════════════════════════════ */}
         <div
           className={`flex shrink-0 flex-col overflow-hidden rounded-xl border border-gray-300/50 shadow-md transition-[width] duration-200 ${
-            sidebarCollapsed ? 'w-12' : 'w-60'
+            sidebarCollapsed ? 'w-12' : 'w-80'
           }`}
           style={{ backgroundColor: HEADER_COLOR }}
         >
@@ -1004,6 +1076,7 @@ export default function AgentCsUI({ agent }: AgentCsUIProps) {
                     value={newKbName}
                     onChange={(e) => setNewKbName(e.target.value)}
                     onKeyDown={(e) => {
+                      if (e.nativeEvent.isComposing) return
                       if (e.key === 'Enter') void handleCreateKb()
                       if (e.key === 'Escape') { setCreatingKb(false); setNewKbName(''); setNewKbModel('') }
                     }}
@@ -1070,6 +1143,7 @@ export default function AgentCsUI({ agent }: AgentCsUIProps) {
                               value={renameValue}
                               onChange={(e) => setRenameValue(e.target.value)}
                               onKeyDown={(e) => {
+                                if (e.nativeEvent.isComposing) return
                                 if (e.key === 'Enter') void handleRenameKb(kb.id)
                                 if (e.key === 'Escape') setRenamingKbId(null)
                               }}
@@ -1129,6 +1203,8 @@ export default function AgentCsUI({ agent }: AgentCsUIProps) {
                                 setSettingsWidgetColor(kb.widget_color ?? '#1A3A52')
                                 setSettingsWidgetLang(kb.widget_lang ?? 'zh-TW')
                                 setSettingsWidgetLogoUrl(kb.widget_logo_url ?? '')
+                                setSettingsWidgetVoiceEnabled(kb.widget_voice_enabled ?? false)
+                                setSettingsWidgetVoicePrompt(kb.widget_voice_prompt ?? '')
                                 setKbMenuId(null)
                               }}
                               className="flex w-full items-center gap-2 px-3 py-2 text-left text-base text-white/80 transition-colors hover:bg-white/10 hover:text-white"
@@ -1200,15 +1276,67 @@ export default function AgentCsUI({ agent }: AgentCsUIProps) {
                 )}
               </div>
             ) : (
+              <>
+                {(() => {
+                  const readyIds = docs.filter((d) => d.status === 'ready').map((d) => d.id)
+                  const allSelected = readyIds.length > 0 && readyIds.every((id) => selectedDocIds.has(id))
+                  const toggleAll = (select: boolean) => {
+                    const next = select ? new Set(readyIds) : new Set<number>()
+                    setSelectedDocIds(next)
+                    if (selectedKbId != null)
+                      localStorage.setItem(storageKey(selectedKbId), JSON.stringify([...next]))
+                  }
+                  return readyIds.length > 0 ? (
+                    <div className="flex items-center gap-2 border-b border-gray-100 px-4 py-2">
+                      <span className="flex-1 text-base text-gray-400">
+                        已選 {selectedDocIds.size} / {readyIds.length} 份
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => toggleAll(true)}
+                        disabled={allSelected}
+                        className="rounded px-2 py-0.5 text-base text-sky-600 hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        全選
+                      </button>
+                      <span className="text-gray-200">|</span>
+                      <button
+                        type="button"
+                        onClick={() => toggleAll(false)}
+                        disabled={selectedDocIds.size === 0}
+                        className="rounded px-2 py-0.5 text-base text-gray-500 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        全不選
+                      </button>
+                    </div>
+                  ) : null
+                })()}
               <ul className="divide-y divide-gray-50">
                 {docs.map((doc) => (
                   <li
                     key={doc.id}
                     className="group flex items-start gap-3 px-4 py-3 transition-colors hover:bg-gray-50"
                   >
-                    <FileText className="mt-0.5 h-4 w-4 shrink-0 text-gray-300" />
+                    {doc.status === 'ready' ? (
+                      <input
+                        type="checkbox"
+                        checked={selectedDocIds.has(doc.id)}
+                        onChange={(e) => setSelectedDocIds((prev) => {
+                          const next = new Set(prev)
+                          if (e.target.checked) next.add(doc.id)
+                          else next.delete(doc.id)
+                          if (selectedKbId != null)
+                            localStorage.setItem(storageKey(selectedKbId), JSON.stringify([...next]))
+                          return next
+                        })}
+                        className="mt-1 h-3.5 w-3.5 shrink-0 cursor-pointer accent-sky-500"
+                        aria-label={`勾選 ${doc.filename}`}
+                      />
+                    ) : (
+                      <FileText className="mt-0.5 h-4 w-4 shrink-0 text-gray-300" />
+                    )}
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-base font-medium text-gray-700" title={doc.filename}>
+                      <p className="line-clamp-2 break-all text-base font-medium text-gray-700" title={doc.filename}>
                         {doc.filename}
                       </p>
                       <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
@@ -1228,15 +1356,16 @@ export default function AgentCsUI({ agent }: AgentCsUIProps) {
                       <button
                         type="button"
                         onClick={() => setDeleteDocTarget(doc)}
-                        className="mt-0.5 shrink-0 rounded p-1 text-gray-300 opacity-0 transition-all group-hover:opacity-100 hover:bg-red-50 hover:text-red-400"
+                        className="mt-0.5 shrink-0 rounded p-1.5 text-gray-300 opacity-0 transition-all group-hover:opacity-100 hover:bg-red-50 hover:text-red-400"
                         aria-label={`刪除 ${doc.filename}`}
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
+                        <Trash2 className="h-5 w-5" />
                       </button>
                     )}
                   </li>
                 ))}
               </ul>
+              </>
             )}
           </div>
 
@@ -1362,15 +1491,25 @@ export default function AgentCsUI({ agent }: AgentCsUIProps) {
             showPdf={false}
             composerLeading={
               <VoiceInput
-                onTranscript={(text) => {
-                  setVoiceTranscript(text)
-                  setTimeout(() => setVoiceTranscript(''), 50)
+                transcribe={(blob, filename, lang) =>
+                  transcribeAudio(blob, filename, lang, selectedKb?.widget_voice_prompt ?? undefined).then((r) => r.text)
+                }
+                checkStatus={getSpeechStatus}
+                onTranscript={(text, autoSend) => {
+                  if (autoSend) {
+                    setVoiceAutoSendText(text)
+                    setTimeout(() => setVoiceAutoSendText(''), 50)
+                  } else {
+                    setVoiceTranscript(text)
+                    setTimeout(() => setVoiceTranscript(''), 50)
+                  }
                 }}
                 onError={(msg) => showToast(msg, 'error')}
                 disabled={isLoading}
               />
             }
             appendInputText={voiceTranscript}
+            appendAndSendText={voiceAutoSendText}
           />
           )}
 

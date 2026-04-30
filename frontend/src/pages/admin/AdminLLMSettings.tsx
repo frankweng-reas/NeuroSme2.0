@@ -11,7 +11,6 @@ import {
   EyeOff,
   Zap,
   Lock,
-  Settings2,
   ChevronDown,
   ChevronUp,
   AlertTriangle,
@@ -53,6 +52,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   gemini: 'Google Gemini',
   twcc: '台智雲 TWCC',
   local: '本機模型 (Local)',
+  anthropic: 'Anthropic',
 }
 
 const PROVIDER_COLORS: Record<string, string> = {
@@ -60,6 +60,7 @@ const PROVIDER_COLORS: Record<string, string> = {
   gemini: 'bg-blue-200 text-blue-900',
   twcc: 'bg-orange-200 text-orange-900',
   local: 'bg-purple-200 text-purple-900',
+  anthropic: 'bg-amber-200 text-amber-900',
 }
 
 const PROVIDER_CARD_COLORS: Record<string, string> = {
@@ -67,6 +68,19 @@ const PROVIDER_CARD_COLORS: Record<string, string> = {
   gemini: 'border-blue-100 bg-blue-50/50',
   twcc:   'border-orange-100 bg-orange-50/50',
   local:  'border-purple-100 bg-purple-50/50',
+  anthropic: 'border-amber-100 bg-amber-50/50',
+}
+
+// 系統固定 768 維，僅此兩種 model 相容
+const EMBEDDING_MODELS: Record<string, { model: string; note: string }[]> = {
+  openai: [{ model: 'text-embedding-3-small', note: '768 維（截斷）' }],
+  local:  [{ model: 'nomic-embed-text',        note: '768 維（原生）' }],
+}
+
+// 語音支援兩種服務
+const SPEECH_MODELS: Record<string, { model: string; label: string; note: string }> = {
+  local:  { model: 'Systran/faster-whisper-medium', label: '本機模型 (Local)',  note: '地端 faster-whisper-server，預設端口 8002' },
+  openai: { model: 'whisper-1',                     label: 'OpenAI Whisper',    note: '雲端 API，沿用 Provider 連線設定中的 OpenAI Key' },
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -131,10 +145,10 @@ export default function AdminLLMSettings() {
   const [defaultLLMForm, setDefaultLLMForm] = useState({ provider: '', model: '' })
   const [savingDefaultLLM, setSavingDefaultLLM] = useState(false)
 
-  // embedding migration
-  const [showMigrateForm, setShowMigrateForm] = useState(false)
-  const [migrateForm, setMigrateForm] = useState({ provider: 'openai', model: '', confirm: false })
-  const [migrating, setMigrating] = useState(false)
+  // embedding config
+  const [showEmbeddingForm, setShowEmbeddingForm] = useState(false)
+  const [embeddingForm, setEmbeddingForm] = useState({ provider: 'openai', model: '', confirm: false })
+  const [savingEmbedding, setSavingEmbedding] = useState(false)
 
   // embedding test
   const [testingEmbedding, setTestingEmbedding] = useState(false)
@@ -318,27 +332,50 @@ export default function AdminLLMSettings() {
     }
   }
 
-  // ── Embedding migration ───────────────────────────────────────────────────
+  // ── Embedding config ─────────────────────────────────────────────────────
 
-  async function handleMigrate() {
-    if (!migrateForm.model.trim()) { showToast('請填寫新的 Model 名稱', 'error'); return }
-    if (!migrateForm.confirm) { showToast('請勾選確認選項', 'error'); return }
-    setMigrating(true)
+  function openEmbeddingForm() {
+    // 只列出已在 Provider 連線設定中啟用且有 embedding 支援的 provider
+    const activeSupportedProviders = [...new Set(
+      configs.filter((c) => c.is_active && EMBEDDING_MODELS[c.provider]).map((c) => c.provider)
+    )]
+    const defaultProvider =
+      (tenantConfig?.embedding_provider && EMBEDDING_MODELS[tenantConfig.embedding_provider])
+        ? tenantConfig.embedding_provider
+        : activeSupportedProviders[0] ?? 'openai'
+    const defaultModel =
+      tenantConfig?.embedding_model ?? EMBEDDING_MODELS[defaultProvider]?.[0]?.model ?? ''
+    setEmbeddingForm({ provider: defaultProvider, model: defaultModel, confirm: false })
+    setShowEmbeddingForm(true)
+  }
+
+  async function handleSaveEmbedding() {
+    if (!embeddingForm.provider || !embeddingForm.model.trim()) {
+      showToast('請選擇 Provider 與 Model', 'error'); return
+    }
+    const isLocked = !!tenantConfig?.embedding_locked_at
+    if (isLocked && !embeddingForm.confirm) {
+      showToast('請勾選確認選項', 'error'); return
+    }
+    setSavingEmbedding(true)
     try {
       const tc = await migrateEmbedding({
-        provider: migrateForm.provider,
-        model: migrateForm.model.trim(),
+        provider: embeddingForm.provider,
+        model: embeddingForm.model.trim(),
         confirm: true,
       })
       setTenantConfig(tc)
-      setShowMigrateForm(false)
-        setMigrateForm({ provider: 'openai', model: '', confirm: false })
-      showToast('Embedding 遷移完成，請重新上傳文件以建立索引', 'success')
+      setShowEmbeddingForm(false)
+      setEmbeddingForm({ provider: 'openai', model: '', confirm: false })
+      showToast(
+        isLocked ? 'Embedding 已更新，請重新上傳文件以重建索引' : 'Embedding Model 已設定',
+        'success',
+      )
       load()
     } catch (err) {
-      showToast(err instanceof ApiError ? (err.detail ?? err.message) : '遷移失敗', 'error')
+      showToast(err instanceof ApiError ? (err.detail ?? err.message) : '儲存失敗', 'error')
     } finally {
-      setMigrating(false)
+      setSavingEmbedding(false)
     }
   }
 
@@ -357,11 +394,13 @@ export default function AdminLLMSettings() {
   }
 
   function openSpeechForm() {
+    const provider = tenantConfig?.speech_provider ?? 'local'
+    const model = tenantConfig?.speech_model || SPEECH_MODELS[provider]?.model || ''
     setSpeechForm({
-      provider: tenantConfig?.speech_provider ?? 'local',
+      provider,
       base_url: tenantConfig?.speech_base_url ?? '',
       api_key: '',
-      model: tenantConfig?.speech_model ?? '',
+      model,
     })
     setShowSpeechApiKey(false)
     setSpeechTestResult(null)
@@ -429,9 +468,9 @@ export default function AdminLLMSettings() {
       {/* ── Header ── */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Settings2 className="h-6 w-6 text-gray-600" />
+          <KeyRound className="h-6 w-6 text-gray-600" />
           <div>
-            <h2 className="text-xl font-bold text-gray-800">AI 設定（租戶）</h2>
+            <h2 className="text-lg font-bold text-gray-800">LLM 設定</h2>
             {currentTenantId && (
               <p className="text-base text-gray-500 mt-0.5">
                 租戶 ID：<code className="rounded bg-gray-100 px-1.5 py-0.5">{currentTenantId}</code>
@@ -500,31 +539,28 @@ export default function AdminLLMSettings() {
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => void handleTestEmbedding()}
-                      disabled={testingEmbedding}
+                      disabled={testingEmbedding || !tenantConfig?.embedding_model}
                       className="flex items-center gap-1 rounded px-2 py-1 text-base text-gray-500 hover:text-blue-600 hover:bg-blue-50 disabled:opacity-50 transition-colors"
                     >
                       <Zap className={`h-3.5 w-3.5 ${testingEmbedding ? 'animate-pulse' : ''}`} />
                       {testingEmbedding ? '測試中...' : '測試'}
                     </button>
                     <button
-                      onClick={() => {
-                        setMigrateForm({ provider: tenantConfig?.embedding_provider === 'local' ? 'local' : 'openai', model: '', confirm: false })
-                        setShowMigrateForm(true)
-                      }}
-                      className="flex items-center gap-1 rounded px-2 py-1 text-base text-orange-500 hover:text-orange-700 hover:bg-orange-50 transition-colors"
+                      onClick={openEmbeddingForm}
+                      className="flex items-center gap-1 rounded px-2 py-1 text-base text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-colors"
                     >
-                      <AlertTriangle className="h-3.5 w-3.5" /> 遷移
+                      <Pencil className="h-3.5 w-3.5" /> 設定
                     </button>
                   </div>
                 </div>
-                {tenantConfig && (
+                {tenantConfig?.embedding_model ? (
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
-                      <span className={`rounded-full px-2.5 py-0.5 text-base font-semibold ${PROVIDER_COLORS[tenantConfig.embedding_provider] ?? 'bg-gray-100 text-gray-700'}`}>
-                        {PROVIDER_LABELS[tenantConfig.embedding_provider] ?? tenantConfig.embedding_provider}
+                      <span className={`rounded-full px-2.5 py-0.5 text-base font-semibold ${PROVIDER_COLORS[tenantConfig.embedding_provider ?? ''] ?? 'bg-gray-100 text-gray-700'}`}>
+                        {PROVIDER_LABELS[tenantConfig.embedding_provider ?? ''] ?? tenantConfig.embedding_provider}
                       </span>
                       <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-base text-gray-500">
-                        v{tenantConfig.embedding_version}
+                        v{tenantConfig.embedding_version ?? 1}
                       </span>
                     </div>
                     <p className="font-mono text-gray-800 text-base">{tenantConfig.embedding_model}</p>
@@ -535,9 +571,11 @@ export default function AdminLLMSettings() {
                       </div>
                     ) : (
                       <p className="text-base text-amber-500">尚未鎖定（第一次上傳文件後自動鎖定）</p>
-                  )}
-                </div>
-              )}
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-base text-gray-400 italic">尚未設定，點擊「設定」選擇 Embedding Model</p>
+                )}
               </div>
 
               {/* 語音模型 */}
@@ -740,7 +778,7 @@ export default function AdminLLMSettings() {
       {/* ── Modal：新增/編輯 Provider ── */}
       {showForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-lg rounded-xl bg-white shadow-2xl overflow-y-auto max-h-[90vh]">
+          <div className="w-full max-w-xl rounded-xl bg-white shadow-2xl overflow-y-auto max-h-[90vh]">
             <ModalHeader title={editingId !== null ? '編輯 Provider 連線' : '新增 Provider 連線'} onClose={() => setShowForm(false)} />
             <div className="px-6 py-5 space-y-4">
 
@@ -753,6 +791,7 @@ export default function AdminLLMSettings() {
                 >
                   <option value="openai">OpenAI</option>
                   <option value="gemini">Google Gemini</option>
+                  <option value="anthropic">Anthropic</option>
                   <option value="twcc">台智雲 TWCC</option>
                   <option value="local">本機模型 (Local / Ollama / LM Studio)</option>
                 </select>
@@ -798,7 +837,7 @@ export default function AdminLLMSettings() {
                   form.provider === 'twcc'
                     ? '台智雲必填，例：https://api-ams.twcc.ai/api/models/conversation'
                     : form.provider === 'local'
-                      ? '本機服務必填，例：http://localhost:11434（Ollama）或 http://localhost:1234（LM Studio）'
+                      ? undefined
                       : '選填，用於 Azure OpenAI 或 OpenAI-compatible Proxy'
                 }
               >
@@ -808,13 +847,19 @@ export default function AdminLLMSettings() {
                     form.provider === 'twcc'
                       ? 'https://api-ams.twcc.ai/api/models/conversation'
                       : form.provider === 'local'
-                        ? 'http://localhost:11434'
+                        ? 'http://192.168.1.10:11434'
                         : 'https://your-proxy.example.com/v1'
                   }
                   value={form.api_base_url}
                   onChange={(e) => setForm((f) => ({ ...f, api_base_url: e.target.value }))}
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-base font-mono focus:outline-none focus:ring-2 focus:ring-gray-400"
                 />
+                {form.provider === 'local' && (
+                  <div className="mt-1 space-y-0.5 text-base text-gray-400">
+                    <p>設定成 Ollama / LM Studio 服務位址，例：<code className="rounded bg-gray-100 px-1">http://192.168.1.10:11434</code></p>
+                    <p>NeuroSme 與 Ollama 在同一台主機時請用：<code className="rounded bg-gray-100 px-1">http://host.docker.internal:11434</code></p>
+                  </div>
+                )}
               </Field>
 
               <Field label="可用 Models">
@@ -952,128 +997,190 @@ export default function AdminLLMSettings() {
         </div>
       )}
 
-      {/* ── Modal：Embedding 遷移 ── */}
-      {showMigrateForm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-xl bg-white shadow-2xl">
-            <ModalHeader title="遷移 Embedding Model" onClose={() => setShowMigrateForm(false)} />
-            <div className="px-6 py-5 space-y-4">
-              <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-base text-red-700 space-y-1">
-                <p className="font-semibold flex items-center gap-1.5"><AlertTriangle className="h-4 w-4" /> 此操作不可逆</p>
-                <p>執行後將清空此租戶所有向量索引，原始文件保留但需重新上傳以重建索引。</p>
-              </div>
+      {/* ── Modal：設定 Embedding Model ── */}
+      {showEmbeddingForm && (() => {
+        const isLocked = !!tenantConfig?.embedding_locked_at
+        const isAlreadySet = !!tenantConfig?.embedding_model
+        const activeSupportedProviders = [...new Set(
+          configs.filter((c) => c.is_active && EMBEDDING_MODELS[c.provider]).map((c) => c.provider)
+        )]
+        const modelsForProvider = EMBEDDING_MODELS[embeddingForm.provider] ?? []
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-md rounded-xl bg-white shadow-2xl">
+              <ModalHeader title="設定 Embedding Model" onClose={() => setShowEmbeddingForm(false)} />
+              <div className="px-6 py-5 space-y-4">
 
-              <Field label="新 Provider" required>
-                <select
-                  value={migrateForm.provider}
-                  onChange={(e) => setMigrateForm((f) => ({ ...f, provider: e.target.value, model: '' }))}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-gray-400"
-                >
-                  <option value="openai">OpenAI</option>
-                  <option value="local">本機模型 (Local / Ollama)</option>
-                </select>
-              </Field>
-
-              {migrateForm.provider === 'local' && (
-                <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-base text-blue-800 space-y-1">
-                  <p className="font-semibold">使用本機 Embedding 前請確認：</p>
-                  <ul className="list-disc list-inside space-y-0.5 text-blue-700">
-                    <li>已在「Provider 連線設定」新增並啟用 <strong>本機模型 (Local)</strong>，並填入 API Base URL（例：<code className="bg-blue-100 px-1 rounded">http://&lt;server&gt;:11434</code>）</li>
-                    <li>推薦使用 <code className="bg-blue-100 px-1 rounded">nomic-embed-text</code>（768 維，與系統 schema 一致）</li>
-                    <li>請先在 Ollama 執行 <code className="bg-blue-100 px-1 rounded">ollama pull nomic-embed-text</code></li>
-                  </ul>
-                </div>
-              )}
-
-              <Field
-                label="新 Model"
-                required
-                hint={
-                  migrateForm.provider === 'local'
-                    ? '輸入 Ollama 模型名稱（不含 ollama/ 前綴），例：nomic-embed-text'
-                    : '例：text-embedding-3-small（OpenAI）'
-                }
-              >
-                <input
-                  type="text"
-                  placeholder={
-                    migrateForm.provider === 'local'
-                      ? 'nomic-embed-text'
-                      : migrateForm.provider === 'openai'
-                        ? 'text-embedding-3-small'
-                        : 'text-embedding-004'
-                  }
-                  value={migrateForm.model}
-                  onChange={(e) => setMigrateForm((f) => ({ ...f, model: e.target.value }))}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-base font-mono focus:outline-none focus:ring-2 focus:ring-gray-400"
-                />
-                {migrateForm.provider === 'local' && (
-                  <button
-                    type="button"
-                    onClick={() => setMigrateForm((f) => ({ ...f, model: 'nomic-embed-text' }))}
-                    className="mt-1.5 rounded bg-blue-100 px-2 py-0.5 text-base text-blue-700 hover:bg-blue-200 transition-colors font-mono"
-                  >
-                    nomic-embed-text <span className="font-normal text-blue-500">768 維 ✓</span>
-                  </button>
+                {/* 情境 C：已有向量資料 → 強警告 */}
+                {isLocked && (
+                  <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-base text-red-700 space-y-1">
+                    <p className="font-semibold flex items-center gap-1.5">
+                      <AlertTriangle className="h-4 w-4" /> 已有向量索引，變更將清空所有資料
+                    </p>
+                    <p>原始文件保留，但需重新上傳以重建索引，此操作不可逆。</p>
+                  </div>
                 )}
-              </Field>
 
-              <label className="flex items-start gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={migrateForm.confirm}
-                  onChange={(e) => setMigrateForm((f) => ({ ...f, confirm: e.target.checked }))}
-                  className="mt-0.5 h-4 w-4 rounded border-gray-300 text-red-600 focus:ring-red-500"
-                />
-                <span className="text-base text-gray-700">我了解此操作將清空所有向量索引，且需要重新上傳文件</span>
-              </label>
+                {/* 情境 B：已設定但尚未鎖定 → 軟提示 */}
+                {isAlreadySet && !isLocked && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-base text-amber-700">
+                    目前已設定 <code className="rounded bg-amber-100 px-1">{tenantConfig?.embedding_model}</code>，尚無向量資料，可安全變更。
+                  </div>
+                )}
+
+                {/* Provider 選擇：只列已在 Provider 連線設定中啟用的 */}
+                <Field label="Provider" required>
+                  {activeSupportedProviders.length === 0 ? (
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-base text-gray-500">
+                      請先至「Provider 連線設定」新增並啟用 <strong>OpenAI</strong> 或<strong>本機模型 (Local)</strong>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {activeSupportedProviders.map((p) => (
+                        <label
+                          key={p}
+                          className={`flex items-center gap-3 rounded-lg border px-4 py-3 cursor-pointer transition-colors ${
+                            embeddingForm.provider === p
+                              ? 'border-gray-400 bg-gray-50'
+                              : 'border-gray-200 hover:border-gray-300'
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            name="embedding_provider"
+                            value={p}
+                            checked={embeddingForm.provider === p}
+                            onChange={() => {
+                              const firstModel = EMBEDDING_MODELS[p]?.[0]?.model ?? ''
+                              setEmbeddingForm((f) => ({ ...f, provider: p, model: firstModel }))
+                            }}
+                            className="h-4 w-4 text-gray-600"
+                          />
+                          <div className="flex-1">
+                            <span className={`rounded-full px-2.5 py-0.5 text-base font-semibold ${PROVIDER_COLORS[p] ?? 'bg-gray-100 text-gray-700'}`}>
+                              {PROVIDER_LABELS[p] ?? p}
+                            </span>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </Field>
+
+                {/* Model 選擇：固定清單 */}
+                {modelsForProvider.length > 0 && (
+                  <Field label="Model" required>
+                    <div className="space-y-2">
+                      {modelsForProvider.map((entry) => (
+                        <label
+                          key={entry.model}
+                          className={`flex items-center gap-3 rounded-lg border px-4 py-3 cursor-pointer transition-colors ${
+                            embeddingForm.model === entry.model
+                              ? 'border-gray-400 bg-gray-50'
+                              : 'border-gray-200 hover:border-gray-300'
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            name="embedding_model"
+                            value={entry.model}
+                            checked={embeddingForm.model === entry.model}
+                            onChange={() => setEmbeddingForm((f) => ({ ...f, model: entry.model }))}
+                            className="h-4 w-4 text-gray-600"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p className="font-mono text-base text-gray-800">{entry.model}</p>
+                            <p className="text-base text-gray-400">{entry.note}</p>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  </Field>
+                )}
+
+                {/* 768 維說明 */}
+                <div className="rounded-lg bg-gray-50 border border-gray-200 p-3 text-base text-gray-500">
+                  ℹ️ 系統使用 768 維向量，僅支援以上模型
+                </div>
+
+                {/* 情境 C：勾選確認才能儲存 */}
+                {isLocked && (
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={embeddingForm.confirm}
+                      onChange={(e) => setEmbeddingForm((f) => ({ ...f, confirm: e.target.checked }))}
+                      className="mt-0.5 h-4 w-4 rounded border-gray-300 text-red-600 focus:ring-red-500"
+                    />
+                    <span className="text-base text-gray-700">我了解此操作將清空所有向量索引，且需要重新上傳文件</span>
+                  </label>
+                )}
+              </div>
+              <ModalFooter
+                onCancel={() => setShowEmbeddingForm(false)}
+                onConfirm={handleSaveEmbedding}
+                saving={savingEmbedding}
+                confirmLabel="儲存"
+                confirmDanger={isLocked}
+              />
             </div>
-            <ModalFooter
-              onCancel={() => setShowMigrateForm(false)}
-              onConfirm={handleMigrate}
-              saving={migrating}
-              confirmLabel="確認遷移"
-              confirmDanger
-            />
           </div>
-        </div>
-      )}
+        )
+      })()}
 
       {/* ── Modal：語音模型設定 ── */}
       {showSpeechForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-xl bg-white shadow-2xl">
+          <div className="w-full max-w-lg rounded-xl bg-white shadow-2xl">
             <ModalHeader title="語音模型設定 (STT)" onClose={() => setShowSpeechForm(false)} />
             <div className="px-6 py-5 space-y-4">
 
-              <Field label="Provider" required>
-                <select
-                  value={speechForm.provider}
-                  onChange={(e) => setSpeechForm((f) => ({ ...f, provider: e.target.value, model: '' }))}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-gray-400"
-                >
-                  <option value="local">本機模型 (faster-whisper-server)</option>
-                  <option value="openai">OpenAI Whisper</option>
-                </select>
+              {/* 語音服務選擇 */}
+              <Field label="語音服務" required>
+                <div className="space-y-2">
+                  {Object.entries(SPEECH_MODELS).map(([p, entry]) => {
+                    const needsOpenAI = p === 'openai'
+                    const hasOpenAIProvider = configs.some((c) => c.provider === 'openai' && c.is_active)
+                    const unavailable = needsOpenAI && !hasOpenAIProvider
+                    return (
+                      <label
+                        key={p}
+                        className={`flex items-start gap-3 rounded-lg border px-4 py-3 transition-colors ${
+                          unavailable
+                            ? 'cursor-not-allowed border-gray-100 bg-gray-50 opacity-50'
+                            : speechForm.provider === p
+                              ? 'cursor-pointer border-gray-400 bg-gray-50'
+                              : 'cursor-pointer border-gray-200 hover:border-gray-300'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="speech_provider"
+                          value={p}
+                          disabled={unavailable}
+                          checked={speechForm.provider === p}
+                          onChange={() => setSpeechForm((f) => ({ ...f, provider: p, model: entry.model }))}
+                          className="mt-1 h-4 w-4 text-gray-600"
+                        />
+                        <div className="flex-1 min-w-0 space-y-0.5">
+                          <span className={`rounded-full px-2.5 py-0.5 text-base font-semibold ${p === 'openai' ? 'bg-green-100 text-green-800' : 'bg-purple-100 text-purple-800'}`}>
+                            {entry.label}
+                          </span>
+                          <p className="font-mono text-base text-gray-700 mt-1">{entry.model}</p>
+                          <p className="text-base text-gray-400">{entry.note}</p>
+                          {unavailable && (
+                            <p className="text-base text-amber-600">請先在「Provider 連線設定」啟用 OpenAI</p>
+                          )}
+                        </div>
+                      </label>
+                    )
+                  })}
+                </div>
               </Field>
 
+              {/* Local 需填 Base URL */}
               {speechForm.provider === 'local' && (
-                <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-base text-blue-800 space-y-1">
-                  <p className="font-semibold">使用本機 faster-whisper-server：</p>
-                  <ul className="list-disc list-inside space-y-0.5 text-blue-700">
-                    <li>需先在 Ollama Server 啟動 <code className="bg-blue-100 px-1 rounded">faster-whisper-server</code> Docker container</li>
-                    <li>預設端口 <code className="bg-blue-100 px-1 rounded">8002</code>，無需 API Key</li>
-                    <li>推薦 model：<code className="bg-blue-100 px-1 rounded">Systran/faster-whisper-medium</code></li>
-                  </ul>
-                </div>
-              )}
-
-              {speechForm.provider === 'local' && (
-                <Field
-                  label="Base URL"
-                  required
-                  hint="例：http://192.168.1.10:8002"
-                >
+                <Field label="Base URL" required hint="">
                   <input
                     type="text"
                     placeholder="http://192.168.1.10:8002"
@@ -1081,64 +1188,12 @@ export default function AdminLLMSettings() {
                     onChange={(e) => setSpeechForm((f) => ({ ...f, base_url: e.target.value }))}
                     className="w-full rounded-lg border border-gray-300 px-3 py-2 text-base font-mono focus:outline-none focus:ring-2 focus:ring-gray-400"
                   />
-                </Field>
-              )}
-
-              {speechForm.provider === 'openai' && (
-                <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-base text-green-800">
-                  API Key 自動沿用「LLM Provider 設定」中的 OpenAI Key，無需重複填寫。
-                </div>
-              )}
-
-              {speechForm.provider === 'local' && (
-                <Field
-                  label={tenantConfig?.speech_api_key_masked ? 'API Key（留空表示不變更）' : 'API Key'}
-                  hint="本機服務通常不需要 API Key，可留空"
-                >
-                  <div className="relative">
-                    <input
-                      type={showSpeechApiKey ? 'text' : 'password'}
-                      placeholder={tenantConfig?.speech_api_key_masked ? '不填則保留原 Key' : '（可留空）'}
-                      value={speechForm.api_key}
-                      onChange={(e) => setSpeechForm((f) => ({ ...f, api_key: e.target.value }))}
-                      className="w-full rounded-lg border border-gray-300 px-3 py-2 pr-10 text-base font-mono focus:outline-none focus:ring-2 focus:ring-gray-400"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowSpeechApiKey((v) => !v)}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                      tabIndex={-1}
-                    >
-                      {showSpeechApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
+                  <div className="mt-1 space-y-0.5 text-base text-gray-400">
+                    <p>設定成 whisper 服務位址，例：<code className="rounded bg-gray-100 px-1">http://192.168.1.10:8002</code></p>
+                    <p>NeuroSme 與 Whisper 在同一台主機時請用：<code className="rounded bg-gray-100 px-1">http://host.docker.internal:8002</code></p>
                   </div>
                 </Field>
               )}
-
-              <Field label="Model" hint="語音辨識模型名稱">
-                <input
-                  type="text"
-                  placeholder={speechForm.provider === 'local' ? 'Systran/faster-whisper-medium' : 'whisper-1'}
-                  value={speechForm.model}
-                  onChange={(e) => setSpeechForm((f) => ({ ...f, model: e.target.value }))}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-base font-mono focus:outline-none focus:ring-2 focus:ring-gray-400"
-                />
-                <div className="flex flex-wrap gap-1 mt-1.5">
-                  {(speechForm.provider === 'local'
-                    ? ['Systran/faster-whisper-medium']
-                    : ['whisper-1']
-                  ).map((m) => (
-                    <button
-                      key={m}
-                      type="button"
-                      onClick={() => setSpeechForm((f) => ({ ...f, model: m }))}
-                      className="rounded bg-gray-100 px-2 py-0.5 text-base text-gray-600 hover:bg-gray-200 transition-colors font-mono"
-                    >
-                      {m}
-                    </button>
-                  ))}
-                </div>
-              </Field>
 
             </div>
             <ModalFooter onCancel={() => setShowSpeechForm(false)} onConfirm={handleSaveSpeech} saving={savingSpeech} confirmLabel="儲存" />

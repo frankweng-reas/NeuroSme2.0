@@ -160,9 +160,16 @@ async def public_transcribe(
         headers["Authorization"] = f"Bearer {speech_api_key}"
 
     url = f"{base_url}/v1/audio/transcriptions"
-    post_data: dict = {"model": model, "response_format": "verbose_json"}
+    post_data: dict = {
+        "model": model,
+        "response_format": "verbose_json",
+        "temperature": "0",
+        "prompt": "以下是繁體中文的語音記錄。",
+    }
     if language:
         post_data["language"] = language
+    if provider != "openai":
+        post_data["vad_filter"] = "true"
 
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:

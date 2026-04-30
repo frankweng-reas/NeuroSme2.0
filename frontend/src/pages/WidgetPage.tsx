@@ -13,10 +13,12 @@ import {
   createWidgetSession,
   getWidgetInfo,
   widgetChatStream,
+  widgetTranscribeAudio,
   type WidgetInfo,
 } from '@/api/widget'
 import widgetI18n from '@/i18n/widgetI18n'
 import AgentChat, { type Message } from '@/components/AgentChat'
+import VoiceInput from '@/components/VoiceInput'
 
 // ── 型別 ──────────────────────────────────────────────────────────────────────
 
@@ -70,6 +72,9 @@ function WidgetInner({ token, isEmbed, langOverride }: { token: string; isEmbed:
   const [messages, setMessages] = useState<Message[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [chatError, setChatError] = useState<string | null>(null)
+
+  // ── 語音輸入 ─────────────────────────────────────────────────────────────────
+  const [voiceAutoSendText, setVoiceAutoSendText] = useState('')
 
   // ── 載入 KB info ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -228,7 +233,10 @@ function WidgetInner({ token, isEmbed, langOverride }: { token: string; isEmbed:
   }
 
   return (
-    <div className={`flex h-screen flex-col bg-gray-50 ${isEmbed ? '' : 'mx-auto max-w-lg shadow-xl'}`}>
+    <div
+      className={`flex h-dvh flex-col bg-gray-50 ${isEmbed ? '' : 'mx-auto max-w-lg shadow-xl'}`}
+      style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+    >
       {/* Header */}
       <div className="flex shrink-0 items-center gap-3 px-4 py-3" style={{ backgroundColor: color }}>
         {info?.logo_url ? (
@@ -323,9 +331,29 @@ function WidgetInner({ token, isEmbed, langOverride }: { token: string; isEmbed:
             headerTitle=""
             showChart={false}
             showPdf={false}
+            compact
+            appendAndSendText={voiceAutoSendText}
+            composerLeading={info?.voice_enabled ? (
+              <VoiceInput
+                hideLangSelector
+                transcribe={(blob, filename, lang) =>
+                  widgetTranscribeAudio(token, blob, filename, lang)
+                }
+                onTranscript={(text, autoSend) => {
+                  if (autoSend) {
+                    setVoiceAutoSendText(text)
+                    setTimeout(() => setVoiceAutoSendText(''), 50)
+                  }
+                }}
+                onError={(msg) => setChatError(msg)}
+                disabled={isLoading}
+                buttonClassName="flex min-h-[44px] min-w-0 items-center justify-center rounded-xl bg-gray-100 px-3 text-gray-500 transition-colors hover:bg-gray-200 disabled:opacity-40"
+              />
+            ) : undefined}
           />
         </div>
       )}
+
     </div>
   )
 }

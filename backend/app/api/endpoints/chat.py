@@ -3,7 +3,7 @@ import json
 import logging
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated, cast
 from uuid import UUID
 
@@ -189,6 +189,7 @@ class ChatCompletionPrepared:
     user_id: int
     has_vision_user_content: bool
     agent_id: str = "chat"
+    sources: list[dict] = field(default_factory=list)
 
 
 def _prepare_chat_completion(req: ChatRequest, db: Session, current: User) -> ChatCompletionPrepared:
@@ -206,6 +207,7 @@ def _prepare_chat_completion(req: ChatRequest, db: Session, current: User) -> Ch
     # KM Agent & Chat Service Agent：RAG 向量檢索，不使用 source_files
     kb_model_name: str | None = None
     kb_system_prompt: str | None = None
+    km_sources: list[dict] = []
     if aid in ("knowledge", "cs"):
         from app.services.km_service import format_km_context, km_retrieve_sync
 
@@ -218,6 +220,12 @@ def _prepare_chat_completion(req: ChatRequest, db: Session, current: User) -> Ch
         data = format_km_context(chunks)
         if chunks:
             logger.info("KM RAG: retrieved %d chunks for query", len(chunks))
+            seen: set[str] = set()
+            for chunk in chunks:
+                fname = chunk.document.filename if chunk.document else "未知文件"
+                if fname not in seen:
+                    seen.add(fname)
+                    km_sources.append({"filename": fname})
         else:
             logger.info("KM RAG: no relevant chunks found (tenant=%r, user=%s)", tenant_id, current.id)
 
@@ -306,6 +314,7 @@ def _prepare_chat_completion(req: ChatRequest, db: Session, current: User) -> Ch
         user_id=current.id,
         has_vision_user_content=has_vision,
         agent_id=aid,
+        sources=km_sources,
     )
 
 
@@ -694,6 +703,7 @@ async def chat_completions_stream(
             "usage": usage_out.model_dump() if usage_out else None,
             "finish_reason": finish_reason,
             "llm_request_id": rid_str,
+            "sources": prepared.sources,
         }
         yield _sse_line(done_payload)
 

@@ -181,6 +181,8 @@ export interface NsChatProps {
   composerLeading?: ReactNode
   /** 外部注入文字至輸入框（例如語音辨識結果），每次值改變都 append；請在注入後重設為 '' */
   appendInputText?: string
+  /** 外部注入文字並立即送出（語音輸入「使用此文字」自動送出），注入後請重設為 '' */
+  appendAndSendText?: string
   /** stored_file id → object URL，供 user 圖片附件顯示 */
   attachmentBlobUrls?: Record<string, string>
 }
@@ -206,6 +208,7 @@ export default function NsChat({
   composerAboveForm,
   composerLeading,
   appendInputText,
+  appendAndSendText,
   attachmentBlobUrls = {},
 }: NsChatProps) {
   const [input, setInput] = useState('')
@@ -219,6 +222,15 @@ export default function NsChat({
     setInput((prev) => (prev ? `${prev} ${appendInputText}` : appendInputText))
     setTimeout(() => inputRef.current?.focus(), 0)
   }, [appendInputText])
+
+  // 語音輸入「使用此文字」自動送出
+  useEffect(() => {
+    if (!appendAndSendText) return
+    const text = appendAndSendText.trim()
+    if (!text || isLoading || submitDisabled) return
+    onSubmit(text)
+    setInput('')
+  }, [appendAndSendText])
 
   useEffect(() => {
     if (isAtBottom) {

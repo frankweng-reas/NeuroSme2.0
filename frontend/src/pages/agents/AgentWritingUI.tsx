@@ -7,6 +7,7 @@ import { ChevronRight, ClipboardCopy, FileText, Mail, Bold, Italic, List, ListOr
 import AgentHeader from '@/components/AgentHeader'
 import LLMModelSelect from '@/components/LLMModelSelect'
 import ErrorModal from '@/components/ErrorModal'
+import HelpModal from '@/components/HelpModal'
 import { chatCompletionsStream } from '@/api/chat'
 import { createChatThread } from '@/api/chatThreads'
 import type { Agent } from '@/types'
@@ -17,7 +18,7 @@ const PROFILE_STORAGE_KEY = 'agent-writing-ui-profile'
 
 // ── 文件類型定義 ────────────────────────────────────────────────────────────
 
-type DocTypeId = 'email' | 'proposal' | 'report' | 'meeting' | 'announcement'
+type DocTypeId = 'email' | 'proposal' | 'report' | 'meeting' | 'announcement' | 'custom'
 
 interface FieldDef {
   id: string
@@ -91,6 +92,17 @@ const DOC_TYPES: DocTypeDef[] = [
       { id: 'content', label: '公告內容', placeholder: '說明公告事項、原因、注意事項', multiline: true },
       { id: 'effective_date', label: '生效 / 執行日期（選填）', placeholder: '例：2025/05/01 起' },
       { id: 'contact', label: '聯絡窗口（選填）', placeholder: '例：人資部 Sarah，分機 123' },
+    ],
+  },
+  {
+    id: 'custom',
+    label: '自訂文件',
+    icon: <Pencil className="h-4 w-4" />,
+    fields: [
+      { id: 'doc_type_name', label: '文件類型', placeholder: '例：感謝函、道歉信、合作邀約、聲明稿' },
+      { id: 'recipient', label: '對象 / 收件人（選填）', placeholder: '例：客戶 Mr. Chen、全體員工' },
+      { id: 'tone', label: '語氣', placeholder: '', options: ['正式', '友善', '強硬'] },
+      { id: 'content_desc', label: '內容說明', placeholder: '說明這份文件要表達什麼、重點是什麼，越具體越好', multiline: true },
     ],
   },
 ]
@@ -230,15 +242,22 @@ const TEMPLATES: Record<DocTypeId, TemplateDef[]> = {
       },
     },
   ],
+  custom: [],
 }
 
 
 function buildPrompt(docType: DocTypeDef, values: Record<string, string>, profile: { name: string; company: string }): string {
-  const lines = [`請撰寫一份${docType.label}，資訊如下：`, '']
-  if (profile.name.trim())    lines.push(`**寄件人姓名**: ${profile.name.trim()}`)
+  const isCustom = docType.id === 'custom'
+  const docTypeName = isCustom ? (values['doc_type_name'] ?? '').trim() || '自訂文件' : docType.label
+  const lines = [`請撰寫一份${docTypeName}，資訊如下：`, '']
+  if (profile.name.trim())    lines.push(`**撰寫人姓名**: ${profile.name.trim()}`)
   if (profile.company.trim()) lines.push(`**公司名稱**: ${profile.company.trim()}`)
   for (const field of docType.fields) {
-    const val = (values[field.id] ?? '').trim()
+    if (isCustom && field.id === 'doc_type_name') continue  // 已用於標題，不重複
+    // 下拉選單若使用者未動過，fieldValues 無值，改用第一個 option 作為預設
+    const val = field.options
+      ? (values[field.id] ?? field.options[0])
+      : (values[field.id] ?? '').trim()
     if (val) lines.push(`**${field.label}**: ${val}`)
   }
   const extra = (values['__extra__'] ?? '').trim()
@@ -305,6 +324,7 @@ export default function AgentWritingUI({ agent }: AgentWritingUIProps) {
     model: string
     usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null
   } | null>(null)
+  const [showHelpModal, setShowHelpModal] = useState(false)
 
   const fullTextRef = useRef('')
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -432,7 +452,14 @@ export default function AgentWritingUI({ agent }: AgentWritingUIProps) {
 
   const handleCopy = useCallback(async () => {
     if (!editor) return
-    const text = editor.getText()
+    // 自訂走訪：有內容的段落輸出文字 + \n，真正空的段落（使用者手動加的空行）輸出 \n
+    const lines: string[] = []
+    editor.state.doc.forEach((node) => {
+      const text = node.textContent
+      lines.push(text)
+    })
+    // 移除尾端多餘空行後組合，非空行之間用單一 \n，空行節點保留為空字串（產生 \n\n）
+    const text = lines.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd()
     try {
       await navigator.clipboard.writeText(text)
       setCopyFeedback(true)
@@ -519,8 +546,14 @@ export default function AgentWritingUI({ agent }: AgentWritingUIProps) {
         message={errorModal?.message ?? ''}
         onClose={() => setErrorModal(null)}
       />
+      <HelpModal
+        open={showHelpModal}
+        onClose={() => setShowHelpModal(false)}
+        url="/help-writing-agent.md"
+        title="Writing Agent 使用說明"
+      />
 
-      <AgentHeader agent={agent} headerBackgroundColor={HEADER_COLOR} />
+      <AgentHeader agent={agent} headerBackgroundColor={HEADER_COLOR} onOnlineHelpClick={() => setShowHelpModal(true)} />
 
       <div className="mt-4 flex min-h-0 flex-1 gap-4 overflow-hidden">
         {/* ── 左側：設定面板 ────────────────────────────────────────────────── */}
@@ -569,8 +602,8 @@ export default function AgentWritingUI({ agent }: AgentWritingUIProps) {
             <div className="flex min-h-0 flex-1 flex-col overflow-y-auto text-lg">
               <div className="flex-1 space-y-5 px-4 py-4">
 
-                {/* 寄件人資訊 */}
-                <div className="rounded-lg border border-white/20 bg-white/5">
+                {/* 個人資訊 */}
+                <div className="rounded-lg border border-[#5D8AA8]/50 bg-[#011F5B]/50">
                   <button
                     type="button"
                     onClick={() => setProfileOpen((o) => !o)}
@@ -578,7 +611,7 @@ export default function AgentWritingUI({ agent }: AgentWritingUIProps) {
                   >
                     <span className="flex items-center gap-2">
                       <span>👤</span>
-                      寄件人資訊
+                      個人資訊
                       {(profile.name || profile.company) && (
                         <span className="text-sm text-white/50 font-normal">（已填）</span>
                       )}
@@ -610,6 +643,14 @@ export default function AgentWritingUI({ agent }: AgentWritingUIProps) {
                     </div>
                   )}
                 </div>
+
+                {/* ── 文件設定分隔 ── */}
+                <div className="flex items-center gap-2 pt-1">
+                  <div className="h-px flex-1 bg-white/15" />
+                  <span className="text-xs font-medium uppercase tracking-widest text-white/35">文件設定</span>
+                  <div className="h-px flex-1 bg-white/15" />
+                </div>
+
                 {/* 文件類型選擇 */}
                 <div>
                   <label className="mb-1.5 block font-medium text-white/70">文件類型</label>
@@ -643,9 +684,15 @@ export default function AgentWritingUI({ agent }: AgentWritingUIProps) {
                   </select>
                 </div>
 
+                {/* ── 填寫資訊分隔 ── */}
+                <div className="flex items-center gap-2 pt-1">
+                  <div className="h-px flex-1 bg-white/15" />
+                  <span className="text-xs font-medium uppercase tracking-widest text-white/35">填寫資訊</span>
+                  <div className="h-px flex-1 bg-white/15" />
+                </div>
+
                 {/* 動態欄位 */}
                 <div className="space-y-4">
-                  <p className="font-medium text-white/70">填寫資訊</p>
                   {currentDocType.fields.map((field) => (
                     <div key={field.id}>
                       <label className="mb-1 block text-white/80">

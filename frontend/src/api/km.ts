@@ -31,6 +31,8 @@ export interface KmKnowledgeBase {
   widget_logo_url: string | null
   widget_color: string | null
   widget_lang: string | null
+  widget_voice_enabled: boolean
+  widget_voice_prompt: string | null
 }
 
 export async function listKnowledgeBases(): Promise<KmKnowledgeBase[]> {
@@ -61,6 +63,8 @@ export async function updateKnowledgeBase(
     widget_logo_url?: string
     widget_color?: string
     widget_lang?: string
+    widget_voice_enabled?: boolean
+    widget_voice_prompt?: string
   }
 ): Promise<KmKnowledgeBase> {
   return apiFetch<KmKnowledgeBase>(`/km/knowledge-bases/${id}`, {

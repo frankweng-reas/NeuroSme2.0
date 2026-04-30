@@ -13,7 +13,7 @@ from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.user import User
 from app.models.user_agent import UserAgent
-from app.schemas.user import UserAgentsUpdate, UserCreate, UserProfileUpdate, UserResponse, UserRoleUpdate, UserUpdate
+from app.schemas.user import UserAgentsUpdate, UserCreate, UserModelPermissionsResponse, UserModelPermissionsUpdate, UserProfileUpdate, UserResponse, UserRoleUpdate, UserUpdate
 from app.services.permission import get_agent_ids_for_user, resolve_agent_catalog
 
 router = APIRouter()
@@ -342,3 +342,47 @@ def update_user_agents(
         ))
     db.commit()
     return {"agent_ids": body.agent_ids}
+
+
+@router.get("/{user_id}/model-permissions", response_model=UserModelPermissionsResponse)
+def get_user_model_permissions(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current: Annotated[User, Depends(get_current_user)] = ...,
+):
+    """取得該 user 的模型權限清單（僅 admin 或本人）"""
+    _require_self_or_admin(current, user_id)
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    raw = getattr(user, "allowed_models", None)
+    allowed: list[str] | None = None
+    if isinstance(raw, list):
+        allowed = [str(m) for m in raw if isinstance(m, str)]
+    return UserModelPermissionsResponse(user_id=user_id, allowed_models=allowed)
+
+
+@router.put("/{user_id}/model-permissions", response_model=UserModelPermissionsResponse)
+def update_user_model_permissions(
+    user_id: int,
+    body: UserModelPermissionsUpdate,
+    db: Session = Depends(get_db),
+    current: Annotated[User, Depends(get_current_user)] = ...,
+):
+    """更新該 user 可使用的模型清單（僅 admin）；allowed_models=null 表示繼承租戶全部模型。"""
+    if not _is_admin_or_super(current):
+        raise HTTPException(status_code=403, detail="需 admin 權限")
+    user = db.query(User).filter(
+        User.id == user_id,
+        User.tenant_id == current.tenant_id,
+    ).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.allowed_models = body.allowed_models  # type: ignore[assignment]
+    db.commit()
+    db.refresh(user)
+    raw = getattr(user, "allowed_models", None)
+    allowed: list[str] | None = None
+    if isinstance(raw, list):
+        allowed = [str(m) for m in raw if isinstance(m, str)]
+    return UserModelPermissionsResponse(user_id=user_id, allowed_models=allowed)
