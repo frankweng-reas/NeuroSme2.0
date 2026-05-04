@@ -24,7 +24,6 @@ import {
   createKnowledgeBase,
   deleteKnowledgeBase,
   deleteKmDocument,
-  generateWidgetToken,
   listKbDocuments,
   listKnowledgeBases,
   updateKnowledgeBase,
@@ -82,6 +81,7 @@ export default function AgentCsUI({ agent }: AgentCsUIProps) {
   // ── 使用者角色 ─────────────────────────────────────────────────────────────
   const [userRole, setUserRole] = useState<UserRole>('member')
   const canManage = userRole === 'admin' || userRole === 'super_admin' || userRole === 'manager'
+  const isAdmin = userRole === 'admin' || userRole === 'super_admin'
 
   useEffect(() => {
     getMe().then((me) => setUserRole(me.role)).catch(() => {})
@@ -121,7 +121,6 @@ export default function AgentCsUI({ agent }: AgentCsUIProps) {
   const [settingsWidgetVoiceEnabled, setSettingsWidgetVoiceEnabled] = useState(false)
   const [settingsWidgetVoicePrompt, setSettingsWidgetVoicePrompt] = useState('')
   const [settingsSaving, setSettingsSaving] = useState(false)
-  const [tokenGenerating, setTokenGenerating] = useState(false)
   const [showHelpModal, setShowHelpModal] = useState(false)
 
   // ── 右欄 Tab：'chat' | 'history' | 'api' ────────────────────────────────
@@ -221,21 +220,6 @@ export default function AgentCsUI({ agent }: AgentCsUIProps) {
       setErrorModal({ title: '儲存設定失敗', message: msg })
     } finally {
       setSettingsSaving(false)
-    }
-  }
-
-  const handleGenerateToken = async () => {
-    if (!settingsKb) return
-    setTokenGenerating(true)
-    try {
-      const updated = await generateWidgetToken(settingsKb.id)
-      setKbs((prev) => prev.map((kb) => kb.id === updated.id ? updated : kb))
-      setSettingsKb(updated)
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : '產生失敗'
-      setErrorModal({ title: '產生 Token 失敗', message: msg })
-    } finally {
-      setTokenGenerating(false)
     }
   }
 
@@ -711,30 +695,6 @@ export default function AgentCsUI({ agent }: AgentCsUIProps) {
 
       {/* ── KB 設定 Modal ─────────────────────────────────────────────────── */}
       {settingsKb && (() => {
-        const embedCode = (origin: string, token: string, color: string) => [
-          `<!-- NeuroSme Widget -->`,
-          `<button id="ns-btn" onclick="nsTgl()"`,
-          `  style="position:fixed;bottom:24px;right:24px;z-index:10000;`,
-          `         width:56px;height:56px;border-radius:50%;border:none;`,
-          `         background:${color};color:#fff;font-size:26px;`,
-          `         cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.2)">💬</button>`,
-          `<iframe id="ns-ifr" width="400" height="600" frameborder="0"`,
-          `  style="display:none;position:fixed;bottom:88px;right:24px;z-index:9999;`,
-          `         border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,.18)"></iframe>`,
-          `<script>`,
-          `function nsTgl() {`,
-          `  var f = document.getElementById('ns-ifr');`,
-          `  var b = document.getElementById('ns-btn');`,
-          `  var o = f.style.display !== 'none';`,
-          `  if (!o && !f.src) {`,
-          `    var l = document.documentElement.lang || navigator.language || 'zh-TW';`,
-          `    f.src = '${origin}/widget/${token}?embed=1&lang=' + encodeURIComponent(l);`,
-          `  }`,
-          `  f.style.display = o ? 'none' : 'block';`,
-          `  b.innerHTML = o ? '💬' : '✕';`,
-          `}`,
-          `<\/script>`,
-        ].join('\n')
         return (
         <div
           className="fixed inset-0 z-[60] flex items-center justify-center bg-black/45 p-4"
@@ -910,79 +870,31 @@ export default function AgentCsUI({ agent }: AgentCsUIProps) {
                 <div>
                   <label className="mb-1 block text-base font-medium text-gray-700">Widget 連結</label>
                   {settingsKb?.public_token ? (
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2">
-                        <input
-                          readOnly
-                          value={`${window.location.origin}/widget/${settingsKb.public_token}`}
-                          className="flex-1 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-base font-mono text-gray-700 focus:outline-none"
-                          onClick={(e) => (e.target as HTMLInputElement).select()}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => {
-                            navigator.clipboard.writeText(`${window.location.origin}/widget/${settingsKb.public_token}`)
-                            showToast('連結已複製')
-                          }}
-                          className="shrink-0 rounded-lg border border-gray-300 px-3 py-2 text-base text-gray-700 hover:bg-gray-50"
-                        >
-                          複製
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void handleGenerateToken()}
-                          disabled={tokenGenerating}
-                          className="shrink-0 rounded-lg border border-red-200 px-3 py-2 text-base text-red-600 hover:bg-red-50 disabled:opacity-50"
-                          title="重設 Token（舊連結將失效）"
-                        >
-                          重設
-                        </button>
-                      </div>
-                      <div>
-                        <div className="mb-1 flex items-center justify-between">
-                          <p className="text-base text-gray-500">Embed Code（貼入網頁 &lt;body&gt; 尾端）</p>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const code = embedCode(
-                                window.location.origin,
-                                settingsKb.public_token ?? '',
-                                settingsWidgetColor || '#1A3A52'
-                              )
-                              navigator.clipboard.writeText(code)
-                              showToast('Embed Code 已複製')
-                            }}
-                            className="rounded-lg border border-gray-300 px-3 py-1.5 text-base text-gray-700 hover:bg-gray-50"
-                          >
-                            複製
-                          </button>
-                        </div>
-                        <textarea
-                          readOnly
-                          rows={12}
-                          value={embedCode(
-                            window.location.origin,
-                            settingsKb.public_token ?? '',
-                            settingsWidgetColor || '#1A3A52'
-                          )}
-                          className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-base font-mono text-gray-600 focus:outline-none"
-                          onClick={(e) => (e.target as HTMLTextAreaElement).select()}
-                        />
-                        <p className="mt-1.5 text-base text-gray-400">
-                          語言優先序：網站 <code>lang</code> 屬性 › KB 設定語言 › 繁體中文
-                        </p>
-                      </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        readOnly
+                        value={`${window.location.origin}/widget/${settingsKb.public_token}`}
+                        className="flex-1 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-base font-mono text-gray-700 focus:outline-none"
+                        onClick={(e) => (e.target as HTMLInputElement).select()}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(`${window.location.origin}/widget/${settingsKb.public_token}`)
+                          showToast('連結已複製')
+                        }}
+                        className="shrink-0 rounded-lg border border-gray-300 px-3 py-2 text-base text-gray-700 hover:bg-gray-50"
+                      >
+                        複製
+                      </button>
                     </div>
                   ) : (
-                    <button
-                      type="button"
-                      onClick={() => void handleGenerateToken()}
-                      disabled={tokenGenerating}
-                      className="flex items-center gap-1.5 rounded-lg border border-sky-300 bg-sky-50 px-4 py-2 text-base text-sky-700 transition-colors hover:bg-sky-100 disabled:opacity-50"
-                    >
-                      {tokenGenerating && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                      產生 Widget Token
-                    </button>
+                    <p className="text-sm text-gray-400">
+                      尚未開通，請至管理後台（設定 › Widget 管理）開通
+                      {isAdmin && (
+                        <a href="/admin/widget-management" className="ml-1 text-sky-600 hover:underline">前往</a>
+                      )}
+                    </p>
                   )}
                 </div>
               </div>

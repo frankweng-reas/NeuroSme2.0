@@ -89,6 +89,11 @@ def _can_manage(role: str) -> bool:
     return role in ("admin", "super_admin", "manager")
 
 
+def _is_admin(role: str) -> bool:
+    """Token 開通/撤銷限 admin / super_admin，manager 不在此列"""
+    return role in ("admin", "super_admin")
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Endpoints
 # ──────────────────────────────────────────────────────────────────────────────
@@ -213,9 +218,9 @@ def generate_widget_token(
     db: Session = Depends(get_db),
     current: Annotated[User, Depends(get_current_user)] = ...,
 ):
-    """產生（或重設）Widget public_token"""
-    if not _can_manage(current.role):
-        raise HTTPException(status_code=403, detail="只有管理員可以產生 Widget Token")
+    """產生（或重設）Widget public_token，僅限 admin / super_admin"""
+    if not _is_admin(current.role):
+        raise HTTPException(status_code=403, detail="只有系統管理員可以開通 Widget Token")
 
     kb = db.query(KmKnowledgeBase).filter(
         KmKnowledgeBase.id == kb_id,
@@ -225,6 +230,29 @@ def generate_widget_token(
         raise HTTPException(status_code=404, detail="知識庫不存在")
 
     kb.public_token = uuid.uuid4().hex
+    db.commit()
+    db.refresh(kb)
+    return _to_response(kb, db)
+
+
+@router.delete("/knowledge-bases/{kb_id}/token", response_model=KbResponse)
+def revoke_widget_token(
+    kb_id: int,
+    db: Session = Depends(get_db),
+    current: Annotated[User, Depends(get_current_user)] = ...,
+):
+    """停用 Widget：清空 public_token，連結立即失效，外觀設定保留，僅限 admin / super_admin"""
+    if not _is_admin(current.role):
+        raise HTTPException(status_code=403, detail="只有系統管理員可以停用 Widget")
+
+    kb = db.query(KmKnowledgeBase).filter(
+        KmKnowledgeBase.id == kb_id,
+        KmKnowledgeBase.tenant_id == current.tenant_id,
+    ).first()
+    if not kb:
+        raise HTTPException(status_code=404, detail="知識庫不存在")
+
+    kb.public_token = None
     db.commit()
     db.refresh(kb)
     return _to_response(kb, db)

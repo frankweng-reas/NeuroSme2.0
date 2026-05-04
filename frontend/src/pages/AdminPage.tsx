@@ -12,6 +12,7 @@ import {
   Lock,
   UserCircle,
   Users,
+  Wifi,
 } from 'lucide-react'
 import { getMe } from '@/api/users'
 import type { User } from '@/types'
@@ -25,6 +26,7 @@ const SIDEBAR_ITEMS = [
   { to: '/admin/users', label: '使用者管理', icon: Users, superAdminOnly: false },
   { to: '/admin/user-permissions', label: '使用者權限設定', icon: Lock, superAdminOnly: false },
   { to: '/admin/agent-insights', label: 'Agents 用量洞察', icon: BarChart3, superAdminOnly: false },
+  { to: '/admin/widget-management', label: 'Widget 管理', icon: Wifi, superAdminOnly: false },
 ] as const
 
 const SIDEBAR_ITEMS_SECONDARY: Array<{

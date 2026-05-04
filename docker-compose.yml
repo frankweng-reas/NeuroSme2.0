@@ -1,7 +1,10 @@
 # 開發用：僅跑 PostgreSQL，Backend / Frontend 本地執行
 services:
   postgres-neurosme2:
-    image: postgres:16
+    build:
+      context: ./docker/postgres
+      dockerfile: Dockerfile
+    image: neurosme2-postgres:16
     container_name: neurosme2.0
     restart: unless-stopped
     environment:

@@ -80,6 +80,12 @@ export async function generateWidgetToken(id: number): Promise<KmKnowledgeBase> 
   })
 }
 
+export async function revokeWidgetToken(id: number): Promise<KmKnowledgeBase> {
+  return apiFetch<KmKnowledgeBase>(`/km/knowledge-bases/${id}/token`, {
+    method: 'DELETE',
+  })
+}
+
 export async function deleteKnowledgeBase(id: number): Promise<void> {
   return apiFetch<void>(`/km/knowledge-bases/${id}`, { method: 'DELETE' })
 }

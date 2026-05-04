@@ -16,6 +16,7 @@ import AdminUserPermissions from './pages/admin/AdminUserPermissions'
 import AdminTenantSettings from './pages/admin/AdminTenantSettings'
 import AdminUsers from './pages/admin/AdminUsers'
 import AdminAgentInsights from './pages/admin/AdminAgentInsights'
+import AdminWidgetManagement from './pages/admin/AdminWidgetManagement'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
 import ChangePasswordPage from './pages/ChangePasswordPage'
@@ -84,6 +85,7 @@ function App() {
                 <Route path="llm-settings" element={<AdminLLMSettings />} />
                 <Route path="agent-insights" element={<AdminAgentInsights />} />
                 <Route path="users" element={<AdminUsers />} />
+                <Route path="widget-management" element={<AdminWidgetManagement />} />
               </Route>
               <Route
                 path="change-password"

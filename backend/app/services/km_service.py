@@ -13,6 +13,7 @@ import time
 from datetime import datetime, timezone
 
 import litellm
+import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from app.models.km_chunk import KmChunk
@@ -450,12 +451,22 @@ def process_document(
             )
 
         # 5. 寫入 km_chunks，並鎖定 embedding config
+        # BM25 tsvector 只對短、語意集中的類型有意義（faq/spec），其餘不建 index
+        BM25_DOC_TYPES = {"faq", "spec"}
+        build_tsv = doc_type in BM25_DOC_TYPES
         for idx, (chunk_content, embedding) in enumerate(zip(chunks, all_embeddings)):
             km_chunk = KmChunk(
                 document_id=doc_id,
                 chunk_index=idx,
                 content=chunk_content,
                 embedding=embedding,
+                content_tsv=(
+                    db.execute(
+                        sa.text("SELECT to_tsvector('public.cjk', :t)"),
+                        {"t": chunk_content},
+                    ).scalar()
+                    if build_tsv else None
+                ),
                 metadata_={"filename": filename, "chunk_index": idx},
             )
             db.add(km_chunk)
@@ -566,26 +577,88 @@ def km_retrieve_sync(
         )
 
     try:
-        q = (
-            db.query(KmChunk)
-            .join(KmDocument, KmChunk.document_id == KmDocument.id)
-            .filter(
+        # ── 共用 filter 條件 ──────────────────────────────────
+        def _base_filters():
+            filters = [
                 KmDocument.tenant_id == tenant_id,
                 KmDocument.status == "ready",
-            )
-        )
-        if not skip_scope_check:
-            q = q.filter(
-                (KmDocument.scope == "public") | (KmDocument.owner_user_id == user_id)
-            )
-        if knowledge_base_id is not None:
-            q = q.filter(KmDocument.knowledge_base_id == knowledge_base_id)
-        if selected_doc_ids:
-            q = q.filter(KmDocument.id.in_(selected_doc_ids))
-        results = (
-            q.order_by(KmChunk.embedding.cosine_distance(query_embedding))
-            .limit(top_k)
+            ]
+            if not skip_scope_check:
+                filters.append(
+                    (KmDocument.scope == "public") | (KmDocument.owner_user_id == user_id)
+                )
+            if knowledge_base_id is not None:
+                filters.append(KmDocument.knowledge_base_id == knowledge_base_id)
+            if selected_doc_ids:
+                filters.append(KmDocument.id.in_(selected_doc_ids))
+            return filters
+
+        fetch_k = top_k * 3  # 各自多撈一些，合併後再取 top_k
+
+        # ── 向量搜尋（cosine distance 升序 = 相似度降序）──────
+        vector_rows = (
+            db.query(KmChunk)
+            .join(KmDocument, KmChunk.document_id == KmDocument.id)
+            .filter(*_base_filters())
+            .order_by(KmChunk.embedding.cosine_distance(query_embedding))
+            .limit(fetch_k)
             .all()
+        )
+
+        # ── BM25 全文搜尋（OR-tsquery：2-gram lexeme 用 OR 連接）──
+        bm25_rows: list[KmChunk] = []
+        try:
+            tsv_raw = db.execute(
+                sa.text("SELECT to_tsvector('public.cjk', :q)"), {"q": query}
+            ).scalar()
+            or_tsquery: str | None = None
+            if tsv_raw:
+                lexemes = [
+                    f"'{part.split(':')[0].strip(chr(39))}'"
+                    for part in str(tsv_raw).split()
+                    if part
+                ]
+                if lexemes:
+                    or_tsquery = " | ".join(lexemes)
+
+            if or_tsquery:
+                tsq = sa.func.to_tsquery("public.cjk", or_tsquery)
+                bm25_q = (
+                    db.query(KmChunk)
+                    .join(KmDocument, KmChunk.document_id == KmDocument.id)
+                    .filter(
+                        *_base_filters(),
+                        KmChunk.content_tsv.op("@@")(tsq),
+                    )
+                    .order_by(sa.func.ts_rank(KmChunk.content_tsv, tsq, 1).desc())
+                    .limit(fetch_k)
+                )
+                bm25_rows = bm25_q.all()
+        except Exception as bm25_err:
+            logger.info("BM25 搜尋失敗: %s", bm25_err, exc_info=True)
+
+        # ── RRF 合併（k=60）─────────────────────────────────
+        # score = α × 1/(k+rank_vector) + (1-α) × 1/(k+rank_bm25)
+        RRF_K = 60
+        ALPHA = 0.7  # 向量權重
+
+        scores: dict[int, float] = {}
+        chunk_map: dict[int, KmChunk] = {}
+
+        for rank, chunk in enumerate(vector_rows, start=1):
+            scores[chunk.id] = scores.get(chunk.id, 0.0) + ALPHA / (RRF_K + rank)
+            chunk_map[chunk.id] = chunk
+
+        for rank, chunk in enumerate(bm25_rows, start=1):
+            scores[chunk.id] = scores.get(chunk.id, 0.0) + (1 - ALPHA) / (RRF_K + rank)
+            chunk_map[chunk.id] = chunk
+
+        sorted_ids = sorted(scores, key=lambda cid: scores[cid], reverse=True)
+        results = [chunk_map[cid] for cid in sorted_ids[:top_k]]
+
+        logger.info(
+            "km_retrieve hybrid: vector=%d bm25=%d merged=%d top_k=%d",
+            len(vector_rows), len(bm25_rows), len(scores), top_k,
         )
         return results
     except Exception as e:
