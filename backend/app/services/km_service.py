@@ -115,6 +115,21 @@ def _clean_pdf_text(text: str) -> str:
     return result.strip()
 
 
+def _table_to_markdown(table: list[list]) -> str:
+    """將 pdfplumber 二維陣列轉成 Markdown 表格字串。"""
+    rows = [[str(cell or "").strip() for cell in row] for row in table if any(cell for cell in row)]
+    if not rows:
+        return ""
+    header = rows[0]
+    body = rows[1:]
+    sep = ["---"] * len(header)
+    lines = [
+        "| " + " | ".join(header) + " |",
+        "| " + " | ".join(sep) + " |",
+    ] + ["| " + " | ".join(row) + " |" for row in body]
+    return "\n".join(lines)
+
+
 def _extract_pdf_pdfplumber(file_bytes: bytes) -> str:
     try:
         import pdfplumber  # type: ignore[import-untyped]
@@ -124,29 +139,59 @@ def _extract_pdf_pdfplumber(file_bytes: bytes) -> str:
             for page in pdf.pages:
                 page_parts: list[str] = []
 
-                # 1. 先提取頁面純文字
-                plain = page.extract_text(x_tolerance=2, y_tolerance=3)
-                if plain:
-                    page_parts.append(plain.strip())
+                # 1. 找出所有表格及其 bbox，轉成 Markdown
+                table_objs = page.find_tables()
+                table_bboxes = [t.bbox for t in table_objs]
+                for t in table_objs:
+                    md = _table_to_markdown(t.extract())
+                    if md:
+                        page_parts.append(md)
 
-                # 2. 提取表格（規格書的核心資料通常在表格裡）
-                tables = page.extract_tables()
-                for table in tables:
-                    rows: list[str] = []
-                    for row in table:
-                        cells = [str(c).strip() for c in row if c and str(c).strip()]
-                        if cells:
-                            rows.append("  ".join(cells))
-                    if rows:
-                        page_parts.append("\n".join(rows))
+                # 2. 萃取表格區域以外的純文字，避免重複
+                if table_bboxes:
+                    words = page.extract_words(x_tolerance=2, y_tolerance=3)
+                    non_table = []
+                    for w in words:
+                        wx0, wy0, wx1, wy1 = w["x0"], w["top"], w["x1"], w["bottom"]
+                        in_table = any(
+                            wx0 >= bx0 and wy0 >= by0 and wx1 <= bx1 and wy1 <= by1
+                            for bx0, by0, bx1, by1 in table_bboxes
+                        )
+                        if not in_table:
+                            non_table.append(w["text"])
+                    plain = " ".join(non_table).strip()
+                else:
+                    plain = (page.extract_text(x_tolerance=2, y_tolerance=3) or "").strip()
+
+                if plain:
+                    page_parts.insert(0, plain)  # 純文字置於表格前
 
                 if page_parts:
-                    parts.append("\n".join(page_parts))
+                    parts.append("\n\n".join(page_parts))
 
         return "\n\n".join(parts)
     except Exception as e:
         logger.warning("pdfplumber 擷取失敗: %s", e)
         return ""
+
+
+def _collapse_spaced_text(text: str) -> str:
+    """修正 fpdf2 CIDFont 產生的「每字元間有空格」問題。
+    偵測到大量字元間空格時，移除所有非換行的字間空格。
+    """
+    import re
+    if not text:
+        return text
+    # 計算非換行字元數和空格數，若空格率 > 60% 視為 spaced-out text
+    non_newline = text.replace("\n", "")
+    char_count = len(non_newline.replace(" ", ""))
+    space_count = non_newline.count(" ")
+    if char_count > 0 and space_count / max(char_count, 1) > 0.6:
+        # 移除相鄰可見字元之間的單一空格
+        text = re.sub(r"(?<=\S) (?=\S)", "", text)
+        # 壓縮殘留的多餘空格
+        text = re.sub(r"  +", " ", text)
+    return text
 
 
 def _extract_pdf_pypdf(file_bytes: bytes) -> str:
@@ -158,7 +203,7 @@ def _extract_pdf_pypdf(file_bytes: bytes) -> str:
         for page in reader.pages:
             text = page.extract_text()
             if text:
-                parts.append(text.strip())
+                parts.append(_collapse_spaced_text(text.strip()))
         return "\n\n".join(parts)
     except Exception as e:
         logger.warning("pypdf 擷取失敗: %s", e)

@@ -2,7 +2,7 @@
  * Doc Refiner Agent UI（agent_id = doc-refiner）
  * 三階段：上傳設定 → 左右分割比對編輯 → 下載 PDF
  */
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import {
   Download,
   FileText,
@@ -13,13 +13,15 @@ import {
   Upload,
 } from 'lucide-react'
 import {
-  processDocument,
+  processDocumentStream,
   exportDocument,
-  type ProcessResponse,
-  type RefinerMode,
-  type RefinerItem,
+  exportTxt,
+  listKBs,
+  importToKB,
+  type StreamEvent,
+  type TokenUsage,
   type QAItem,
-  type SummaryItem,
+  type KBOption,
 } from '@/api/docRefiner'
 import AgentHeader from '@/components/AgentHeader'
 import ErrorModal from '@/components/ErrorModal'
@@ -39,19 +41,29 @@ export default function AgentDocRefinerUI({ agent }: Props) {
 
   // ── 上傳設定 ──
   const [file, setFile] = useState<File | null>(null)
-  const [mode, setMode] = useState<RefinerMode>('qa')
   const [model, setModel] = useState('')
   const [processing, setProcessing] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // ── 整理結果（可編輯）──
-  const [result, setResult] = useState<ProcessResponse | null>(null)
-  const [items, setItems] = useState<RefinerItem[]>([])
+  const [items, setItems] = useState<QAItem[]>([])
   const [title, setTitle] = useState('')
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
+  // SSE 進度
+  const [chunkProgress, setChunkProgress] = useState<{ current: number; total: number } | null>(null)
+  // 完成後的 usage / model（用於 footer）
+  const [doneInfo, setDoneInfo] = useState<{ usage: TokenUsage; model: string } | null>(null)
+  // abort controller
+  const abortRef = useRef<AbortController | null>(null)
 
   // ── 匯出 ──
   const [exporting, setExporting] = useState(false)
+  const [exportingTxt, setExportingTxt] = useState(false)
+
+  // ── 匯入至 KB ──
+  const [importModalOpen, setImportModalOpen] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const [importSuccess, setImportSuccess] = useState<{ kbName: string; count: number } | null>(null)
 
   // ── 錯誤 ──
   const [errorModal, setErrorModal] = useState<{ title?: string; message: string } | null>(null)
@@ -93,19 +105,45 @@ export default function AgentDocRefinerUI({ agent }: Props) {
 
   const handleProcess = async () => {
     if (!file) return
+
+    // 取消上次未完成的 stream
+    abortRef.current?.abort()
+    abortRef.current = new AbortController()
+
     setProcessing(true)
+    setItems([])
+    setDoneInfo(null)
+    setChunkProgress(null)
+    setTitle(file.name.replace(/\.pdf$/i, ''))
+    setStage('edit')  // 立即切到 EditStage，讓用戶看到結果逐漸出現
+
     try {
-      const res = await processDocument(file, mode, model || undefined)
-      setResult(res)
-      setTitle(res.title)
-      setItems(res.items.map((item, idx) => ({ ...item, id: idx + 1 })))
-      setStage('edit')
+      for await (const event of processDocumentStream(
+        file, model || undefined, abortRef.current.signal,
+      )) {
+        if (event.type === 'meta') {
+          setChunkProgress({ current: 0, total: event.chunk_total })
+        } else if (event.type === 'items') {
+          setItems((prev) => [...prev, ...event.items])
+          setChunkProgress({ current: event.chunk, total: event.chunk_total })
+        } else if (event.type === 'done') {
+          setDoneInfo({ usage: event.usage, model: event.model })
+          setChunkProgress(null)
+          setProcessing(false)
+        } else if (event.type === 'error') {
+          setErrorModal({ title: '整理失敗', message: event.detail })
+          setProcessing(false)
+          setStage('upload')
+        } else if (event.type === 'chunk_error') {
+          // 某段失敗但繼續，不跳錯誤 modal，只 log
+          console.warn(`chunk ${event.chunk} 解析失敗：${event.detail}`)
+        }
+      }
     } catch (err) {
-      setErrorModal({
-        title: '整理失敗',
-        message: err instanceof Error ? err.message : '處理失敗，請重試',
-      })
-    } finally {
+      if ((err as Error).name !== 'AbortError') {
+        setErrorModal({ title: '整理失敗', message: err instanceof Error ? err.message : '處理失敗，請重試' })
+        setStage('upload')
+      }
       setProcessing(false)
     }
   }
@@ -114,7 +152,7 @@ export default function AgentDocRefinerUI({ agent }: Props) {
   // 卡片編輯
   // ────────────────────────────────────────────────
 
-  const updateItem = (id: number, patch: Partial<RefinerItem>) => {
+  const updateItem = (id: number, patch: Partial<QAItem>) => {
     setItems((prev) => prev.map((it) => it.id === id ? { ...it, ...patch } : it))
   }
 
@@ -124,10 +162,31 @@ export default function AgentDocRefinerUI({ agent }: Props) {
 
   const addItem = () => {
     const newId = Math.max(0, ...items.map((it) => it.id)) + 1
-    if (mode === 'qa') {
-      setItems((prev) => [...prev, { id: newId, question: '', answer: '' } as QAItem])
-    } else {
-      setItems((prev) => [...prev, { id: newId, heading: '', content: '' } as SummaryItem])
+    setItems((prev) => [...prev, { id: newId, question: '', answer: '' }])
+  }
+
+  // ────────────────────────────────────────────────
+  // 匯入至知識庫
+  // ────────────────────────────────────────────────
+
+  const handleImport = async (kbId: number | undefined, newKbName: string | undefined) => {
+    setImporting(true)
+    try {
+      const res = await importToKB({
+        title,
+        items,
+        kb_id: kbId,
+        new_kb_name: newKbName,
+      })
+      setImportSuccess({ kbName: res.kb_name, count: res.imported_count })
+      setImportModalOpen(false)
+    } catch (err) {
+      setErrorModal({
+        title: '匯入失敗',
+        message: err instanceof Error ? err.message : '匯入失敗，請重試',
+      })
+    } finally {
+      setImporting(false)
     }
   }
 
@@ -138,7 +197,7 @@ export default function AgentDocRefinerUI({ agent }: Props) {
   const handleExport = async () => {
     setExporting(true)
     try {
-      const blob = await exportDocument({ mode, title, items })
+      const blob = await exportDocument({ title, items })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -155,17 +214,40 @@ export default function AgentDocRefinerUI({ agent }: Props) {
     }
   }
 
+  const handleExportTxt = async () => {
+    setExportingTxt(true)
+    try {
+      const blob = await exportTxt({ title, items })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${title || 'qa'}.txt`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      setErrorModal({
+        title: '匯出失敗',
+        message: err instanceof Error ? err.message : '匯出 TXT 失敗',
+      })
+    } finally {
+      setExportingTxt(false)
+    }
+  }
+
   // ────────────────────────────────────────────────
   // 重新上傳
   // ────────────────────────────────────────────────
 
   const handleReset = () => {
+    abortRef.current?.abort()
     setStage('upload')
     setFile(null)
     setPdfUrl(null)
-    setResult(null)
     setItems([])
     setTitle('')
+    setDoneInfo(null)
+    setChunkProgress(null)
+    setProcessing(false)
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
@@ -188,33 +270,44 @@ export default function AgentDocRefinerUI({ agent }: Props) {
         onOnlineHelpClick={() => setHelpOpen(true)}
       />
 
+      {importModalOpen && (
+        <ImportToKBModal
+          onConfirm={handleImport}
+          onClose={() => setImportModalOpen(false)}
+          importing={importing}
+        />
+      )}
+
       <div className="mt-4 flex min-h-0 flex-1 flex-col overflow-hidden">
         {stage === 'upload' ? (
           <UploadStage
             file={file}
-            mode={mode}
             model={model}
             processing={processing}
             fileInputRef={fileInputRef}
             onFileChange={handleFileChange}
             onDrop={handleDrop}
-            onModeChange={setMode}
             onModelChange={setModel}
             onProcess={handleProcess}
           />
         ) : (
           <EditStage
             pdfUrl={pdfUrl}
-            mode={mode}
             title={title}
             items={items}
-            result={result}
+            processing={processing}
+            chunkProgress={chunkProgress}
+            doneInfo={doneInfo}
             exporting={exporting}
-            onTitleChange={setTitle}
+            exportingTxt={exportingTxt}
+            importing={importing}
+            importSuccess={importSuccess}
             onUpdateItem={updateItem}
             onDeleteItem={deleteItem}
             onAddItem={addItem}
             onExport={handleExport}
+            onExportTxt={handleExportTxt}
+            onImportClick={() => { setImportSuccess(null); setImportModalOpen(true) }}
             onReset={handleReset}
           />
         )}
@@ -229,20 +322,18 @@ export default function AgentDocRefinerUI({ agent }: Props) {
 
 interface UploadStageProps {
   file: File | null
-  mode: RefinerMode
   model: string
   processing: boolean
   fileInputRef: React.RefObject<HTMLInputElement>
   onFileChange: (e: React.ChangeEvent<HTMLInputElement>) => void
   onDrop: (e: React.DragEvent) => void
-  onModeChange: (m: RefinerMode) => void
   onModelChange: (m: string) => void
   onProcess: () => void
 }
 
 function UploadStage({
-  file, mode, model, processing, fileInputRef,
-  onFileChange, onDrop, onModeChange, onModelChange, onProcess,
+  file, model, processing, fileInputRef,
+  onFileChange, onDrop, onModelChange, onProcess,
 }: UploadStageProps) {
   const CARD_BG = '#1A3A52'
   return (
@@ -255,7 +346,7 @@ function UploadStage({
           </div>
           <div>
             <h2 className="text-lg font-semibold text-white">智慧文件整理</h2>
-            <p className="text-sm text-white/50">上傳 PDF，AI 自動整理成 Q&A 或摘要</p>
+            <p className="text-sm text-white/50">上傳 PDF，AI 自動萃取 Q&A 知識條目</p>
           </div>
         </div>
 
@@ -293,43 +384,15 @@ function UploadStage({
           )}
         </div>
 
-        {/* 整理模式 */}
-        <div className="mb-5">
-          <label className="mb-2 block text-sm font-medium text-white/70">整理模式</label>
-          <div className="flex gap-3">
-            {([['qa', '❓ Q&A 格式'], ['summary', '📋 摘要格式']] as [RefinerMode, string][]).map(([val, label]) => (
-              <button
-                key={val}
-                type="button"
-                onClick={() => onModeChange(val)}
-                className={`flex-1 rounded-lg border px-4 py-2.5 text-sm font-medium transition-all ${
-                  mode === val
-                    ? 'border-sky-400 bg-sky-600/30 text-sky-200'
-                    : 'border-white/15 bg-white/5 text-white/60 hover:bg-white/10'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <p className="mt-1.5 text-xs text-white/40">
-            {mode === 'qa'
-              ? 'Q&A 模式：萃取重點整理成問答對，最適合加入知識庫'
-              : '摘要模式：將每段落整理成重點摘要，適合快速掌握文件內容'}
-          </p>
-        </div>
-
         {/* 模型選擇 */}
         <div className="mb-6">
           <label className="mb-2 block text-sm font-medium text-white/70">使用模型（選填）</label>
           <LLMModelSelect
             value={model}
             onChange={onModelChange}
-            allowEmpty
-            emptyLabel="使用租戶預設模型"
+            label=""
             className="w-full"
           />
-          <p className="mt-1 text-xs text-white/40">建議使用 GPT-4o 或 Gemini 以取得較佳整理品質</p>
         </div>
 
         {/* 開始按鈕 */}
@@ -363,44 +426,33 @@ function UploadStage({
 
 interface EditStageProps {
   pdfUrl: string | null
-  mode: RefinerMode
   title: string
-  items: RefinerItem[]
-  result: ProcessResponse | null
+  items: QAItem[]
+  processing: boolean
+  chunkProgress: { current: number; total: number } | null
+  doneInfo: { usage: TokenUsage; model: string } | null
   exporting: boolean
-  onTitleChange: (t: string) => void
-  onUpdateItem: (id: number, patch: Partial<RefinerItem>) => void
+  exportingTxt: boolean
+  importing: boolean
+  importSuccess: { kbName: string; count: number } | null
+  onUpdateItem: (id: number, patch: Partial<QAItem>) => void
   onDeleteItem: (id: number) => void
   onAddItem: () => void
   onExport: () => void
+  onExportTxt: () => void
+  onImportClick: () => void
   onReset: () => void
 }
 
 function EditStage({
-  pdfUrl, mode, title, items, result, exporting,
-  onTitleChange, onUpdateItem, onDeleteItem, onAddItem, onExport, onReset,
+  pdfUrl, title, items, processing, chunkProgress, doneInfo, exporting, exportingTxt,
+  importing, importSuccess,
+  onUpdateItem, onDeleteItem, onAddItem, onExport, onExportTxt, onImportClick, onReset,
 }: EditStageProps) {
   const PANEL_BG = '#1A3A52'
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
 
-      {/* 頂部工具列 */}
-      <div className="flex flex-shrink-0 items-center justify-end gap-3">
-        {result && (
-          <span className="mr-auto text-base text-white/70">
-            {result.page_count} 頁 · {result.char_count.toLocaleString()} 字 · {items.length} 條
-          </span>
-        )}
-        <button
-          type="button"
-          onClick={onExport}
-          disabled={exporting || items.length === 0}
-          className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-base font-semibold text-white transition hover:bg-emerald-500 disabled:opacity-40"
-        >
-          {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-          下載 PDF
-        </button>
-      </div>
 
       {/* 主體：左右分割 */}
       <div className="flex min-h-0 flex-1 gap-3 overflow-hidden">
@@ -438,42 +490,74 @@ function EditStage({
         {/* 右：整理結果（可編輯）*/}
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-300/50 shadow-md" style={{ backgroundColor: PANEL_BG }}>
           <div className="flex flex-shrink-0 items-center gap-2 border-b border-white/20 px-4 py-2.5">
-            <span className="text-base font-medium text-white/70">
-              {mode === 'qa' ? '❓ Q&A 整理結果' : '📋 摘要整理結果'}
-            </span>
+            <span className="text-base font-medium text-white/70">❓ Q&A 整理結果</span>
+            {/* 進度顯示 */}
+            {processing && chunkProgress && chunkProgress.total > 1 && (
+              <span className="flex items-center gap-1 text-sm text-sky-400/80">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                第 {chunkProgress.current}/{chunkProgress.total} 段
+              </span>
+            )}
+            {processing && (!chunkProgress || chunkProgress.total === 1) && (
+              <span className="flex items-center gap-1 text-sm text-sky-400/80">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                整理中…
+              </span>
+            )}
             <div className="flex-1" />
-            {/* 文件標題 */}
-            <input
-              value={title}
-              onChange={(e) => onTitleChange(e.target.value)}
-              placeholder="文件標題"
-              className="rounded-lg border border-white/20 bg-white/10 px-3 py-1 text-base text-white placeholder-white/30 outline-none focus:border-sky-400"
-            />
+            {importSuccess && (
+              <span className="text-xs text-emerald-400">
+                ✓ 已匯入「{importSuccess.kbName}」{importSuccess.count} 條
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={onImportClick}
+              disabled={importing || items.length === 0 || processing}
+              className="flex items-center gap-1.5 rounded-lg bg-sky-600 px-3 py-1 text-sm font-semibold text-white transition hover:bg-sky-500 disabled:opacity-40"
+            >
+              {importing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <span className="text-base leading-none">📥</span>}
+              匯入至知識庫
+            </button>
+            <button
+              type="button"
+              onClick={onExportTxt}
+              disabled={exportingTxt || items.length === 0 || processing}
+              className="flex items-center gap-1.5 rounded-lg border border-white/20 px-3 py-1 text-sm font-semibold text-white/70 transition hover:bg-white/10 disabled:opacity-40"
+            >
+              {exportingTxt ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+              下載 TXT
+            </button>
+            <button
+              type="button"
+              onClick={onExport}
+              disabled={exporting || items.length === 0 || processing}
+              className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:opacity-40"
+            >
+              {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+              下載 PDF
+            </button>
           </div>
 
           <div className="flex-1 space-y-3 overflow-y-auto p-4">
-            {items.length === 0 && (
+            {items.length === 0 && processing && (
+              <div className="flex flex-col items-center justify-center gap-3 pt-16 text-white/40">
+                <Loader2 className="h-8 w-8 animate-spin" />
+                <span className="text-base">AI 正在整理中，請稍候…</span>
+              </div>
+            )}
+            {items.length === 0 && !processing && (
               <p className="mt-8 text-center text-base text-white/30">沒有內容，請重新整理</p>
             )}
 
-            {mode === 'qa'
-              ? items.map((item) => (
-                  <QACard
-                    key={item.id}
-                    item={item as QAItem}
-                    onUpdate={(patch) => onUpdateItem(item.id, patch)}
-                    onDelete={() => onDeleteItem(item.id)}
-                  />
-                ))
-              : items.map((item) => (
-                  <SummaryCard
-                    key={item.id}
-                    item={item as SummaryItem}
-                    onUpdate={(patch) => onUpdateItem(item.id, patch)}
-                    onDelete={() => onDeleteItem(item.id)}
-                  />
-                ))
-            }
+            {items.map((item) => (
+              <QACard
+                key={item.id}
+                item={item}
+                onUpdate={(patch) => onUpdateItem(item.id, patch)}
+                onDelete={() => onDeleteItem(item.id)}
+              />
+            ))}
 
             {/* 新增按鈕 */}
             <button
@@ -485,6 +569,19 @@ function EditStage({
               新增一條
             </button>
           </div>
+
+          {/* Token 使用量 footer */}
+          {doneInfo && (
+            <div className="flex flex-shrink-0 items-center border-t border-white/10 px-4 py-2 font-mono text-sm text-white/40">
+              <span>model: {doneInfo.model}</span>
+              <span className="mx-2 text-white/20">·</span>
+              <span>prompt: {doneInfo.usage.prompt_tokens.toLocaleString()}</span>
+              <span className="mx-2 text-white/20">·</span>
+              <span>completion: {doneInfo.usage.completion_tokens.toLocaleString()}</span>
+              <span className="mx-2 text-white/20">·</span>
+              <span>total: {doneInfo.usage.total_tokens.toLocaleString()}</span>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -504,6 +601,13 @@ function QACard({
   onUpdate: (patch: Partial<QAItem>) => void
   onDelete: () => void
 }) {
+  const [question, setQuestion] = useState(item.question)
+  const [answer, setAnswer] = useState(item.answer)
+
+  // 當 item 從外部替換時（如新 PDF 整理完成）才同步
+  useEffect(() => { setQuestion(item.question) }, [item.id, item.question])
+  useEffect(() => { setAnswer(item.answer) }, [item.id, item.answer])
+
   return (
     <div className="group rounded-xl border border-white/10 bg-white/5 p-4 transition hover:border-white/20">
       <div className="mb-2 flex items-start gap-2">
@@ -511,8 +615,9 @@ function QACard({
           Q{item.id}
         </span>
         <textarea
-          value={item.question}
-          onChange={(e) => onUpdate({ question: e.target.value })}
+          value={question}
+          onChange={(e) => setQuestion(e.target.value)}
+          onBlur={() => onUpdate({ question })}
           placeholder="輸入問題…"
           rows={2}
           className="flex-1 resize-none rounded-lg bg-transparent text-sm text-white/90 placeholder-white/30 outline-none focus:bg-white/5 focus:ring-1 focus:ring-blue-400/40 px-2 py-1"
@@ -529,8 +634,9 @@ function QACard({
           A
         </span>
         <textarea
-          value={item.answer}
-          onChange={(e) => onUpdate({ answer: e.target.value })}
+          value={answer}
+          onChange={(e) => setAnswer(e.target.value)}
+          onBlur={() => onUpdate({ answer })}
           placeholder="輸入答案…"
           rows={3}
           className="flex-1 resize-none rounded-lg bg-transparent text-sm text-white/80 placeholder-white/30 outline-none focus:bg-white/5 focus:ring-1 focus:ring-emerald-400/40 px-2 py-1"
@@ -541,44 +647,112 @@ function QACard({
 }
 
 // ══════════════════════════════════════════════════
-// Summary 卡片
+// 匯入至知識庫 Modal
 // ══════════════════════════════════════════════════
 
-function SummaryCard({
-  item,
-  onUpdate,
-  onDelete,
+function ImportToKBModal({
+  onConfirm,
+  onClose,
+  importing,
 }: {
-  item: SummaryItem
-  onUpdate: (patch: Partial<SummaryItem>) => void
-  onDelete: () => void
+  onConfirm: (kbId: number | undefined, newKbName: string | undefined) => void
+  onClose: () => void
+  importing: boolean
 }) {
+  const MODAL_BG = '#1A3A52'
+  const [kbs, setKbs] = useState<KBOption[]>([])
+  const [loading, setLoading] = useState(true)
+  const [selectedKbId, setSelectedKbId] = useState<number | 'new' | ''>('')
+  const [newKbName, setNewKbName] = useState('')
+
+  useEffect(() => {
+    listKBs()
+      .then((data) => { setKbs(data); if (data.length > 0) setSelectedKbId(data[0].id) })
+      .catch(() => setSelectedKbId('new'))
+      .finally(() => setLoading(false))
+  }, [])
+
+  const handleConfirm = useCallback(() => {
+    if (selectedKbId === 'new') {
+      if (!newKbName.trim()) return
+      onConfirm(undefined, newKbName.trim())
+    } else if (typeof selectedKbId === 'number') {
+      onConfirm(selectedKbId, undefined)
+    }
+  }, [selectedKbId, newKbName, onConfirm])
+
+  const canConfirm = !importing && (
+    (selectedKbId === 'new' && newKbName.trim().length > 0) ||
+    typeof selectedKbId === 'number'
+  )
+
   return (
-    <div className="group rounded-xl border border-white/10 bg-white/5 p-4 transition hover:border-white/20">
-      <div className="mb-2 flex items-center gap-2">
-        <span className="flex-shrink-0 rounded-md bg-purple-700/30 px-2 py-0.5 text-xs font-bold text-purple-300">
-          #{item.id}
-        </span>
-        <input
-          value={item.heading}
-          onChange={(e) => onUpdate({ heading: e.target.value })}
-          placeholder="章節標題（選填）"
-          className="flex-1 rounded-lg bg-transparent text-sm font-medium text-white/90 placeholder-white/30 outline-none focus:bg-white/5 focus:ring-1 focus:ring-purple-400/40 px-2 py-1"
-        />
-        <button
-          onClick={onDelete}
-          className="flex-shrink-0 rounded-lg p-1 text-white/20 opacity-0 transition hover:bg-red-900/40 hover:text-red-400 group-hover:opacity-100"
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+      <div
+        className="w-full max-w-sm rounded-2xl border border-white/20 p-6 shadow-2xl"
+        style={{ backgroundColor: MODAL_BG }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="mb-4 text-base font-semibold text-white">匯入至知識庫</h3>
+
+        {loading ? (
+          <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-white/40" /></div>
+        ) : (
+          <>
+            <div className="mb-4">
+              <label className="mb-1.5 block text-sm text-white/60">選擇知識庫</label>
+              <select
+                value={selectedKbId === '' ? '' : String(selectedKbId)}
+                onChange={(e) => {
+                  const v = e.target.value
+                  setSelectedKbId(v === 'new' ? 'new' : Number(v))
+                }}
+                className="w-full rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-sm text-white outline-none focus:border-sky-400"
+              >
+                {kbs.map((kb) => (
+                  <option key={kb.id} value={kb.id} className="bg-slate-800">
+                    {kb.name}{kb.scope === 'company' ? '（公司）' : ''}
+                  </option>
+                ))}
+                <option value="new" className="bg-slate-800">＋ 建立新知識庫</option>
+              </select>
+            </div>
+
+            {selectedKbId === 'new' && (
+              <div className="mb-4">
+                <label className="mb-1.5 block text-sm text-white/60">新知識庫名稱</label>
+                <input
+                  type="text"
+                  value={newKbName}
+                  onChange={(e) => setNewKbName(e.target.value)}
+                  placeholder="輸入名稱…"
+                  className="w-full rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-sm text-white placeholder-white/30 outline-none focus:border-sky-400"
+                />
+              </div>
+            )}
+          </>
+        )}
+
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-white/20 px-4 py-2 text-sm text-white/60 hover:bg-white/10"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            onClick={handleConfirm}
+            disabled={!canConfirm}
+            className="flex items-center gap-2 rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-40"
+          >
+            {importing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            確認匯入
+          </button>
+        </div>
       </div>
-      <textarea
-        value={item.content}
-        onChange={(e) => onUpdate({ content: e.target.value })}
-        placeholder="摘要內容…"
-        rows={4}
-        className="w-full resize-none rounded-lg bg-transparent px-2 py-1 text-sm text-white/80 placeholder-white/30 outline-none focus:bg-white/5 focus:ring-1 focus:ring-purple-400/40"
-      />
     </div>
   )
 }
+

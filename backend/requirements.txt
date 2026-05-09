@@ -40,3 +40,4 @@ slowapi>=0.1.9
 pymupdf>=1.24.0
 opencc-python-reimplemented>=0.1.7
 fpdf2>=2.7.0
+reportlab>=4.0.0
