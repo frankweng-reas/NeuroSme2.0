@@ -133,7 +133,7 @@ BUILTIN_AGENTS: list[AgentDef] = [
         "group_id": "knowledge",
         "group_name": "知識管理",
         "agent_id": "kb-bot-builder",
-        "agent_name": "Bot Builder",
+        "agent_name": "KB Bot Builder",
         "icon_name": "Bot",
         "sort_id": "15",
         "backend_router": None,
