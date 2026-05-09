@@ -385,21 +385,12 @@ function EditStage({
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
 
       {/* 頂部工具列 */}
-      <div className="flex flex-shrink-0 items-center gap-3">
-        <button
-          type="button"
-          onClick={onReset}
-          className="flex items-center gap-1.5 rounded-lg border border-white/20 px-3 py-1.5 text-base text-white/60 transition hover:bg-white/10"
-        >
-          <Upload className="h-3.5 w-3.5" />
-          重新上傳
-        </button>
+      <div className="flex flex-shrink-0 items-center justify-end gap-3">
         {result && (
-          <span className="text-base text-white/70">
+          <span className="mr-auto text-base text-white/70">
             {result.page_count} 頁 · {result.char_count.toLocaleString()} 字 · {items.length} 條
           </span>
         )}
-        <div className="flex-1" />
         <button
           type="button"
           onClick={onExport}
@@ -416,9 +407,18 @@ function EditStage({
 
         {/* 左：PDF 預覽 */}
         <div className="flex w-[45%] flex-shrink-0 flex-col overflow-hidden rounded-xl border border-gray-300/50 shadow-md" style={{ backgroundColor: PANEL_BG }}>
-          <div className="flex items-center gap-2 border-b border-white/20 px-4 py-2.5 text-base font-medium text-white/70">
-            <FileText className="h-4 w-4" />
-            原始文件
+          <div className="flex items-center gap-2 border-b border-white/20 px-4 py-2.5">
+            <FileText className="h-4 w-4 text-white/70" />
+            <span className="text-base font-medium text-white/70">原始文件</span>
+            <div className="flex-1" />
+            <button
+              type="button"
+              onClick={onReset}
+              className="flex items-center gap-1 rounded-lg border border-white/20 px-2.5 py-1 text-sm text-white/60 transition hover:bg-white/10"
+            >
+              <Upload className="h-3.5 w-3.5" />
+              重新上傳
+            </button>
           </div>
           <div className="flex-1 overflow-hidden">
             {pdfUrl ? (
