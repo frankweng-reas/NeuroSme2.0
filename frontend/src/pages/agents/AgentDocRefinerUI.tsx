@@ -23,12 +23,15 @@ import {
 } from '@/api/docRefiner'
 import AgentHeader from '@/components/AgentHeader'
 import ErrorModal from '@/components/ErrorModal'
+import HelpModal from '@/components/HelpModal'
 import LLMModelSelect from '@/components/LLMModelSelect'
 import type { Agent } from '@/types'
 
 interface Props { agent: Agent }
 
 type Stage = 'upload' | 'edit' | 'done'
+
+const HEADER_COLOR = '#1A3A52'
 
 export default function AgentDocRefinerUI({ agent }: Props) {
   // ── 階段 ──
@@ -46,13 +49,15 @@ export default function AgentDocRefinerUI({ agent }: Props) {
   const [items, setItems] = useState<RefinerItem[]>([])
   const [title, setTitle] = useState('')
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
-  const [previewMode, setPreviewMode] = useState<'original' | 'none'>('original')
 
   // ── 匯出 ──
   const [exporting, setExporting] = useState(false)
 
   // ── 錯誤 ──
   const [errorModal, setErrorModal] = useState<{ title?: string; message: string } | null>(null)
+
+  // ── 使用說明 ──
+  const [helpOpen, setHelpOpen] = useState(false)
 
   // ────────────────────────────────────────────────
   // 檔案選擇
@@ -182,14 +187,21 @@ export default function AgentDocRefinerUI({ agent }: Props) {
   // ────────────────────────────────────────────────
 
   return (
-    <div className="relative flex h-screen flex-col overflow-hidden bg-gradient-to-br from-[#0a1628] to-[#0d2137] text-white">
+    <div className="relative flex h-full flex-col p-4 text-[18px]">
+      <HelpModal open={helpOpen} onClose={() => setHelpOpen(false)} url="/help-doc-refiner.md" title="Doc Refiner 使用說明" />
+      <ErrorModal
+        open={errorModal !== null}
+        title={errorModal?.title}
+        message={errorModal?.message ?? ''}
+        onClose={() => setErrorModal(null)}
+      />
       <AgentHeader
-        title={agent.agent_name}
-        iconName={agent.icon_name}
-        agentColor="#1a3a5c"
+        agent={agent}
+        headerBackgroundColor={HEADER_COLOR}
+        onOnlineHelpClick={() => setHelpOpen(true)}
       />
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 text-[18px]">
+      <div className="mt-4 flex min-h-0 flex-1 flex-col overflow-hidden">
         {stage === 'upload' ? (
           <UploadStage
             file={file}
@@ -220,13 +232,6 @@ export default function AgentDocRefinerUI({ agent }: Props) {
           />
         )}
       </div>
-
-      <ErrorModal
-        open={errorModal !== null}
-        title={errorModal?.title}
-        message={errorModal?.message ?? ''}
-        onClose={() => setErrorModal(null)}
-      />
     </div>
   )
 }
@@ -252,13 +257,14 @@ function UploadStage({
   file, mode, model, processing, fileInputRef,
   onFileChange, onDrop, onModeChange, onModelChange, onProcess,
 }: UploadStageProps) {
+  const CARD_BG = '#1A3A52'
   return (
     <div className="flex flex-1 items-center justify-center">
-      <div className="w-full max-w-xl rounded-2xl border border-white/10 bg-white/5 p-8 shadow-xl backdrop-blur-sm">
+      <div className="w-full max-w-xl rounded-2xl border border-white/20 p-8 shadow-xl" style={{ backgroundColor: CARD_BG }}>
 
         <div className="mb-6 flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600/30">
-            <FileText className="h-5 w-5 text-blue-300" />
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-sky-400/20">
+            <FileText className="h-5 w-5 text-sky-300" />
           </div>
           <div>
             <h2 className="text-lg font-semibold text-white">智慧文件整理</h2>
@@ -269,7 +275,7 @@ function UploadStage({
         {/* 拖曳上傳區 */}
         <div
           className={`mb-5 flex cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed p-8 transition-colors ${
-            file ? 'border-blue-400/60 bg-blue-900/20' : 'border-white/20 hover:border-white/40 hover:bg-white/5'
+            file ? 'border-sky-400/60 bg-sky-900/20' : 'border-white/20 hover:border-white/40 hover:bg-white/5'
           }`}
           onDragOver={(e) => e.preventDefault()}
           onDrop={onDrop}
@@ -284,7 +290,7 @@ function UploadStage({
           />
           {file ? (
             <>
-              <FileText className="h-8 w-8 text-blue-400" />
+              <FileText className="h-8 w-8 text-sky-400" />
               <div className="text-center">
                 <p className="font-medium text-white">{file.name}</p>
                 <p className="text-sm text-white/50">{(file.size / 1024).toFixed(1)} KB</p>
@@ -307,10 +313,11 @@ function UploadStage({
             {([['qa', '❓ Q&A 格式'], ['summary', '📋 摘要格式']] as [RefinerMode, string][]).map(([val, label]) => (
               <button
                 key={val}
+                type="button"
                 onClick={() => onModeChange(val)}
                 className={`flex-1 rounded-lg border px-4 py-2.5 text-sm font-medium transition-all ${
                   mode === val
-                    ? 'border-blue-400 bg-blue-600/30 text-blue-200'
+                    ? 'border-sky-400 bg-sky-600/30 text-sky-200'
                     : 'border-white/15 bg-white/5 text-white/60 hover:bg-white/10'
                 }`}
               >
@@ -331,7 +338,8 @@ function UploadStage({
           <LLMModelSelect
             value={model}
             onChange={onModelChange}
-            placeholder="使用租戶預設模型"
+            allowEmpty
+            emptyLabel="使用租戶預設模型"
             className="w-full"
           />
           <p className="mt-1 text-xs text-white/40">建議使用 GPT-4o 或 Gemini 以取得較佳整理品質</p>
@@ -339,9 +347,11 @@ function UploadStage({
 
         {/* 開始按鈕 */}
         <button
+          type="button"
           onClick={onProcess}
           disabled={!file || processing}
-          className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 py-3 text-base font-semibold text-white transition-all hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex w-full items-center justify-center gap-2 rounded-xl py-3 text-base font-semibold text-white transition-all hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+          style={{ backgroundColor: '#0e7490' }}
         >
           {processing ? (
             <>
@@ -383,28 +393,31 @@ function EditStage({
   pdfUrl, mode, title, items, result, exporting,
   onTitleChange, onUpdateItem, onDeleteItem, onAddItem, onExport, onReset,
 }: EditStageProps) {
+  const PANEL_BG = '#1A3A52'
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
 
       {/* 頂部工具列 */}
       <div className="flex flex-shrink-0 items-center gap-3">
         <button
+          type="button"
           onClick={onReset}
-          className="flex items-center gap-1.5 rounded-lg border border-white/20 px-3 py-1.5 text-sm text-white/60 transition hover:bg-white/10"
+          className="flex items-center gap-1.5 rounded-lg border border-white/20 px-3 py-1.5 text-base text-white/60 transition hover:bg-white/10"
         >
           <Upload className="h-3.5 w-3.5" />
           重新上傳
         </button>
         {result && (
-          <span className="text-sm text-white/40">
+          <span className="text-base text-white/40">
             {result.page_count} 頁 · {result.char_count.toLocaleString()} 字 · {items.length} 條
           </span>
         )}
         <div className="flex-1" />
         <button
+          type="button"
           onClick={onExport}
           disabled={exporting || items.length === 0}
-          className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:opacity-40"
+          className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-base font-semibold text-white transition hover:bg-emerald-500 disabled:opacity-40"
         >
           {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
           下載 PDF
@@ -415,8 +428,8 @@ function EditStage({
       <div className="flex min-h-0 flex-1 gap-3 overflow-hidden">
 
         {/* 左：PDF 預覽 */}
-        <div className="flex w-[45%] flex-shrink-0 flex-col overflow-hidden rounded-xl border border-white/10 bg-black/20">
-          <div className="flex items-center gap-2 border-b border-white/10 px-4 py-2.5 text-sm font-medium text-white/60">
+        <div className="flex w-[45%] flex-shrink-0 flex-col overflow-hidden rounded-xl border border-gray-300/50 shadow-md" style={{ backgroundColor: PANEL_BG }}>
+          <div className="flex items-center gap-2 border-b border-white/20 px-4 py-2.5 text-base font-medium text-white/70">
             <FileText className="h-4 w-4" />
             原始文件
           </div>
@@ -428,7 +441,7 @@ function EditStage({
                 title="原始 PDF 預覽"
               />
             ) : (
-              <div className="flex h-full items-center justify-center text-white/30 text-sm">
+              <div className="flex h-full items-center justify-center text-base text-white/30">
                 無法預覽
               </div>
             )}
@@ -436,9 +449,9 @@ function EditStage({
         </div>
 
         {/* 右：整理結果（可編輯）*/}
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-white/10 bg-black/20">
-          <div className="flex flex-shrink-0 items-center gap-2 border-b border-white/10 px-4 py-2.5">
-            <span className="text-sm font-medium text-white/60">
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-300/50 shadow-md" style={{ backgroundColor: PANEL_BG }}>
+          <div className="flex flex-shrink-0 items-center gap-2 border-b border-white/20 px-4 py-2.5">
+            <span className="text-base font-medium text-white/70">
               {mode === 'qa' ? '❓ Q&A 整理結果' : '📋 摘要整理結果'}
             </span>
             <div className="flex-1" />
@@ -447,13 +460,13 @@ function EditStage({
               value={title}
               onChange={(e) => onTitleChange(e.target.value)}
               placeholder="文件標題"
-              className="rounded-lg border border-white/20 bg-white/5 px-3 py-1 text-sm text-white placeholder-white/30 outline-none focus:border-blue-400"
+              className="rounded-lg border border-white/20 bg-white/10 px-3 py-1 text-base text-white placeholder-white/30 outline-none focus:border-sky-400"
             />
           </div>
 
-          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          <div className="flex-1 space-y-3 overflow-y-auto p-4">
             {items.length === 0 && (
-              <p className="text-center text-sm text-white/30 mt-8">沒有內容，請重新整理</p>
+              <p className="mt-8 text-center text-base text-white/30">沒有內容，請重新整理</p>
             )}
 
             {mode === 'qa'
@@ -477,8 +490,9 @@ function EditStage({
 
             {/* 新增按鈕 */}
             <button
+              type="button"
               onClick={onAddItem}
-              className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-white/20 py-3 text-sm text-white/40 transition hover:border-white/40 hover:text-white/60"
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-white/20 py-3 text-base text-white/40 transition hover:border-white/40 hover:text-white/60"
             >
               <Plus className="h-4 w-4" />
               新增一條
