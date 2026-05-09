@@ -363,10 +363,11 @@ async def export_pdf(
         raise HTTPException(status_code=500, detail=f"PDF 生成失敗：{exc}") from exc
 
     safe_title = re.sub(r'[^\w\u4e00-\u9fff\-]', '_', body.title)[:40] or "document"
-    filename = f"{safe_title}.pdf"
+    ascii_name = re.sub(r'[^\x20-\x7e]', '_', safe_title) + ".pdf"
+    utf8_name = "".join(f"%{b:02X}" for b in safe_title.encode("utf-8")) + ".pdf"
 
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{utf8_name}"},
     )
