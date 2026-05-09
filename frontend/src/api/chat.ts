@@ -28,6 +28,8 @@ export interface ChatRequest {
   selected_doc_ids?: number[]
   /** CS Agent：指定知識庫 ID（優先於 selected_doc_ids） */
   knowledge_base_id?: number | null
+  /** Knowledge Bot Agent：指定 Bot ID */
+  bot_id?: number | null
 }
 
 export interface ChatUsage {

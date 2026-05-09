@@ -29,6 +29,8 @@ from app.models.km_knowledge_base import KmKnowledgeBase
 from app.models.widget_session import WidgetSession
 from app.models.widget_message import WidgetMessage
 from app.models.ordering_session import OrderingSession
+from app.models.bot import Bot, BotKnowledgeBase
+from app.models.bot_widget_session import BotWidgetSession, BotWidgetMessage
 
 __all__ = [
     "Base", "Tenant", "User", "AgentCatalog", "TenantAgent", "UserAgent",
@@ -41,4 +43,6 @@ __all__ = [
     "TenantConfig",
     "ApiKey", "ApiKeyUsage",
     "OrderingSession",
+    "Bot", "BotKnowledgeBase",
+    "BotWidgetSession", "BotWidgetMessage",
 ]

@@ -139,4 +139,14 @@ BUILTIN_AGENTS: list[AgentDef] = [
         "backend_router": None,
         "frontend_key": "agent-cs",
     },
+    {
+        "group_id": "knowledge",
+        "group_name": "知識管理",
+        "agent_id": "knowledge-bot",
+        "agent_name": "Knowledge Bot Agent",
+        "icon_name": "Bot",
+        "sort_id": "14",
+        "backend_router": None,
+        "frontend_key": "agent-knowledge-bot",
+    },
 ]

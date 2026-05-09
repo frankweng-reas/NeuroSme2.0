@@ -13,6 +13,7 @@ import AgentQuotationUI from './agents/AgentQuotationUI'
 import AgentWritingUI from './agents/AgentWritingUI'
 import AgentMarketingUI from './agents/AgentMarketingUI'
 import AgentOcrUI from './agents/AgentOcrUI'
+import AgentKnowledgeBotUI from './agents/AgentKnowledgeBotUI'
 import AgentPageLayout from '@/components/AgentPageLayout'
 import AgentIcon from '@/components/AgentIcon'
 
@@ -20,6 +21,7 @@ function getAgentUI(agent: Agent) {
   const id = agent.agent_id.toLowerCase()
   if (id === 'chat') return AgentChatUI
   if (id === 'cs') return AgentCsUI
+  if (id === 'knowledge-bot') return AgentKnowledgeBotUI
   if (id === 'writing') return AgentWritingUI
   if (id === 'marketing') return AgentMarketingUI
   if (id.includes('knowledge')) return AgentKmUI

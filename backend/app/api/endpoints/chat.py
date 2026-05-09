@@ -66,6 +66,7 @@ class ChatRequest(BaseModel):
     content: str  # 新使用者訊息
     selected_doc_ids: list[int] = []  # KM Agent：使用者勾選的文件 ID
     knowledge_base_id: int | None = None  # CS Agent：指定知識庫 ID（優先於 selected_doc_ids）
+    bot_id: int | None = None  # Knowledge Bot Agent：指定 Bot ID
 
 
 class ChatResponse(BaseModel):
@@ -204,11 +205,50 @@ def _prepare_chat_completion(req: ChatRequest, db: Session, current: User) -> Ch
     if pt != (req.prompt_type or "").strip():
         req = req.model_copy(update={"prompt_type": pt})
 
-    # KM Agent & Chat Service Agent：RAG 向量檢索，不使用 source_files
+    # Knowledge Bot Agent：多 KB RAG，bot_id 優先於其他 KM/CS 分支
     kb_model_name: str | None = None
     kb_system_prompt: str | None = None
     km_sources: list[dict] = []
-    if aid in ("knowledge", "cs"):
+    if req.bot_id is not None:
+        from app.models.bot import Bot
+        from app.models.bot import BotKnowledgeBase
+        from app.services.km_service import format_km_context, km_retrieve_sync
+
+        bot = db.query(Bot).filter(
+            Bot.id == req.bot_id,
+            Bot.tenant_id == tenant_id,
+        ).first()
+        if not bot:
+            raise HTTPException(status_code=404, detail="Bot 不存在")
+        if not bot.is_active:
+            raise HTTPException(status_code=403, detail="此 Bot 已停用")
+
+        kb_ids = [
+            row.knowledge_base_id
+            for row in db.query(BotKnowledgeBase)
+            .filter(BotKnowledgeBase.bot_id == bot.id)
+            .order_by(BotKnowledgeBase.sort_order)
+            .all()
+        ]
+        chunks = km_retrieve_sync(
+            req.content, db, tenant_id, current.id,
+            knowledge_base_ids=kb_ids if kb_ids else None,
+            agent_id="knowledge-bot",
+        )
+        data = format_km_context(chunks)
+        if chunks:
+            seen: set[str] = set()
+            for chunk in chunks:
+                fname = chunk.document.filename if chunk.document else "未知文件"
+                if fname not in seen:
+                    seen.add(fname)
+                    km_sources.append({"filename": fname})
+
+        kb_model_name = (bot.model_name or "").strip() or None
+        kb_system_prompt = (bot.system_prompt or "").strip() or None
+
+    # KM Agent & Chat Service Agent：RAG 向量檢索，不使用 source_files
+    elif aid in ("knowledge", "cs"):
         from app.services.km_service import format_km_context, km_retrieve_sync
 
         chunks = km_retrieve_sync(

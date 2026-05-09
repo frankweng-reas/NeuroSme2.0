@@ -507,6 +507,7 @@ def km_retrieve_sync(
     top_k: int | None = None,
     selected_doc_ids: list[int] | None = None,
     knowledge_base_id: int | None = None,
+    knowledge_base_ids: list[int] | None = None,
     skip_scope_check: bool = False,
     agent_id: str = "knowledge",
 ) -> list[KmChunk]:
@@ -517,9 +518,13 @@ def km_retrieve_sync(
       - scope='public'（任何 tenant 使用者可見）
       - scope='private' 且 owner_user_id = user_id（個人私有）
     若提供 knowledge_base_id，只在該知識庫的文件中搜尋。
+    若提供 knowledge_base_ids（非空 list），在多個知識庫中聯合搜尋（Bot 多 KB 模式）。
     若提供 selected_doc_ids（非空），則只在指定文件中搜尋。
     skip_scope_check=True：跳過 scope/owner 過濾（Widget 公開存取用）。
     """
+    # knowledge_base_ids 多 KB 模式：knowledge_base_id 退為 None
+    if knowledge_base_ids:
+        knowledge_base_id = None
     embed_params = _get_embed_params(db, tenant_id)
     if not embed_params:
         logger.warning("KM 檢索失敗：tenant_id=%s 無可用 Embedding provider", tenant_id)
@@ -533,7 +538,9 @@ def km_retrieve_sync(
                 KmDocument.tenant_id == tenant_id,
                 KmDocument.status == "ready",
             )
-            if knowledge_base_id is not None:
+            if knowledge_base_ids:
+                q_types = q_types.filter(KmDocument.knowledge_base_id.in_(knowledge_base_ids))
+            elif knowledge_base_id is not None:
                 q_types = q_types.filter(KmDocument.knowledge_base_id == knowledge_base_id)
             elif selected_doc_ids:
                 q_types = q_types.filter(KmDocument.id.in_(selected_doc_ids))
@@ -587,7 +594,9 @@ def km_retrieve_sync(
                 filters.append(
                     (KmDocument.scope == "public") | (KmDocument.owner_user_id == user_id)
                 )
-            if knowledge_base_id is not None:
+            if knowledge_base_ids:
+                filters.append(KmDocument.knowledge_base_id.in_(knowledge_base_ids))
+            elif knowledge_base_id is not None:
                 filters.append(KmDocument.knowledge_base_id == knowledge_base_id)
             if selected_doc_ids:
                 filters.append(KmDocument.id.in_(selected_doc_ids))
