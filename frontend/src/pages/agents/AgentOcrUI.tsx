@@ -43,6 +43,7 @@ import {
 import { ApiError } from '@/api/client'
 import AgentHeader from '@/components/AgentHeader'
 import ConfirmModal from '@/components/ConfirmModal'
+import HelpModal from '@/components/HelpModal'
 import LLMModelSelect from '@/components/LLMModelSelect'
 import type { Agent } from '@/types'
 
@@ -121,6 +122,8 @@ export default function AgentOcrUI({ agent }: AgentOcrUIProps) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   // history
   const [deleteHistTarget, setDeleteHistTarget] = useState<OcrHistoryItem | null>(null)
+
+  const [showHelpModal, setShowHelpModal] = useState(false)
 
   // Lightbox
   const [showLightbox, setShowLightbox] = useState(false)
@@ -551,7 +554,13 @@ export default function AgentOcrUI({ agent }: AgentOcrUIProps) {
 
   return (
     <div className="relative flex h-full flex-col p-4 text-[18px]">
-      <AgentHeader agent={agent} headerBackgroundColor={HEADER_COLOR} />
+      <HelpModal
+        open={showHelpModal}
+        onClose={() => setShowHelpModal(false)}
+        url="/help-ocr-agent.md"
+        title="OCR / Vision 使用說明"
+      />
+      <AgentHeader agent={agent} headerBackgroundColor={HEADER_COLOR} onOnlineHelpClick={() => setShowHelpModal(true)} />
 
       <div className="mt-4 flex min-h-0 flex-1 gap-4 overflow-hidden">
         {/* ── 左欄：設定管理 ── */}
