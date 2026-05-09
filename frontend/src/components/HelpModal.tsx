@@ -1,6 +1,6 @@
 /** 共用 Online Help modal：依 url 動態載入 Markdown 並渲染 */
-import { useEffect, useState } from 'react'
-import { BookOpen, Loader2, X } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { BookOpen, Download, Loader2, X } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
@@ -100,6 +100,44 @@ export default function HelpModal({
 }: HelpModalProps) {
   const [content, setContent] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const contentRef = useRef<HTMLDivElement>(null)
+
+  function handleDownloadPdf() {
+    if (!contentRef.current) return
+    const html = contentRef.current.innerHTML
+    const win = window.open('', '_blank')
+    if (!win) return
+    win.document.write(`<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <title>${title}</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif; max-width: 820px; margin: 40px auto; padding: 0 24px; color: #1e293b; font-size: 15px; line-height: 1.7; }
+    h1 { font-size: 22px; font-weight: 700; margin: 0 0 16px; color: #0f172a; }
+    h2 { font-size: 18px; font-weight: 700; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #3b82f6; color: #1e3a5f; }
+    h3 { font-size: 15px; font-weight: 600; margin: 20px 0 8px; color: #334155; }
+    p  { margin: 0 0 10px; }
+    ul, ol { margin: 0 0 12px 20px; padding: 0; }
+    li { margin-bottom: 4px; }
+    strong { color: #1d4ed8; font-weight: 600; }
+    code { background: #f1f5f9; border-radius: 4px; padding: 1px 6px; font-size: 13px; }
+    pre { background: #f1f5f9; border-radius: 6px; padding: 12px 16px; overflow-x: auto; }
+    blockquote { border-left: 4px solid #3b82f6; margin: 12px 0; padding: 6px 16px; background: #eff6ff; color: #1e40af; border-radius: 0 6px 6px 0; }
+    table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+    th { background: #334155; color: white; padding: 8px 12px; text-align: left; font-weight: 600; }
+    td { border: 1px solid #e2e8f0; padding: 7px 12px; }
+    tr:nth-child(even) td { background: #f8fafc; }
+    hr { border: none; border-top: 1px solid #e2e8f0; margin: 20px 0; }
+    @media print { body { margin: 20px; } }
+  </style>
+</head>
+<body>${html}</body>
+</html>`)
+    win.document.close()
+    setTimeout(() => { win.print() }, 400)
+  }
 
   useEffect(() => {
     if (!open) return
@@ -154,7 +192,7 @@ export default function HelpModal({
               <Loader2 className="h-8 w-8 animate-spin text-blue-400" aria-hidden />
             </div>
           ) : (
-            <div className="text-[17px]">
+            <div className="text-[17px]" ref={contentRef}>
               <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
                 {content ?? ''}
               </ReactMarkdown>
@@ -163,7 +201,16 @@ export default function HelpModal({
         </div>
 
         {/* Footer */}
-        <div className="flex flex-shrink-0 justify-end rounded-b-3xl border-t border-slate-100 bg-slate-50 px-6 py-3">
+        <div className="flex flex-shrink-0 items-center justify-between rounded-b-3xl border-t border-slate-100 bg-slate-50 px-6 py-3">
+          <button
+            type="button"
+            onClick={handleDownloadPdf}
+            disabled={loading || !content}
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 disabled:opacity-40"
+          >
+            <Download className="h-4 w-4" />
+            下載 PDF
+          </button>
           <button
             type="button"
             onClick={onClose}
