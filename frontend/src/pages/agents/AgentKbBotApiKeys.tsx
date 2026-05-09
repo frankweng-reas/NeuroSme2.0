@@ -1,6 +1,7 @@
 /**
- * CS Agent API Key 管理頁面
+ * KB Bot Builder API Key 管理頁面
  * 功能：建立、列出、撤銷 API Keys，以及查詢用量圖表
+ * 端點：POST /api/v1/public/bot/query
  */
 import { useCallback, useEffect, useState } from 'react'
 import { Check, Copy, Key, Loader2, Plus, Trash2, TrendingUp, X } from 'lucide-react'
@@ -24,17 +25,17 @@ import {
 } from '@/api/apiKeys'
 import ConfirmModal from '@/components/ConfirmModal'
 import ErrorModal from '@/components/ErrorModal'
-import type { KmKnowledgeBase } from '@/api/km'
+import type { Bot } from '@/api/bots'
 
-const HEADER_COLOR = '#1A3A52'
+const BOT_COLOR = '#0d3d35'
 
 interface Props {
   canManage: boolean
-  kbs: KmKnowledgeBase[]
-  selectedKbId: number | null
+  bots: Bot[]
+  selectedBotId: number | null
 }
 
-export default function AgentCsApiKeys({ canManage, kbs, selectedKbId }: Props) {
+export default function AgentKbBotApiKeys({ canManage, bots, selectedBotId }: Props) {
   const [keys, setKeys] = useState<ApiKey[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -54,9 +55,7 @@ export default function AgentCsApiKeys({ canManage, kbs, selectedKbId }: Props) 
   const [errorModal, setErrorModal] = useState<{ title?: string; message: string } | null>(null)
   const [toast, setToast] = useState<string | null>(null)
 
-  const showToast = useCallback((msg: string) => {
-    setToast(msg)
-  }, [])
+  const showToast = useCallback((msg: string) => setToast(msg), [])
 
   useEffect(() => {
     if (!toast) return
@@ -152,7 +151,7 @@ export default function AgentCsApiKeys({ canManage, kbs, selectedKbId }: Props) 
         onCancel={() => !revokeLoading && setRevokeTarget(null)}
       />
 
-      {/* 明文 Key 顯示 Modal（只出現一次）*/}
+      {/* 明文 Key 顯示 Modal */}
       {plainKey && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
           <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl ring-1 ring-gray-200">
@@ -191,7 +190,7 @@ export default function AgentCsApiKeys({ canManage, kbs, selectedKbId }: Props) 
                 type="button"
                 onClick={() => { setPlainKey(null); setCopied(false) }}
                 className="rounded-lg px-4 py-2 text-base font-medium text-white transition-colors hover:opacity-90"
-                style={{ backgroundColor: HEADER_COLOR }}
+                style={{ backgroundColor: BOT_COLOR }}
               >
                 我已複製，關閉
               </button>
@@ -206,7 +205,7 @@ export default function AgentCsApiKeys({ canManage, kbs, selectedKbId }: Props) 
           <div className="flex items-center gap-2">
             <Key className="h-4 w-4 text-gray-500" />
             <span className="text-base font-semibold text-gray-800">API Keys</span>
-            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-sm text-gray-500">
+            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-base text-gray-500">
               {keys.filter((k) => k.is_active).length} 個啟用中
             </span>
           </div>
@@ -215,7 +214,7 @@ export default function AgentCsApiKeys({ canManage, kbs, selectedKbId }: Props) 
               type="button"
               onClick={() => setCreating(true)}
               className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-base font-medium text-white transition-opacity hover:opacity-90"
-              style={{ backgroundColor: HEADER_COLOR }}
+              style={{ backgroundColor: BOT_COLOR }}
             >
               <Plus className="h-4 w-4" />
               建立 Key
@@ -223,9 +222,8 @@ export default function AgentCsApiKeys({ canManage, kbs, selectedKbId }: Props) 
           )}
         </div>
 
-        {/* 建立 Key 表單 */}
         {creating && (
-          <div className="flex items-center gap-3 border-b border-gray-100 bg-sky-50/50 px-5 py-3">
+          <div className="flex items-center gap-3 border-b border-gray-100 bg-emerald-50/50 px-5 py-3">
             <input
               autoFocus
               type="text"
@@ -236,14 +234,14 @@ export default function AgentCsApiKeys({ canManage, kbs, selectedKbId }: Props) 
                 if (e.key === 'Escape') { setCreating(false); setNewName('') }
               }}
               placeholder="Key 名稱（例：LINE Bot 整合）"
-              className="flex-1 rounded-lg border border-gray-300 px-3 py-1.5 text-base focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+              className="flex-1 rounded-lg border border-gray-300 px-3 py-1.5 text-base focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
               maxLength={100}
             />
             <button
               type="button"
               onClick={() => void handleCreate()}
               disabled={createLoading || !newName.trim()}
-              className="flex items-center gap-1 rounded-lg bg-sky-600 px-3 py-1.5 text-base text-white disabled:opacity-50"
+              className="flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-base text-white disabled:opacity-50"
             >
               {createLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
               建立
@@ -258,7 +256,6 @@ export default function AgentCsApiKeys({ canManage, kbs, selectedKbId }: Props) 
           </div>
         )}
 
-        {/* Key 列表 */}
         {loading ? (
           <div className="flex items-center justify-center py-10">
             <Loader2 className="h-5 w-5 animate-spin text-gray-300" />
@@ -275,7 +272,7 @@ export default function AgentCsApiKeys({ canManage, kbs, selectedKbId }: Props) 
               <li
                 key={k.id}
                 className={`flex items-center gap-4 px-5 py-3 transition-colors hover:bg-gray-50 ${
-                  selectedKeyId === k.id ? 'bg-sky-50/60' : ''
+                  selectedKeyId === k.id ? 'bg-emerald-50/60' : ''
                 }`}
               >
                 <button
@@ -287,11 +284,9 @@ export default function AgentCsApiKeys({ canManage, kbs, selectedKbId }: Props) 
                     <span className={`text-base font-medium ${k.is_active ? 'text-gray-800' : 'text-gray-400 line-through'}`}>
                       {k.name}
                     </span>
-                    <span
-                      className={`shrink-0 rounded-full px-1.5 py-0.5 text-xs font-medium ${
-                        k.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-400'
-                      }`}
-                    >
+                    <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-base font-medium ${
+                      k.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-400'
+                    }`}>
                       {k.is_active ? '啟用' : '已撤銷'}
                     </span>
                   </div>
@@ -355,7 +350,6 @@ export default function AgentCsApiKeys({ canManage, kbs, selectedKbId }: Props) 
             <div className="py-10 text-center text-base text-gray-400">尚無用量資料</div>
           ) : (
             <div className="px-5 py-4 space-y-4">
-              {/* 摘要卡片 */}
               <div className="grid grid-cols-4 gap-3">
                 {[
                   { label: '總請求數', value: usageData.total_requests.toLocaleString() },
@@ -370,42 +364,30 @@ export default function AgentCsApiKeys({ canManage, kbs, selectedKbId }: Props) 
                 ))}
               </div>
 
-              {/* 請求數折線圖 */}
               <div>
                 <p className="mb-2 text-base font-medium text-gray-600">每日請求數</p>
                 <ResponsiveContainer width="100%" height={180}>
                   <LineChart data={usageData.days} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                    <XAxis
-                      dataKey="date"
-                      tickFormatter={formatDate}
-                      tick={{ fontSize: 11, fill: '#9ca3af' }}
-                      tickLine={false}
-                      axisLine={false}
-                    />
+                    <XAxis dataKey="date" tickFormatter={formatDate}
+                      tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                     <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} width={36} />
                     <Tooltip
                       formatter={(value) => [(value as number).toLocaleString(), '請求數']}
                       labelFormatter={(label) => new Date(String(label)).toLocaleDateString('zh-TW')}
                     />
-                    <Line type="monotone" dataKey="request_count" stroke={HEADER_COLOR} strokeWidth={2} dot={false} />
+                    <Line type="monotone" dataKey="request_count" stroke={BOT_COLOR} strokeWidth={2} dot={false} />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
 
-              {/* Tokens 折線圖 */}
               <div>
                 <p className="mb-2 text-base font-medium text-gray-600">每日 Token 用量</p>
                 <ResponsiveContainer width="100%" height={180}>
                   <LineChart data={usageData.days} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                    <XAxis
-                      dataKey="date"
-                      tickFormatter={formatDate}
-                      tick={{ fontSize: 11, fill: '#9ca3af' }}
-                      tickLine={false}
-                      axisLine={false}
-                    />
+                    <XAxis dataKey="date" tickFormatter={formatDate}
+                      tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                     <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} width={42} />
                     <Tooltip
                       formatter={(value, name) => [
@@ -424,20 +406,14 @@ export default function AgentCsApiKeys({ canManage, kbs, selectedKbId }: Props) 
                 </ResponsiveContainer>
               </div>
 
-              {/* 語音秒數折線圖（只有當天有語音用量才顯示） */}
               {usageData.days.some((d) => d.audio_seconds > 0) && (
                 <div>
                   <p className="mb-2 text-base font-medium text-gray-600">每日語音秒數</p>
                   <ResponsiveContainer width="100%" height={180}>
                     <LineChart data={usageData.days} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                      <XAxis
-                        dataKey="date"
-                        tickFormatter={formatDate}
-                        tick={{ fontSize: 11, fill: '#9ca3af' }}
-                        tickLine={false}
-                        axisLine={false}
-                      />
+                      <XAxis dataKey="date" tickFormatter={formatDate}
+                        tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                       <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} width={42} />
                       <Tooltip
                         formatter={(value) => [`${(value as number).toFixed(1)} s`, '語音秒數']}
@@ -458,37 +434,41 @@ export default function AgentCsApiKeys({ canManage, kbs, selectedKbId }: Props) 
         <p className="mb-3 text-base font-semibold text-gray-700">如何使用 API</p>
         <div className="space-y-4 text-base text-gray-600">
 
-          {/* 知識庫 ID 對照表 */}
+          {/* Bot ID 對照表 */}
           <div>
-            <p className="mb-2 font-medium text-gray-800">知識庫 ID 對照</p>
-            {kbs.length === 0 ? (
-              <p className="text-base text-gray-400">尚無知識庫，請先在左側建立。</p>
+            <p className="mb-2 font-medium text-gray-800">Bot ID 對照</p>
+            {bots.length === 0 ? (
+              <p className="text-base text-gray-400">尚無 Bot，請先建立。</p>
             ) : (
               <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
                 <table className="w-full text-base">
                   <thead>
                     <tr className="border-b border-gray-100 bg-gray-50 text-left text-gray-500">
-                      <th className="px-4 py-2 font-medium">knowledge_base_id</th>
-                      <th className="px-4 py-2 font-medium">知識庫名稱</th>
-                      <th className="px-4 py-2 font-medium">文件數</th>
+                      <th className="px-4 py-2 font-medium">bot_id</th>
+                      <th className="px-4 py-2 font-medium">Bot 名稱</th>
+                      <th className="px-4 py-2 font-medium">狀態</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {kbs.map((kb) => (
+                    {bots.map((bot) => (
                       <tr
-                        key={kb.id}
-                        className={`border-b border-gray-50 last:border-0 ${selectedKbId === kb.id ? 'bg-sky-50' : ''}`}
+                        key={bot.id}
+                        className={`border-b border-gray-50 last:border-0 ${selectedBotId === bot.id ? 'bg-emerald-50' : ''}`}
                       >
                         <td className="px-4 py-2">
-                          <code className="rounded bg-gray-100 px-2 py-0.5 font-mono font-bold text-sky-700">
-                            {kb.id}
+                          <code className="rounded bg-gray-100 px-2 py-0.5 font-mono font-bold text-emerald-700">
+                            {bot.id}
                           </code>
-                          {selectedKbId === kb.id && (
-                            <span className="ml-2 rounded-full bg-sky-100 px-1.5 py-0.5 text-xs text-sky-600">目前選取</span>
+                          {selectedBotId === bot.id && (
+                            <span className="ml-2 rounded-full bg-emerald-100 px-1.5 py-0.5 text-base text-emerald-600">目前選取</span>
                           )}
                         </td>
-                        <td className="px-4 py-2 text-gray-700">{kb.name}</td>
-                        <td className="px-4 py-2 text-gray-400">{kb.ready_count}/{kb.doc_count} 份</td>
+                        <td className="px-4 py-2 text-gray-700">{bot.name}</td>
+                        <td className="px-4 py-2">
+                          <span className={`rounded-full px-2 py-0.5 text-base ${bot.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-400'}`}>
+                            {bot.is_active ? '啟用' : '停用'}
+                          </span>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -501,7 +481,7 @@ export default function AgentCsApiKeys({ canManage, kbs, selectedKbId }: Props) 
             <p>
               <span className="font-medium text-gray-800">端點：</span>
               <code className="rounded bg-gray-200 px-1.5 py-0.5 font-mono text-base">
-                POST /api/v1/public/cs/query
+                POST /api/v1/public/bot/query
               </code>
             </p>
             <p>
@@ -509,22 +489,22 @@ export default function AgentCsApiKeys({ canManage, kbs, selectedKbId }: Props) 
               Header 加入 <code className="rounded bg-gray-200 px-1.5 py-0.5 font-mono text-base">X-API-Key: nsk_...</code>
             </p>
             <p className="font-medium text-gray-800">請求範例：</p>
-            <pre className="overflow-x-auto rounded-lg border border-gray-200 bg-white p-3 font-mono text-sm text-gray-700">{`curl -X POST ${window.location.origin}/api/v1/public/cs/query \\
+            <pre className="overflow-x-auto rounded-lg border border-gray-200 bg-white p-3 font-mono text-base text-gray-700">{`curl -X POST ${window.location.origin}/api/v1/public/bot/query \\
   -H "X-API-Key: nsk_your_key_here" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "knowledge_base_id": ${selectedKbId ?? (kbs[0]?.id ?? 1)},
+    "bot_id": ${selectedBotId ?? (bots[0]?.id ?? 1)},
     "question": "請問退貨政策是什麼？"
   }'`}</pre>
             <p className="text-base text-gray-500">
-              Rate Limit：每個 API Key 每小時最多 100 次請求。詳細規格請參閱{' '}
+              Rate Limit：每個 API Key 每小時最多 100 次請求。              詳細規格請參閱{' '}
               <a
-                href="/api/v1/docs"
+                href="/api/v1/public/docs"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-sky-600 underline hover:text-sky-700"
+                className="text-emerald-600 underline hover:text-emerald-700"
               >
-                /api/v1/docs
+                /api/v1/public/docs
               </a>
               （Swagger UI）。
             </p>

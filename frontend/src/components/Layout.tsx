@@ -64,8 +64,8 @@ export default function Layout() {
                 className="text-2xl font-bold text-white"
                 style={{ letterSpacing: '-0.5px', fontFamily: "'Inter', 'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif", fontStyle: 'italic' }}
               >
-                <span style={{ fontWeight: 700, color: '#fb923c', fontSize: '32px' }}>Neuro</span>
-                <span style={{ fontWeight: 700, color: '#fb923c', fontSize: '32px' }}>Sme</span>
+                <span style={{ fontWeight: 700, color: '#ffffff', fontSize: '32px' }}>Neuro</span>
+                <span style={{ fontWeight: 700, fontSize: '32px', background: 'linear-gradient(90deg, #60d0f0 0%, #7c6ff7 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text', paddingRight: '8px' }}>SME</span>
                 <span style={{ fontWeight: 300, fontStyle: 'normal', fontSize: '24px', opacity: 0.7 }}>{' \u00a0| Private Hub'}</span>
                 <span style={{ fontWeight: 300, fontStyle: 'normal', fontSize: '20px', opacity: 0.3, marginLeft: '0.6em', letterSpacing: '0.02em' }}>
                   {APP_VERSION}

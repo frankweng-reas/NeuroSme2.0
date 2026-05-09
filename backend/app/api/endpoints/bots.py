@@ -46,6 +46,8 @@ class BotUpdate(BaseModel):
     widget_logo_url: str | None = None
     widget_color: str | None = None
     widget_lang: str | None = None
+    widget_voice_enabled: bool | None = None
+    widget_voice_prompt: str | None = None
 
 
 class BotKbResponse(BaseModel):
@@ -68,6 +70,8 @@ class BotResponse(BaseModel):
     widget_logo_url: str | None
     widget_color: str | None
     widget_lang: str | None
+    widget_voice_enabled: bool
+    widget_voice_prompt: str | None
     knowledge_bases: list[BotKbResponse]
     created_at: str
 
@@ -102,6 +106,8 @@ def _to_response(bot: Bot, db: Session) -> BotResponse:
         widget_logo_url=bot.widget_logo_url,
         widget_color=bot.widget_color,
         widget_lang=bot.widget_lang,
+        widget_voice_enabled=bot.widget_voice_enabled or False,
+        widget_voice_prompt=bot.widget_voice_prompt,
         knowledge_bases=kbs,
         created_at=bot.created_at.isoformat() if bot.created_at else "",
     )
@@ -220,6 +226,10 @@ def update_bot(
         bot.widget_color = body.widget_color or None
     if body.widget_lang is not None:
         bot.widget_lang = body.widget_lang or None
+    if body.widget_voice_enabled is not None:
+        bot.widget_voice_enabled = body.widget_voice_enabled
+    if body.widget_voice_prompt is not None:
+        bot.widget_voice_prompt = body.widget_voice_prompt or None
     if body.knowledge_base_ids is not None:
         _sync_kb_relations(bot.id, body.knowledge_base_ids, db)
 

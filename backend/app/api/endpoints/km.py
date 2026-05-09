@@ -102,12 +102,6 @@ async def upload_km_document(
     import json as _json
     from app.services.km_service import DOC_TYPES
 
-    # scope 驗證
-    if scope not in ("private", "public"):
-        raise HTTPException(status_code=400, detail="scope 只能是 'private' 或 'public'")
-    if scope == "public" and current.role not in ("admin", "super_admin", "manager"):
-        raise HTTPException(status_code=403, detail="只有管理員可以上傳到公共知識庫")
-
     # doc_type 驗證
     if doc_type not in DOC_TYPES:
         raise HTTPException(status_code=400, detail=f"doc_type 必須是 {sorted(DOC_TYPES)} 之一")
@@ -121,7 +115,7 @@ async def upload_km_document(
     except Exception:
         parsed_tags = []
 
-    # knowledge_base_id 驗證
+    # knowledge_base_id 驗證，並依 KB scope 決定文件 scope
     if knowledge_base_id is not None:
         from app.models.km_knowledge_base import KmKnowledgeBase
         kb = db.query(KmKnowledgeBase).filter(
@@ -130,6 +124,21 @@ async def upload_km_document(
         ).first()
         if not kb:
             raise HTTPException(status_code=404, detail="知識庫不存在")
+        # 權限：company KB 需 manager+；personal KB 只有 KB 建立者或 admin+ 可上傳
+        is_admin = current.role in ("admin", "super_admin")
+        can_manage = current.role in ("admin", "super_admin", "manager")
+        if kb.scope == "company" and not can_manage:
+            raise HTTPException(status_code=403, detail="只有管理員可以上傳到公司共用知識庫")
+        if kb.scope == "personal" and kb.created_by != current.id and not is_admin:
+            raise HTTPException(status_code=403, detail="只能上傳到自己的知識庫")
+        # 文件 scope 自動繼承 KB scope（company → public，personal → private）
+        scope = "public" if kb.scope == "company" else "private"
+    else:
+        # 無 KB 的文件沿用傳入 scope，但非 manager+ 只能 private
+        if scope not in ("private", "public"):
+            scope = "private"
+        if scope == "public" and current.role not in ("admin", "super_admin", "manager"):
+            scope = "private"
 
     filename = file.filename or "unknown"
     content_type = file.content_type

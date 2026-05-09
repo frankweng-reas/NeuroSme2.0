@@ -6,25 +6,23 @@ import { ApiError } from '@/api/client'
 import type { Agent } from '@/types'
 import AgentBusinessUI from './agents/AgentBusinessUI'
 import AgentChatUI from './agents/AgentChatUI'
-import AgentCsUI from './agents/AgentCsUI'
 import AgentCustomerUI from './agents/AgentCustomerUI'
-import AgentKmUI from './agents/AgentKmUI'
 import AgentQuotationUI from './agents/AgentQuotationUI'
 import AgentWritingUI from './agents/AgentWritingUI'
 import AgentMarketingUI from './agents/AgentMarketingUI'
 import AgentOcrUI from './agents/AgentOcrUI'
-import AgentKnowledgeBotUI from './agents/AgentKnowledgeBotUI'
+import AgentKbManagerUI from './agents/AgentKbManagerUI'
+import AgentKbBotBuilderUI from './agents/AgentKbBotBuilderUI'
 import AgentPageLayout from '@/components/AgentPageLayout'
 import AgentIcon from '@/components/AgentIcon'
 
 function getAgentUI(agent: Agent) {
   const id = agent.agent_id.toLowerCase()
   if (id === 'chat') return AgentChatUI
-  if (id === 'cs') return AgentCsUI
-  if (id === 'knowledge-bot') return AgentKnowledgeBotUI
+  if (id === 'kb-manager') return AgentKbManagerUI
+  if (id === 'kb-bot-builder') return AgentKbBotBuilderUI
   if (id === 'writing') return AgentWritingUI
   if (id === 'marketing') return AgentMarketingUI
-  if (id.includes('knowledge')) return AgentKmUI
   if (id.includes('business')) return AgentBusinessUI
   if (id.includes('customer')) return AgentCustomerUI
   if (id.includes('quotation')) return AgentQuotationUI

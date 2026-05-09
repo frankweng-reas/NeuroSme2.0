@@ -76,7 +76,7 @@ app.include_router(api_router, prefix=settings.API_V1_STR)
 
 # ── Public API 文件（僅顯示外部整合用的 API）─────────────────────────────────
 
-_PUBLIC_TAGS = {"ordering", "public-cs", "public-speech"}
+_PUBLIC_TAGS = {"ordering", "public-bot", "public-speech"}
 _PUBLIC_OPENAPI_URL = f"{settings.API_V1_STR}/public/openapi.json"
 
 

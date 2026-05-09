@@ -26,6 +26,32 @@ export interface BotWidgetInfo {
   color: string
   lang: string
   is_active: boolean
+  voice_enabled: boolean
+}
+
+export async function botWidgetTranscribeAudio(
+  token: string,
+  audioBlob: Blob,
+  filename = 'audio.webm',
+  language?: string,
+): Promise<string> {
+  const form = new FormData()
+  form.append('file', audioBlob, filename)
+  if (language) form.append('language', language)
+  const res = await fetch(`${BASE}/${token}/speech`, {
+    method: 'POST',
+    body: form,
+  })
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`
+    try {
+      const j = await res.json()
+      if (j.detail) detail = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail)
+    } catch {}
+    throw new Error(detail)
+  }
+  const data = await res.json()
+  return (data.text as string) ?? ''
 }
 
 export interface BotWidgetSessionData {

@@ -15,6 +15,8 @@ class KmKnowledgeBase(Base):
     system_prompt = Column(Text, nullable=True)
     created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    # personal = 只有建立者可見；company = 同 tenant 全員可見
+    scope = Column(String(20), nullable=False, server_default="personal")
 
     # Widget 設定
     public_token = Column(String(64), nullable=True, unique=True, index=True)

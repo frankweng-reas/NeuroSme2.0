@@ -16,14 +16,19 @@ export interface KmDocument {
   created_at: string
 }
 
+export type KbScope = 'personal' | 'company'
+
 export interface KmKnowledgeBase {
   id: number
   name: string
   description: string | null
   model_name: string | null
   system_prompt: string | null
+  scope: KbScope
+  created_by: number | null
   doc_count: number
   ready_count: number
+  bot_count: number
   created_at: string
   // Widget
   public_token: string | null
@@ -37,6 +42,14 @@ export interface KmKnowledgeBase {
 
 export async function listKnowledgeBases(): Promise<KmKnowledgeBase[]> {
   return apiFetch<KmKnowledgeBase[]>('/km/knowledge-bases')
+}
+
+export interface KmKnowledgeBaseAdmin extends KmKnowledgeBase {
+  created_by_name: string | null
+}
+
+export async function adminListKnowledgeBases(): Promise<KmKnowledgeBaseAdmin[]> {
+  return apiFetch<KmKnowledgeBaseAdmin[]>('/km/admin/knowledge-bases')
 }
 
 export async function createKnowledgeBase(data: {
@@ -59,6 +72,7 @@ export async function updateKnowledgeBase(
     description?: string
     model_name?: string
     system_prompt?: string
+    scope?: KbScope
     widget_title?: string
     widget_logo_url?: string
     widget_color?: string

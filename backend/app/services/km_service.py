@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.models.km_chunk import KmChunk
 from app.models.km_document import KmDocument
+from app.models.km_knowledge_base import KmKnowledgeBase
 from app.models.llm_provider_config import LLMProviderConfig
 from app.models.tenant_config import TenantConfig
 from app.core.encryption import decrypt_api_key
@@ -514,13 +515,14 @@ def km_retrieve_sync(
     """同步向量檢索：query → embedding → cosine similarity 找 top-K chunks。
 
     top_k：若未指定，依 KB 內文件的 doc_type 自動決定（取最大 top_k 以保守覆蓋）。
-    存取範圍：
-      - scope='public'（任何 tenant 使用者可見）
-      - scope='private' 且 owner_user_id = user_id（個人私有）
+    存取範圍（新邏輯，依 KB scope 決定）：
+      - KB scope='company' → 同 tenant 全員可搜尋
+      - KB scope='personal' → 只有 KB 建立者（created_by）可搜尋
+      - 無 KB（knowledge_base_id = NULL）→ 沿用舊文件 owner 邏輯
     若提供 knowledge_base_id，只在該知識庫的文件中搜尋。
     若提供 knowledge_base_ids（非空 list），在多個知識庫中聯合搜尋（Bot 多 KB 模式）。
     若提供 selected_doc_ids（非空），則只在指定文件中搜尋。
-    skip_scope_check=True：跳過 scope/owner 過濾（Widget 公開存取用）。
+    skip_scope_check=True：跳過 scope 過濾（Widget 公開存取用）。
     """
     # knowledge_base_ids 多 KB 模式：knowledge_base_id 退為 None
     if knowledge_base_ids:
@@ -591,8 +593,27 @@ def km_retrieve_sync(
                 KmDocument.status == "ready",
             ]
             if not skip_scope_check:
+                # 新邏輯：依 KB scope 判斷可見性
+                #   company KB → 全 tenant 員工可見
+                #   personal KB → 只有 KB 建立者（created_by）可搜尋
+                #   無 KB（knowledge_base_id = NULL）→ 沿用舊文件 owner 邏輯
+                from sqlalchemy import or_, and_
                 filters.append(
-                    (KmDocument.scope == "public") | (KmDocument.owner_user_id == user_id)
+                    or_(
+                        # 無 KB 的舊文件：沿用 owner 邏輯
+                        and_(
+                            KmDocument.knowledge_base_id.is_(None),
+                            KmDocument.owner_user_id == user_id,
+                        ),
+                        # 有 KB 的文件：依 KB scope 判斷
+                        and_(
+                            KmDocument.knowledge_base_id.isnot(None),
+                            or_(
+                                KmKnowledgeBase.scope == "company",
+                                KmKnowledgeBase.created_by == user_id,
+                            ),
+                        ),
+                    )
                 )
             if knowledge_base_ids:
                 filters.append(KmDocument.knowledge_base_id.in_(knowledge_base_ids))
@@ -608,6 +629,7 @@ def km_retrieve_sync(
         vector_rows = (
             db.query(KmChunk)
             .join(KmDocument, KmChunk.document_id == KmDocument.id)
+            .outerjoin(KmKnowledgeBase, KmDocument.knowledge_base_id == KmKnowledgeBase.id)
             .filter(*_base_filters())
             .order_by(KmChunk.embedding.cosine_distance(query_embedding))
             .limit(fetch_k)
@@ -635,6 +657,7 @@ def km_retrieve_sync(
                 bm25_q = (
                     db.query(KmChunk)
                     .join(KmDocument, KmChunk.document_id == KmDocument.id)
+                    .outerjoin(KmKnowledgeBase, KmDocument.knowledge_base_id == KmKnowledgeBase.id)
                     .filter(
                         *_base_filters(),
                         KmChunk.content_tsv.op("@@")(tsq),

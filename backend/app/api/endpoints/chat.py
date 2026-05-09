@@ -247,8 +247,8 @@ def _prepare_chat_completion(req: ChatRequest, db: Session, current: User) -> Ch
         kb_model_name = (bot.model_name or "").strip() or None
         kb_system_prompt = (bot.system_prompt or "").strip() or None
 
-    # KM Agent & Chat Service Agent：RAG 向量檢索，不使用 source_files
-    elif aid in ("knowledge", "cs"):
+    # KM Agent & Chat Service Agent & KB Manager：RAG 向量檢索，不使用 source_files
+    elif aid in ("knowledge", "cs", "kb-manager"):
         from app.services.km_service import format_km_context, km_retrieve_sync
 
         chunks = km_retrieve_sync(

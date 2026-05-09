@@ -10,6 +10,7 @@ import { I18nextProvider, useTranslation } from 'react-i18next'
 import { Loader2, MessageCircle, RotateCcw } from 'lucide-react'
 import {
   botWidgetChatStream,
+  botWidgetTranscribeAudio,
   checkBotWidgetSession,
   createBotWidgetSession,
   getBotWidgetInfo,
@@ -17,6 +18,7 @@ import {
 } from '@/api/widget_bot_public'
 import widgetI18n from '@/i18n/widgetI18n'
 import AgentChat, { type Message } from '@/components/AgentChat'
+import VoiceInput from '@/components/VoiceInput'
 
 // ── 型別 ──────────────────────────────────────────────────────────────────────
 
@@ -70,6 +72,7 @@ function WidgetBotInner({ token, isEmbed, langOverride }: { token: string; isEmb
   const [messages, setMessages] = useState<Message[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [chatError, setChatError] = useState<string | null>(null)
+  const [voiceAutoSendText, setVoiceAutoSendText] = useState('')
 
   // ── 載入 Bot info ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -326,6 +329,24 @@ function WidgetBotInner({ token, isEmbed, langOverride }: { token: string; isEmb
             showChart={false}
             showPdf={false}
             compact
+            appendAndSendText={voiceAutoSendText}
+            composerLeading={info?.voice_enabled ? (
+              <VoiceInput
+                hideLangSelector
+                transcribe={(blob, filename, lang) =>
+                  botWidgetTranscribeAudio(token, blob, filename, lang)
+                }
+                onTranscript={(text, autoSend) => {
+                  if (autoSend) {
+                    setVoiceAutoSendText(text)
+                    setTimeout(() => setVoiceAutoSendText(''), 50)
+                  }
+                }}
+                onError={(msg) => setChatError(msg)}
+                disabled={isLoading}
+                buttonClassName="flex min-h-[44px] min-w-0 items-center justify-center rounded-xl bg-gray-100 px-3 text-gray-500 transition-colors hover:bg-gray-200 disabled:opacity-40"
+              />
+            ) : undefined}
           />
         </div>
       )}

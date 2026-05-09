@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import get_current_user
+from app.models.bot import BotKnowledgeBase
 from app.models.km_document import KmDocument
 from app.models.km_knowledge_base import KmKnowledgeBase
 from app.models.user import User
@@ -24,11 +25,15 @@ logger = logging.getLogger(__name__)
 # ──────────────────────────────────────────────────────────────────────────────
 
 
+KB_SCOPES = {"personal", "company"}
+
+
 class KbCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     description: str | None = None
     model_name: str | None = None
     system_prompt: str | None = None
+    scope: str = "personal"
 
 
 class KbUpdate(BaseModel):
@@ -36,6 +41,7 @@ class KbUpdate(BaseModel):
     description: str | None = None
     model_name: str | None = None
     system_prompt: str | None = None
+    scope: str | None = None
     widget_title: str | None = None
     widget_logo_url: str | None = None
     widget_color: str | None = None
@@ -50,8 +56,11 @@ class KbResponse(BaseModel):
     description: str | None
     model_name: str | None
     system_prompt: str | None
+    scope: str
+    created_by: int | None
     doc_count: int
     ready_count: int
+    bot_count: int
     created_at: str
     public_token: str | None
     widget_title: str | None
@@ -66,14 +75,18 @@ class KbResponse(BaseModel):
 
 def _to_response(kb: KmKnowledgeBase, db: Session) -> KbResponse:
     all_docs = db.query(KmDocument).filter(KmDocument.knowledge_base_id == kb.id).all()
+    bot_count = db.query(BotKnowledgeBase).filter(BotKnowledgeBase.knowledge_base_id == kb.id).count()
     return KbResponse(
         id=kb.id,
         name=kb.name,
         description=kb.description,
         model_name=kb.model_name,
         system_prompt=kb.system_prompt,
+        scope=kb.scope or "personal",
+        created_by=kb.created_by,
         doc_count=len(all_docs),
         ready_count=sum(1 for d in all_docs if d.status == "ready"),
+        bot_count=bot_count,
         created_at=kb.created_at.isoformat() if kb.created_at else "",
         public_token=kb.public_token,
         widget_title=kb.widget_title,
@@ -105,8 +118,15 @@ def create_knowledge_base(
     db: Session = Depends(get_db),
     current: Annotated[User, Depends(get_current_user)] = ...,
 ):
+    scope = (body.scope or "personal").strip()
+    if scope not in KB_SCOPES:
+        raise HTTPException(status_code=400, detail=f"scope 必須是 {KB_SCOPES} 之一")
+    # member 只能建立 personal KB；company scope 需要 manager+
+    if scope == "company" and not _can_manage(current.role):
+        raise HTTPException(status_code=403, detail="只有管理員可以建立公司共用知識庫")
+    # 強制 member 的 scope 永遠是 personal
     if not _can_manage(current.role):
-        raise HTTPException(status_code=403, detail="只有管理員可以建立知識庫")
+        scope = "personal"
 
     existing = db.query(KmKnowledgeBase).filter(
         KmKnowledgeBase.tenant_id == current.tenant_id,
@@ -121,6 +141,7 @@ def create_knowledge_base(
         description=body.description,
         model_name=body.model_name or None,
         system_prompt=body.system_prompt or None,
+        scope=scope,
         created_by=current.id,
     )
     db.add(kb)
@@ -134,9 +155,17 @@ def list_knowledge_bases(
     db: Session = Depends(get_db),
     current: Annotated[User, Depends(get_current_user)] = ...,
 ):
+    from sqlalchemy import or_
+    # personal：只有建立者自己的；company：同 tenant 全員可見
     kbs = (
         db.query(KmKnowledgeBase)
-        .filter(KmKnowledgeBase.tenant_id == current.tenant_id)
+        .filter(
+            KmKnowledgeBase.tenant_id == current.tenant_id,
+            or_(
+                KmKnowledgeBase.scope == "company",
+                KmKnowledgeBase.created_by == current.id,
+            ),
+        )
         .order_by(KmKnowledgeBase.created_at.asc())
         .all()
     )
@@ -150,15 +179,20 @@ def update_knowledge_base(
     db: Session = Depends(get_db),
     current: Annotated[User, Depends(get_current_user)] = ...,
 ):
-    if not _can_manage(current.role):
-        raise HTTPException(status_code=403, detail="只有管理員可以修改知識庫")
-
     kb = db.query(KmKnowledgeBase).filter(
         KmKnowledgeBase.id == kb_id,
         KmKnowledgeBase.tenant_id == current.tenant_id,
     ).first()
     if not kb:
         raise HTTPException(status_code=404, detail="知識庫不存在")
+    # admin+：可修改任意 KB
+    # manager：只能修改自己建立的 KB
+    # member：只能修改自己的 personal KB
+    if not _is_admin(current.role):
+        if kb.created_by != current.id:
+            raise HTTPException(status_code=403, detail="只能修改自己建立的知識庫")
+        if not _can_manage(current.role) and kb.scope != "personal":
+            raise HTTPException(status_code=403, detail="只能修改自己的個人知識庫")
 
     if body.name is not None:
         kb.name = body.name.strip()
@@ -166,6 +200,13 @@ def update_knowledge_base(
         kb.description = body.description
     kb.model_name = body.model_name or None
     kb.system_prompt = body.system_prompt or None
+    if body.scope is not None:
+        new_scope = body.scope.strip()
+        if new_scope not in KB_SCOPES:
+            raise HTTPException(status_code=400, detail=f"scope 必須是 {KB_SCOPES} 之一")
+        if not _can_manage(current.role):
+            raise HTTPException(status_code=403, detail="只有管理員可以變更知識庫範圍")
+        kb.scope = new_scope
     if body.widget_title is not None:
         kb.widget_title = body.widget_title or None
     if body.widget_logo_url is not None:
@@ -189,16 +230,21 @@ def delete_knowledge_base(
     db: Session = Depends(get_db),
     current: Annotated[User, Depends(get_current_user)] = ...,
 ):
-    """刪除知識庫（不刪除文件，文件的 knowledge_base_id 設為 NULL）"""
-    if not _can_manage(current.role):
-        raise HTTPException(status_code=403, detail="只有管理員可以刪除知識庫")
-
+    """刪除知識庫。member 只能刪自己建的 personal KB；manager+ 可刪任意 KB。"""
     kb = db.query(KmKnowledgeBase).filter(
         KmKnowledgeBase.id == kb_id,
         KmKnowledgeBase.tenant_id == current.tenant_id,
     ).first()
     if not kb:
         raise HTTPException(status_code=404, detail="知識庫不存在")
+    # admin+：可刪除任意 KB
+    # manager：只能刪除自己建立的 KB
+    # member：只能刪除自己的 personal KB
+    if not _is_admin(current.role):
+        if kb.created_by != current.id:
+            raise HTTPException(status_code=403, detail="只能刪除自己建立的知識庫")
+        if not _can_manage(current.role) and kb.scope != "personal":
+            raise HTTPException(status_code=403, detail="只能刪除自己的個人知識庫")
 
     # 先刪 widget_sessions（含 messages，由 ORM cascade 處理）
     for s in db.query(WidgetSession).filter(WidgetSession.kb_id == kb_id).all():
@@ -256,3 +302,43 @@ def revoke_widget_token(
     db.commit()
     db.refresh(kb)
     return _to_response(kb, db)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Admin 專用：列出 tenant 下所有 KB（含建立者名稱）
+# ──────────────────────────────────────────────────────────────────────────────
+
+class KbAdminResponse(KbResponse):
+    created_by_name: str | None = None
+
+
+@router.get("/admin/knowledge-bases", response_model=list[KbAdminResponse])
+def admin_list_knowledge_bases(
+    db: Session = Depends(get_db),
+    current: Annotated[User, Depends(get_current_user)] = ...,
+):
+    """列出 tenant 下所有 KB（不限 scope/owner），僅限 admin / super_admin"""
+    if not _is_admin(current.role):
+        raise HTTPException(status_code=403, detail="只有系統管理員可以存取此 API")
+
+    kbs = (
+        db.query(KmKnowledgeBase)
+        .filter(KmKnowledgeBase.tenant_id == current.tenant_id)
+        .order_by(KmKnowledgeBase.created_at.asc())
+        .all()
+    )
+
+    user_ids = {kb.created_by for kb in kbs if kb.created_by is not None}
+    user_map: dict[int, str] = {}
+    if user_ids:
+        users = db.query(User.id, User.username).filter(User.id.in_(user_ids)).all()
+        user_map = {u.id: u.username for u in users}
+
+    results = []
+    for kb in kbs:
+        base = _to_response(kb, db)
+        results.append(KbAdminResponse(
+            **base.model_dump(),
+            created_by_name=user_map.get(kb.created_by) if kb.created_by else None,
+        ))
+    return results

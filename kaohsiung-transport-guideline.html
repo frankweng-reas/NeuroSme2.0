@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>CS Agent 導入指南 — 高雄市政府交通局</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Noto Sans TC", "Microsoft JhengHei", sans-serif; font-size: 14px; line-height: 1.7; color: #1a1a1a; background: #fff; padding: 40px; max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 24px; font-weight: 700; margin-bottom: 4px; }
+  h2 { font-size: 17px; font-weight: 700; margin: 28px 0 12px; border-bottom: 2px solid #e5e7eb; padding-bottom: 6px; }
+  h3 { font-size: 14px; font-weight: 700; margin: 14px 0 6px; }
+  .subtitle { color: #6b7280; font-size: 13px; margin-bottom: 6px; }
+  .meta { color: #9ca3af; font-size: 12px; margin-bottom: 24px; }
+  hr { border: none; border-top: 1px solid #e5e7eb; margin: 24px 0; }
+
+  /* 三欄卡片 */
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
+  .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; }
+  .card-title { font-weight: 700; font-size: 13px; margin-bottom: 6px; }
+  .card-body { color: #6b7280; font-size: 12px; }
+  .pill { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; margin-top: 8px; }
+  .pill-green { background: #dcfce7; color: #15803d; }
+  .pill-gray { background: #f3f4f6; color: #374151; }
+  .pill-orange { background: #fff7ed; color: #c2410c; }
+
+  /* 步驟 */
+  .step { border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 14px; overflow: hidden; }
+  .step-header { display: flex; align-items: center; gap: 10px; background: #f9fafb; padding: 12px 16px; font-weight: 700; font-size: 14px; border-bottom: 1px solid #e5e7eb; }
+  .step-body { padding: 16px; }
+  .step-num { background: #1a1a1a; color: #fff; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
+  .step-tag { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: #fef3c7; color: #92400e; margin-left: auto; }
+
+  /* 表格 */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 10px 0; }
+  th { background: #f3f4f6; text-align: left; padding: 7px 10px; font-weight: 600; border: 1px solid #e5e7eb; }
+  td { padding: 7px 10px; border: 1px solid #e5e7eb; vertical-align: top; }
+  tr:nth-child(even) td { background: #fafafa; }
+
+  /* Code block */
+  pre { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 12px; font-size: 12px; font-family: "Courier New", monospace; white-space: pre-wrap; margin: 8px 0; line-height: 1.6; }
+
+  /* Callout */
+  .callout { border-radius: 6px; padding: 10px 14px; font-size: 13px; margin: 8px 0; }
+  .callout-info { background: #eff6ff; border-left: 3px solid #3b82f6; color: #1e40af; }
+  .callout-warning { background: #fffbeb; border-left: 3px solid #f59e0b; color: #92400e; }
+
+  /* 統計 */
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 12px 0; }
+  .stat { border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px; text-align: center; }
+  .stat-value { font-size: 20px; font-weight: 700; }
+  .stat-label { font-size: 11px; color: #6b7280; margin-top: 4px; }
+  .stat-green .stat-value { color: #15803d; }
+
+  @media print {
+    body { padding: 20px; }
+    .step { page-break-inside: avoid; }
+    h2 { page-break-after: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<div class="subtitle">導入建議文件</div>
+<h1>CS Agent 導入指南</h1>
+<div class="meta">高雄市政府交通局 · 議會質詢知識庫</div>
+
+<hr>
+
+<h2>核心挑戰與對應方案</h2>
+<div class="grid-3">
+  <div class="card">
+    <div class="card-title">速度</div>
+    <div class="card-body">質詢當下需要 5 秒內找到答案</div>
+    <span class="pill pill-green">Cloud LLM 切換</span>
+  </div>
+  <div class="card">
+    <div class="card-title">準確性</div>
+    <div class="card-body">答案必須有數字依據，不能模糊帶過</div>
+    <span class="pill pill-green">FAQ 格式資料整備</span>
+  </div>
+  <div class="card">
+    <div class="card-title">語音輸入</div>
+    <div class="card-body">質詢現場打字慢，需要語音快速提問</div>
+    <span class="pill pill-green">Whisper 語音辨識</span>
+  </div>
+</div>
+
+<hr>
+
+<h2>導入流程（四步驟）</h2>
+
+<div class="step">
+  <div class="step-header">
+    <span class="step-num">Step 1</span>
+    資料整備：建立 FAQ 知識庫
+    <span class="step-tag">最重要</span>
+  </div>
+  <div class="step-body">
+    <p>依議題分類，每個議題一份 FAQ 文件（PDF 或 TXT）。</p>
+    <h3>FAQ 格式規範</h3>
+    <pre>Q: 114 年捷運全年總運量是多少？
+A: 114 年全年總運量為 1 億 1,823 萬人次，較 113 年成長 6.8%。
+
+Q: 114 年 YouBike 2.0 租借次數？
+A: 114 年全年租借 2,187 萬次，較 113 年成長 22.3%，日均 5.99 萬次。</pre>
+    <table>
+      <tr><th>規則</th><th>說明</th></tr>
+      <tr><td>使用具體年份</td><td>「114 年」而非「去年」</td></tr>
+      <tr><td>每對 Q&amp;A 獨立</td><td>不要把多個問題合併成一大段</td></tr>
+      <tr><td>答案含數字</td><td>百分比、金額、件數都要帶入</td></tr>
+      <tr><td>多行答案</td><td>結論放第一句，細節在後續行</td></tr>
+      <tr><td>上傳時選 FAQ 類型</td><td>系統會用最精準的切塊策略處理</td></tr>
+    </table>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-header">
+    <span class="step-num">Step 2</span>
+    系統設定：切換 Cloud 模型
+  </div>
+  <div class="step-body">
+    <p>由管理員在「管理 → AI 設定」中操作，不需要工程師。</p>
+    <table>
+      <tr><th>項目</th><th>建議設定</th><th>理由</th></tr>
+      <tr><td>LLM 模型</td><td>GPT-4o / Claude 3.5 Sonnet</td><td>速度快、繁中品質佳</td></tr>
+      <tr><td>Embedding 模型</td><td>text-embedding-3-small（OpenAI）</td><td>語意理解優於本機模型</td></tr>
+      <tr><td>語音模型</td><td>OpenAI Whisper</td><td>中英混雜辨識最準</td></tr>
+    </table>
+    <div class="callout callout-info">切換模型後，原有文件需重新向量化（重新上傳或點「重新處理」）。</div>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-header">
+    <span class="step-num">Step 3</span>
+    知識庫設定：自訂系統提示詞
+  </div>
+  <div class="step-body">
+    <p>在知識庫設定的「自訂系統提示詞」欄位貼入以下範本，依實際需求調整：</p>
+    <pre>你是高雄市政府交通局的質詢資料助理。
+回答格式：
+【結論】一句話直接說出數字或答案。
+【說明】補充必要背景，2–3 行以內。
+規則：
+- 僅根據知識庫資料回答，不得推測。
+- 若查無資料，直接回覆「知識庫中無此數據」。
+- 不需要重複問題內容。</pre>
+    <p style="color:#6b7280; font-size:12px; margin-top:8px;">語音辨識提示詞（知識庫設定 → 啟用語音 → 提示詞）：<br>
+    「常見詞彙：捷運、YouBike 2.0、BRT、輕軌、預算執行率、一卡通、交通流量。」</p>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-header">
+    <span class="step-num">Step 4</span>
+    驗收測試：用真實質詢問題驗證
+  </div>
+  <div class="step-body">
+    <p>收集近兩屆議會質詢問題，逐一測試。</p>
+    <table>
+      <tr><th>測試項目</th><th>標準</th></tr>
+      <tr><td>回答時間</td><td>&lt; 5 秒（Cloud 模型）</td></tr>
+      <tr><td>有數字依據的問題</td><td>正確答出數字 ≥ 90%</td></tr>
+      <tr><td>查無資料的問題</td><td>明確告知，不亂猜</td></tr>
+      <tr><td>語音辨識</td><td>專有名詞（YouBike 2.0、BRT）辨識正確</td></tr>
+    </table>
+    <div class="callout callout-warning">測試失敗的問題 → 補充 FAQ 資料再重試，不是調整程式碼。</div>
+  </div>
+</div>
+
+<hr>
+
+<h2>預期效益</h2>
+<div class="stats">
+  <div class="stat stat-green"><div class="stat-value">&lt; 5 秒</div><div class="stat-label">目標回答時間</div></div>
+  <div class="stat stat-green"><div class="stat-value">90%+</div><div class="stat-label">有資料問題準確率</div></div>
+  <div class="stat"><div class="stat-value">0</div><div class="stat-label">需改程式碼次數</div></div>
+  <div class="stat"><div class="stat-value">4 步</div><div class="stat-label">導入完成</div></div>
+</div>
+
+<hr>
+
+<h2>重要提醒</h2>
+<div class="callout callout-warning">資料品質決定 80% 的效果。FAQ 格式寫得越準確、問題越口語，系統就越準。</div>
+<div class="callout callout-info">建議每年度更新資料後，重新上傳對應的 FAQ 文件，並確認年份統一使用民國年（如「114 年」）。</div>
+<div class="callout callout-info">Cloud LLM 每次呼叫有費用，建議由管理員評估用量後再切換，本機模型可作為測試使用。</div>
+
+</body>
+</html>

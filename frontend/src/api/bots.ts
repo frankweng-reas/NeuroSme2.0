@@ -23,6 +23,8 @@ export interface Bot {
   widget_logo_url: string | null
   widget_color: string | null
   widget_lang: string | null
+  widget_voice_enabled: boolean
+  widget_voice_prompt: string | null
   knowledge_bases: BotKbResponse[]
   created_at: string
 }
@@ -62,6 +64,8 @@ export async function updateBot(
     widget_logo_url?: string
     widget_color?: string
     widget_lang?: string
+    widget_voice_enabled?: boolean
+    widget_voice_prompt?: string
   }
 ): Promise<Bot> {
   return apiFetch<Bot>(`/bots/${id}`, {

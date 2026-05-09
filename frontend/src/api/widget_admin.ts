@@ -29,3 +29,13 @@ export function listWidgetSessions(kbId: number): Promise<WidgetSessionItem[]> {
 export function getWidgetSessionMessages(sessionId: string): Promise<WidgetSessionDetail> {
   return apiFetch<WidgetSessionDetail>(`/widget-admin/sessions/${sessionId}/messages`)
 }
+
+// ── Bot Widget Admin ────────────────────────────────────────────────────────
+
+export function listBotWidgetSessions(botId: number): Promise<WidgetSessionItem[]> {
+  return apiFetch<WidgetSessionItem[]>(`/widget-admin/bot/${botId}/sessions`)
+}
+
+export function getBotWidgetSessionMessages(sessionId: string): Promise<WidgetSessionDetail> {
+  return apiFetch<WidgetSessionDetail>(`/widget-admin/bot-sessions/${sessionId}/messages`)
+}

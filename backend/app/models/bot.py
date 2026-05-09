@@ -21,6 +21,8 @@ class Bot(Base):
     widget_logo_url = Column(Text, nullable=True)
     widget_color = Column(String(20), nullable=True, default="#1A3A52")
     widget_lang = Column(String(10), nullable=True, default="zh-TW")
+    widget_voice_enabled = Column(Boolean, nullable=False, default=False)
+    widget_voice_prompt = Column(Text, nullable=True)
 
     created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
