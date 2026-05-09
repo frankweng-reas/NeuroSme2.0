@@ -25,7 +25,7 @@ from app.services.llm_caller import LLMCallError, LLMProviderNotConfigured, call
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-_FONT_PATH = Path(__file__).resolve().parents[4] / "config" / "fonts" / "NotoSansTC-Regular.ttf"
+_FONT_PATH = Path(__file__).resolve().parents[3] / "config" / "fonts" / "NotoSansTC-Regular.ttf"
 _MAX_PDF_BYTES = 20 * 1024 * 1024  # 20 MB
 _MAX_TEXT_CHARS = 30_000           # 避免 context 過長
 
