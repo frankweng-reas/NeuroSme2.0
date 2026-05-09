@@ -201,12 +201,12 @@ export default function HelpModal({
         </div>
 
         {/* Footer */}
-        <div className="flex flex-shrink-0 items-center justify-between rounded-b-3xl border-t border-slate-100 bg-slate-50 px-6 py-3">
+        <div className="flex flex-shrink-0 items-center justify-end gap-2 rounded-b-3xl border-t border-slate-100 bg-slate-50 px-6 py-3">
           <button
             type="button"
             onClick={handleDownloadPdf}
             disabled={loading || !content}
-            className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 disabled:opacity-40"
+            className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-40"
           >
             <Download className="h-4 w-4" />
             下載 PDF
