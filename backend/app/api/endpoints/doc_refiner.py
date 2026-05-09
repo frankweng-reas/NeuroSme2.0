@@ -77,24 +77,82 @@ def _extract_text(pdf_bytes: bytes) -> tuple[str, int]:
     return "\n\n".join(parts), page_count
 
 
-def _parse_llm_json(raw: str) -> dict:
-    """從 LLM 回覆中萃取 JSON，容忍 markdown code fence 與前言文字"""
-    # 去掉 ```json ... ``` 包裝
-    cleaned = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("`").strip()
-    # 找第一個 { 到最後一個 }
+def _extract_json_str(text: str) -> str:
+    """從文字中取出最外層 JSON object 字串"""
+    cleaned = re.sub(r"```(?:json)?\s*", "", text).strip().rstrip("`").strip()
     start = cleaned.find("{")
     end = cleaned.rfind("}")
     if start == -1 or end == -1:
         raise ValueError("LLM 回覆中找不到合法 JSON")
-    candidate = cleaned[start:end + 1]
+    return cleaned[start:end + 1]
+
+
+def _normalize_items(data: dict, mode: str) -> list[dict]:
+    """
+    將不同 LLM 產出的欄位名稱正規化為統一的 items 列表格式。
+    某些模型會回傳 qa_content、questions、data 等不同命名。
+    """
+    # 已是標準格式
+    if "items" in data and isinstance(data["items"], list):
+        return data["items"]
+
+    flat: list[dict] = []
+
+    if mode == "qa":
+        # 嵌套結構：qa_content[*].questions[*]
+        for section in data.get("qa_content", data.get("categories", data.get("sections", []))):
+            for q in section.get("questions", section.get("qa", [])):
+                flat.append({
+                    "question": q.get("question", q.get("q", "")),
+                    "answer": q.get("answer", q.get("a", "")),
+                })
+        # 直接 questions 陣列
+        if not flat:
+            for q in data.get("questions", data.get("qa", data.get("data", []))):
+                if isinstance(q, dict):
+                    flat.append({
+                        "question": q.get("question", q.get("q", "")),
+                        "answer": q.get("answer", q.get("a", "")),
+                    })
+    else:  # summary
+        for s in data.get("summaries", data.get("summary", data.get("data", []))):
+            if isinstance(s, dict):
+                flat.append({
+                    "heading": s.get("heading", s.get("title", s.get("section", ""))),
+                    "content": s.get("content", s.get("summary", s.get("text", ""))),
+                })
+
+    # 補上 id
+    for idx, item in enumerate(flat, 1):
+        item.setdefault("id", idx)
+
+    return flat
+
+
+def _parse_llm_json(raw: str, mode: str = "qa") -> dict:
+    """從 LLM 回覆中萃取並正規化 JSON，容忍不同命名方式與前言文字"""
     try:
-        return json.loads(candidate)
+        json_str = _extract_json_str(raw)
+        data = json.loads(json_str)
     except json.JSONDecodeError:
-        # 二次嘗試：用 regex 找最外層 JSON object
-        m = re.search(r'\{[\s\S]*\}', cleaned)
-        if m:
-            return json.loads(m.group())
-        raise ValueError("LLM 回覆中找不到合法 JSON")
+        # 嘗試截斷到最後一個合法的 } 或 ]
+        json_str = _extract_json_str(raw)
+        # 逐步縮短找可解析的前綴
+        for end in range(len(json_str), 0, -1):
+            try:
+                data = json.loads(json_str[:end])
+                break
+            except json.JSONDecodeError:
+                continue
+        else:
+            raise ValueError("LLM 回覆中找不到合法 JSON")
+
+    items = _normalize_items(data, mode)
+    return {
+        "mode": data.get("mode", mode),
+        "title": data.get("title", ""),
+        "items": items,
+    }
 
 
 def _generate_pdf(mode: str, title: str, items: list[dict]) -> bytes:
@@ -272,7 +330,7 @@ async def process_document(
 
     # 解析 JSON
     try:
-        result = _parse_llm_json(answer)
+        result = _parse_llm_json(answer, mode)
     except (ValueError, json.JSONDecodeError) as exc:
         logger.error("LLM 回覆 JSON 解析失敗: %s\nRaw: %s", exc, answer[:500])
         raise HTTPException(
