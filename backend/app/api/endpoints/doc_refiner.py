@@ -222,8 +222,6 @@ async def process_document(
     # 決定 model（前端指定 > 租戶預設）
     use_model = model.strip()
     if not use_model:
-        # 嘗試從租戶預設 LLM config 取
-        from app.services.llm_service import _get_llm_params
         from app.models.llm_provider_config import LLMProviderConfig
         cfg = (
             db.query(LLMProviderConfig)
@@ -235,14 +233,18 @@ async def process_document(
             .first()
         )
         if cfg:
+            dm = (cfg.default_model or "").strip()
             provider = cfg.provider
+            # 組裝帶 provider prefix 的 model string，和前端 LLMModelSelect 回傳的格式一致
             if provider == "gemini":
-                use_model = "gemini/gemini-2.0-flash"
+                use_model = dm if dm.startswith("gemini/") else f"gemini/{dm}" if dm else "gemini/gemini-2.0-flash"
             elif provider == "local":
-                use_model = "local/gemma4:26b"
-            else:
-                use_model = "gpt-4o-mini"
-        else:
+                use_model = dm if dm.startswith("local/") else f"local/{dm}" if dm else ""
+            elif provider == "twcc":
+                use_model = dm if dm.startswith("twcc/") else f"twcc/{dm}" if dm else ""
+            else:  # openai
+                use_model = dm or "gpt-4o-mini"
+        if not use_model:
             raise HTTPException(status_code=400, detail="請指定 model 參數，或在 AI 設定中設定 LLM Provider")
 
     # 呼叫 LLM
