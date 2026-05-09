@@ -1,9 +1,26 @@
 # KB Bot Builder 使用說明
 
+## Overview
+
+**KB Bot Builder** 以企業知識庫為基礎，建立 AI 問答 Bot，並部署至所需場景。
+
+| 部署情境 | 說明 |
+|---------|------|
+| **對外客服 Widget** | 嵌入官網、產品頁面，讓訪客自助查詢產品資訊、退換貨政策等 |
+| **內部員工 Bot** | 嵌入企業內部系統（OA、HR 入口），讓員工查詢 HR 政策、IT 規範、操作手冊 |
+| **API 串接** | 透過 API Key 讓現有系統直接呼叫 Bot，不需要嵌入 Widget |
+
+知識管理群組的三個 Agent 分工如下：
+- **Doc Refiner** → 整理 PDF 為 Q&A 後匯入知識庫
+- **Knowledge Base** → 管理文件、直接查詢
+- **KB Bot Builder**（本 Agent）→ 以知識庫為基礎部署 Bot
+
+---
+
 ## 功能定位
 
-KB Bot Builder 讓管理員以公司知識庫為基礎，建立 AI Bot 並部署為嵌入式 Widget，供外部網站或應用程式使用。
-建立 Bot 前，請先在 **KB 管理** 建立並設為「公司共用」的知識庫。
+KB Bot Builder 讓管理員以公司知識庫為基礎，建立 AI Bot 並部署為嵌入式 Widget 或 API，供內部系統或外部網站使用。
+建立 Bot 前，請先在 **Knowledge Base** 建立並設為「公司共用」的知識庫。
 
 ---
 
