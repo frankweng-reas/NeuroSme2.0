@@ -13,6 +13,8 @@ import {
   BookOpen,
   Headphones,
   FileText,
+  FilePen,
+  FileQuestion,
   Megaphone,
   ScanText,
   type LucideIcon,
@@ -33,6 +35,8 @@ const ICON_MAP: Record<string, LucideIcon> = {
   'book-open': BookOpen,
   Headphones,
   FileText,
+  FilePen,
+  FileQuestion,
   Megaphone,
   ScanText,
 }
