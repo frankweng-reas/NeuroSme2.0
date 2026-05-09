@@ -14,7 +14,7 @@ import {
 } from 'lucide-react'
 import {
   processDocument,
-  exportDocUrl,
+  exportDocument,
   type ProcessResponse,
   type RefinerMode,
   type RefinerItem,
@@ -138,20 +138,7 @@ export default function AgentDocRefinerUI({ agent }: Props) {
   const handleExport = async () => {
     setExporting(true)
     try {
-      const token = localStorage.getItem('token') || ''
-      const res = await fetch(exportDocUrl(), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ mode, title, items }),
-      })
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        throw new Error(data.detail || `匯出失敗（${res.status}）`)
-      }
-      const blob = await res.blob()
+      const blob = await exportDocument({ mode, title, items })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url

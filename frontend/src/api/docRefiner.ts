@@ -1,4 +1,5 @@
 import { apiFetch } from './client'
+import { TOKEN_KEY } from '@/contexts/AuthContext'
 
 export interface QAItem {
   id: number
@@ -39,6 +40,25 @@ export async function processDocument(
   })
 }
 
-export function exportDocUrl(): string {
-  return '/api/v1/doc-refiner/export'
+export interface ExportRequest {
+  mode: RefinerMode
+  title: string
+  items: RefinerItem[]
+}
+
+export async function exportDocument(req: ExportRequest): Promise<Blob> {
+  const token = localStorage.getItem(TOKEN_KEY) || ''
+  const res = await fetch('/api/v1/doc-refiner/export', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(req),
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error((data as { detail?: string }).detail || `匯出失敗（${res.status}）`)
+  }
+  return res.blob()
 }
