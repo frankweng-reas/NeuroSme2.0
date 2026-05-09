@@ -1,10 +1,12 @@
 /** 首頁：顯示「我的助理」區塊與 agents 卡片列表，點擊進入 /agent/:id */
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { HelpCircle } from 'lucide-react'
 import { getAgents } from '@/api/agents'
 import { getActivationStatus } from '@/api/activation'
 import { getMe } from '@/api/users'
 import ActivationDialog from '@/components/ActivationDialog'
+import HelpModal from '@/components/HelpModal'
 import type { Agent } from '@/types'
 import AgentIcon from '@/components/AgentIcon'
 
@@ -59,6 +61,7 @@ export default function HomePage() {
   const [isLoading, setIsLoading] = useState(true)
   const [showActivationDialog, setShowActivationDialog] = useState(false)
   const [username, setUsername] = useState('')
+  const [showHelpModal, setShowHelpModal] = useState(false)
 
   useEffect(() => {
     getAgents(false)
@@ -109,6 +112,12 @@ export default function HomePage() {
 
   return (
     <div className="flex h-full flex-col px-2 pt-3 pb-5">
+      <HelpModal
+        open={showHelpModal}
+        onClose={() => setShowHelpModal(false)}
+        url="/help-platform.md"
+        title="NeuroSme | Private Hub 產品介紹"
+      />
       {showActivationDialog && (
         <ActivationDialog
           onActivated={() => {
@@ -135,14 +144,23 @@ export default function HomePage() {
                 </h1>
                 <p className="mt-1 text-base text-slate-500">今天要用哪個助理？</p>
               </div>
-              {sortedAgents.length > 0 && (
-                <div className="flex items-center gap-2 rounded-2xl bg-white/60 px-4 py-2 ring-1 ring-slate-200 shadow-sm backdrop-blur-sm">
-                  <span className="h-2 w-2 rounded-full bg-emerald-400" />
-                  <span className="text-base font-medium text-slate-600">
-                    {sortedAgents.length} 個助理已開通
-                  </span>
-                </div>
-              )}
+              <div className="flex items-center gap-2">
+                {sortedAgents.length > 0 && (
+                  <div className="flex items-center gap-2 rounded-2xl bg-white/60 px-4 py-2 ring-1 ring-slate-200 shadow-sm backdrop-blur-sm">
+                    <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                    <span className="text-base font-medium text-slate-600">
+                      {sortedAgents.length} 個助理已開通
+                    </span>
+                  </div>
+                )}
+                <button
+                  onClick={() => setShowHelpModal(true)}
+                  className="flex items-center gap-1.5 rounded-2xl bg-white/60 px-4 py-2 ring-1 ring-slate-200 shadow-sm backdrop-blur-sm text-base font-medium text-slate-500 hover:text-slate-700 hover:bg-white/80 transition-colors"
+                >
+                  <HelpCircle className="h-4 w-4" />
+                  關於平台
+                </button>
+              </div>
             </div>
           )}
 
