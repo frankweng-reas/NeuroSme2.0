@@ -395,7 +395,7 @@ function EditStage({
           重新上傳
         </button>
         {result && (
-          <span className="text-base text-white/40">
+          <span className="text-base text-white/70">
             {result.page_count} 頁 · {result.char_count.toLocaleString()} 字 · {items.length} 條
           </span>
         )}
