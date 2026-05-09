@@ -1,6 +1,6 @@
 """API 路由彙總：掛載 users、agents、source_files、prompt_templates、bi_projects 等 endpoint"""
 from fastapi import APIRouter
-from app.api.endpoints import users, agents, agent_catalog, chat, chat_dev, chat_compute_tool, chat_threads, chat_insights, agent_insights, source_files, prompt_templates, tenants, companies, bi_projects, bi_sources, bi_schemas, bi_sample_qa, llm_configs, activation, km, km_kb, widget, widget_admin, api_keys, public_bot, public_speech, ordering, speech, ocr, bots, widget_bot
+from app.api.endpoints import users, agents, agent_catalog, chat, chat_dev, chat_compute_tool, chat_threads, chat_insights, agent_insights, source_files, prompt_templates, tenants, companies, bi_projects, bi_sources, bi_schemas, bi_sample_qa, llm_configs, activation, km, km_kb, widget, widget_admin, api_keys, public_bot, public_speech, ordering, speech, ocr, bots, widget_bot, doc_refiner
 
 router = APIRouter()
 router.include_router(users.router, prefix="/users", tags=["users"])
@@ -34,3 +34,4 @@ router.include_router(speech.router, prefix="/speech", tags=["speech"])
 router.include_router(ocr.router, prefix="/ocr", tags=["ocr"])
 router.include_router(bots.router, prefix="/bots", tags=["bots"])
 router.include_router(widget_bot.router, prefix="/widget/bot", tags=["widget-bot"])
+router.include_router(doc_refiner.router, prefix="/doc-refiner", tags=["doc-refiner"])

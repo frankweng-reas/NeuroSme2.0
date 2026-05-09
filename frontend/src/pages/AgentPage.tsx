@@ -13,6 +13,7 @@ import AgentMarketingUI from './agents/AgentMarketingUI'
 import AgentOcrUI from './agents/AgentOcrUI'
 import AgentKbManagerUI from './agents/AgentKbManagerUI'
 import AgentKbBotBuilderUI from './agents/AgentKbBotBuilderUI'
+import AgentDocRefinerUI from './agents/AgentDocRefinerUI'
 import AgentPageLayout from '@/components/AgentPageLayout'
 import AgentIcon from '@/components/AgentIcon'
 
@@ -21,6 +22,7 @@ function getAgentUI(agent: Agent) {
   if (id === 'chat') return AgentChatUI
   if (id === 'kb-manager') return AgentKbManagerUI
   if (id === 'kb-bot-builder') return AgentKbBotBuilderUI
+  if (id === 'doc-refiner') return AgentDocRefinerUI
   if (id === 'writing') return AgentWritingUI
   if (id === 'marketing') return AgentMarketingUI
   if (id.includes('business')) return AgentBusinessUI

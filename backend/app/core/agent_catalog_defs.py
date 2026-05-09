@@ -139,4 +139,14 @@ BUILTIN_AGENTS: list[AgentDef] = [
         "backend_router": None,
         "frontend_key": "agent-kb-bot-builder",
     },
+    {
+        "group_id": "knowledge",
+        "group_name": "知識管理",
+        "agent_id": "doc-refiner",
+        "agent_name": "Doc Refiner",
+        "icon_name": "FilePen",
+        "sort_id": "16",
+        "backend_router": None,
+        "frontend_key": "agent-doc-refiner",
+    },
 ]
