@@ -23,8 +23,7 @@ from app.models.widget_message import WidgetMessage
 from app.models.widget_session import WidgetSession
 from app.services.agent_usage import log_agent_usage
 from app.services.km_service import format_km_context, km_retrieve_sync
-from app.services.llm_service import _get_llm_params, _get_provider_name
-from app.services.llm_utils import apply_api_base
+from app.services.llm_caller import LLMProviderNotConfigured, build_llm_kwargs, resolve_llm_params
 from app.services.chat_service import _load_system_prompt_from_file
 
 router = APIRouter()
@@ -164,14 +163,10 @@ async def widget_chat(
             detail="此知識庫尚未設定模型，請聯繫管理員",
         )
 
-    litellm_model, api_key, api_base = _get_llm_params(
-        kb_model_name, db=db, tenant_id=kb_tenant_id
-    )
-    if not api_key:
-        raise HTTPException(
-            status_code=503,
-            detail=f"{_get_provider_name(kb_model_name)} API Key 未設定",
-        )
+    try:
+        resolve_llm_params(kb_model_name, db=db, tenant_id=kb_tenant_id)
+    except LLMProviderNotConfigured as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     # RAG 取參考資料（與 chat.py 相同做法：直接同步呼叫）
     context_text = ""
@@ -221,7 +216,6 @@ async def widget_chat(
     db.add(WidgetMessage(session_id=body.session_id, role="user", content=body.content))
     db.commit()
 
-    is_local_model = kb_model_name.startswith("local/")
     session_id = body.session_id
     tenant_id_for_log = kb_tenant_id
 
@@ -230,19 +224,14 @@ async def widget_chat(
         llm_status = "success"
         usage_out: tuple[int, int, int] | None = None  # (prompt, completion, total)
         try:
-            kwargs: dict = {
-                "model": litellm_model,
-                "messages": msgs,
-                "stream": True,
-                "stream_options": {"include_usage": True},
-                "api_key": api_key,
-                "temperature": 0.3,
-            }
-            apply_api_base(kwargs, api_base)
-            # Ollama thinking models（local/）預設啟用 thinking，需停用
-            if is_local_model:
-                kwargs["think"] = False
-
+            kwargs = build_llm_kwargs(
+                model=kb_model_name,
+                messages=msgs,
+                db=db,
+                tenant_id=kb_tenant_id,
+                stream=True,
+                stream_options={"include_usage": True},
+            )
             response = await litellm.acompletion(**kwargs)
             full_text = ""
             async for chunk in response:

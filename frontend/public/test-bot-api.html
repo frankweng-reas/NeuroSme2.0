@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bot API 測試工具</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── Header ── */
+    header {
+      background: #1e293b;
+      border-bottom: 1px solid #334155;
+      padding: 11px 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+    header h1 { font-size: 15px; font-weight: 700; color: #f1f5f9; flex: 1; }
+    .badge {
+      font-size: 11px; padding: 2px 9px; border-radius: 999px;
+      background: #0f4c81; color: #93c5fd; font-weight: 600;
+      font-family: 'Courier New', monospace;
+    }
+
+    /* ── Config bar ── */
+    .config-bar {
+      background: #1e293b;
+      border-bottom: 1px solid #334155;
+      padding: 8px 20px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-shrink: 0;
+      flex-wrap: wrap;
+    }
+    .config-group { display: flex; align-items: center; gap: 6px; }
+    .config-group.wide { flex: 2; min-width: 260px; }
+    .config-group.mid  { flex: 2; min-width: 240px; }
+    .config-bar label  { font-size: 12px; color: #64748b; white-space: nowrap; }
+    .config-bar input {
+      flex: 1;
+      background: #0f172a; border: 1px solid #334155; border-radius: 6px;
+      padding: 5px 10px; font-size: 13px; color: #e2e8f0; outline: none;
+      font-family: 'Courier New', monospace; transition: border-color .2s;
+    }
+    .config-bar input:focus { border-color: #3b82f6; }
+    .btn-sm {
+      padding: 5px 13px; border-radius: 6px; border: none; cursor: pointer;
+      font-size: 12px; font-weight: 600; transition: all .2s; white-space: nowrap;
+    }
+    .btn-ghost { background: transparent; color: #64748b; border: 1px solid #334155; }
+    .btn-ghost:hover { background: #334155; color: #e2e8f0; }
+    .btn-danger { background: #7f1d1d; color: #fca5a5; border: 1px solid #991b1b; }
+    .btn-danger:hover { background: #991b1b; }
+
+    /* ── Main two-column layout ── */
+    .main {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+      min-height: 0;
+    }
+
+    /* ── Chat column ── */
+    .chat-col {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      border-right: 1px solid #1e3a5f;
+    }
+
+    .chat-area {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .empty-state {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 8px; color: #475569;
+    }
+    .empty-state .icon { font-size: 36px; }
+    .empty-state p { font-size: 13px; }
+
+    .msg-row {
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+      width: 100%;
+    }
+    .msg-row.user { flex-direction: row-reverse; }
+
+    .avatar {
+      width: 28px; height: 28px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 13px; flex-shrink: 0;
+    }
+    .avatar.user { background: #1d4ed8; }
+    .avatar.bot  { background: #065f46; }
+
+    .msg-content { flex: 1; min-width: 0; }
+    .msg-row.user .msg-content { display: flex; flex-direction: column; align-items: flex-end; }
+
+    .bubble {
+      display: inline-block;
+      max-width: 100%;
+      padding: 9px 13px;
+      border-radius: 12px;
+      font-size: 14px;
+      line-height: 1.65;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .bubble.user  { background: #1e40af; color: #dbeafe; border-bottom-right-radius: 3px; }
+    .bubble.bot   { background: #1e293b; color: #e2e8f0; border-bottom-left-radius: 3px; border: 1px solid #334155; width: 100%; }
+    .bubble.error { background: #450a0a; color: #fca5a5; border: 1px solid #7f1d1d; }
+    .bubble.thinking { color: #64748b; font-style: italic; border: 1px solid #334155; }
+
+    .sources {
+      margin-top: 6px; font-size: 12px; color: #64748b;
+    }
+    .sources summary { cursor: pointer; user-select: none; color: #475569; padding: 2px 0; }
+    .sources summary:hover { color: #94a3b8; }
+    .source-item {
+      margin-top: 5px; padding: 7px 10px;
+      background: #0f172a; border: 1px solid #1e3a5f; border-radius: 6px; line-height: 1.5;
+    }
+    .source-file    { color: #3b82f6; font-weight: 600; }
+    .source-excerpt { color: #64748b; margin-top: 2px; }
+
+    .msg-meta {
+      font-size: 11px; color: #334155; margin-top: 4px; padding: 0 2px;
+    }
+
+    /* ── Input bar ── */
+    .input-bar {
+      background: #1e293b; border-top: 1px solid #334155;
+      padding: 12px 16px; flex-shrink: 0;
+    }
+    .input-row { display: flex; gap: 8px; }
+    textarea {
+      flex: 1; background: #0f172a; border: 1px solid #334155; border-radius: 8px;
+      padding: 9px 13px; font-size: 14px; color: #e2e8f0; resize: none; outline: none;
+      font-family: inherit; line-height: 1.5; max-height: 110px; transition: border-color .2s;
+    }
+    textarea:focus { border-color: #3b82f6; }
+    textarea:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-send {
+      padding: 9px 18px; background: #2563eb; color: #fff; border: none;
+      border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 700;
+      transition: all .2s; align-self: flex-end; white-space: nowrap;
+    }
+    .btn-send:hover:not(:disabled) { background: #1d4ed8; }
+    .btn-send:disabled { opacity: .45; cursor: not-allowed; }
+    .hint { font-size: 11px; color: #334155; text-align: center; margin-top: 5px; }
+
+    /* ── API Panel ── */
+    .api-col {
+      width: 420px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      background: #0a1120;
+      overflow: hidden;
+    }
+    .api-panel-header {
+      padding: 10px 16px;
+      border-bottom: 1px solid #1e3a5f;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+      background: #0f172a;
+    }
+    .api-panel-header h2 { font-size: 13px; font-weight: 600; color: #94a3b8; flex: 1; }
+    .api-panel-tabs { display: flex; gap: 4px; }
+    .tab-btn {
+      padding: 3px 10px; border-radius: 5px; border: none; cursor: pointer;
+      font-size: 11px; font-weight: 600; transition: all .2s; background: transparent; color: #475569;
+    }
+    .tab-btn.active { background: #1e3a5f; color: #93c5fd; }
+    .tab-btn:hover:not(.active) { background: #1e293b; color: #94a3b8; }
+
+    .api-panel-body {
+      flex: 1; overflow-y: auto; padding: 12px 16px;
+      font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.7;
+    }
+
+    .api-section { margin-bottom: 16px; }
+    .api-section-title {
+      font-size: 10px; font-weight: 700; letter-spacing: .08em;
+      color: #475569; text-transform: uppercase; margin-bottom: 6px;
+    }
+    .code-block {
+      background: #0f172a; border: 1px solid #1e3a5f; border-radius: 6px;
+      padding: 10px 12px; position: relative; overflow-x: auto;
+    }
+    .code-block pre { white-space: pre-wrap; word-break: break-all; color: #94a3b8; }
+    .copy-btn {
+      position: absolute; top: 6px; right: 6px;
+      padding: 2px 8px; font-size: 10px; border-radius: 4px;
+      background: #1e3a5f; color: #93c5fd; border: none; cursor: pointer; font-family: sans-serif;
+    }
+    .copy-btn:hover { background: #2563eb; color: #fff; }
+
+    /* JSON syntax colors */
+    .j-key    { color: #7dd3fc; }
+    .j-str    { color: #86efac; }
+    .j-num    { color: #fbbf24; }
+    .j-bool   { color: #f472b6; }
+    .j-null   { color: #94a3b8; }
+    .j-punct  { color: #64748b; }
+
+    .empty-panel {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      height: 100%; gap: 8px; color: #1e3a5f;
+    }
+    .empty-panel .icon { font-size: 32px; }
+    .empty-panel p { font-size: 12px; color: #334155; text-align: center; }
+
+    .status-chip {
+      display: inline-block; padding: 1px 8px; border-radius: 999px;
+      font-size: 11px; font-weight: 700; font-family: sans-serif;
+    }
+    .status-2xx { background: #052e16; color: #4ade80; border: 1px solid #166534; }
+    .status-4xx { background: #450a0a; color: #f87171; border: 1px solid #7f1d1d; }
+    .status-5xx { background: #4a1942; color: #e879f9; border: 1px solid #7e22ce; }
+
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #1e3a5f; border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>🤖 Bot API 測試工具</h1>
+  <span class="badge">POST /api/v1/public/bot/query</span>
+</header>
+
+<div class="config-bar">
+  <div class="config-group wide">
+    <label>API 位址</label>
+    <input id="apiBase" type="text" value="" placeholder="https://your-domain.com" />
+  </div>
+  <div class="config-group mid">
+    <label>API Key</label>
+    <input id="apiKey" type="text" placeholder="nsk_..." autocomplete="off" spellcheck="false" />
+  </div>
+  <button class="btn-sm btn-danger" onclick="clearChat()">清除對話</button>
+</div>
+
+<div class="main">
+
+  <!-- ── 左：對話欄 ── -->
+  <div class="chat-col">
+    <div class="chat-area" id="chatArea">
+      <div class="empty-state" id="emptyState">
+        <div class="icon">💬</div>
+        <p>填入 API Key 後開始測試對話</p>
+      </div>
+    </div>
+
+    <div class="input-bar">
+      <div class="input-row">
+        <textarea id="questionInput" rows="2"
+          placeholder="輸入問題… (Enter 送出，Shift+Enter 換行)"
+          onkeydown="handleKey(event)"></textarea>
+        <button class="btn-send" id="sendBtn" onclick="sendQuestion()">送出</button>
+      </div>
+      <p class="hint">對話歷史自動帶入 · 最多保留 10 輪 · X-API-Key 驗證</p>
+    </div>
+  </div>
+
+  <!-- ── 右：API 呼叫面板 ── -->
+  <div class="api-col">
+    <div class="api-panel-header">
+      <h2>📡 API 呼叫細節</h2>
+      <div class="api-panel-tabs">
+        <button class="tab-btn active" id="tab-req" onclick="switchTab('req')">Request</button>
+        <button class="tab-btn" id="tab-res" onclick="switchTab('res')">Response</button>
+      </div>
+    </div>
+    <div class="api-panel-body" id="apiPanelBody">
+      <div class="empty-panel">
+        <div class="icon">🔌</div>
+        <p>送出第一個問題<br/>即可在此查看完整的 API 呼叫內容</p>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  document.getElementById('apiBase').value = window.location.origin
+
+  let history = []
+  let loading  = false
+  let lastReq  = null
+  let lastRes  = null
+  let curTab   = 'req'
+
+  /* ── Tab 切換 ── */
+  function switchTab(t) {
+    curTab = t
+    document.getElementById('tab-req').classList.toggle('active', t === 'req')
+    document.getElementById('tab-res').classList.toggle('active', t === 'res')
+    renderPanel()
+  }
+
+  /* ── JSON 語法高亮 ── */
+  function hl(json) {
+    const s = JSON.stringify(json, null, 2)
+    return s.replace(
+      /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?|[{}\[\],:])/g,
+      (m) => {
+        if (/^"/.test(m)) {
+          return /:$/.test(m)
+            ? `<span class="j-key">${m}</span>`
+            : `<span class="j-str">${m}</span>`
+        }
+        if (/true|false/.test(m)) return `<span class="j-bool">${m}</span>`
+        if (/null/.test(m))       return `<span class="j-null">${m}</span>`
+        if (/[{}\[\],:]/.test(m)) return `<span class="j-punct">${m}</span>`
+        return `<span class="j-num">${m}</span>`
+      }
+    )
+  }
+
+  /* ── 複製到剪貼簿 ── */
+  function copyText(id) {
+    const el = document.getElementById(id)
+    navigator.clipboard.writeText(el.innerText).then(() => {
+      const btn = el.parentElement.querySelector('.copy-btn')
+      const orig = btn.textContent; btn.textContent = '✓ 已複製'
+      setTimeout(() => btn.textContent = orig, 1500)
+    })
+  }
+
+  /* ── 渲染 API 面板 ── */
+  function renderPanel() {
+    const body = document.getElementById('apiPanelBody')
+    if (!lastReq) return
+
+    if (curTab === 'req') {
+      const { url, apiKey, payload } = lastReq
+      const curl = `curl -X POST "${url}" \\
+  -H "Content-Type: application/json" \\
+  -H "X-API-Key: ${apiKey}" \\
+  -d '${JSON.stringify(payload, null, 2)}'`
+
+      body.innerHTML = `
+        <div class="api-section">
+          <div class="api-section-title">端點</div>
+          <div class="code-block"><pre id="cp-url">POST ${url}</pre>
+            <button class="copy-btn" onclick="copyText('cp-url')">複製</button></div>
+        </div>
+        <div class="api-section">
+          <div class="api-section-title">Headers</div>
+          <div class="code-block"><pre id="cp-hdr">Content-Type: application/json
+X-API-Key: ${apiKey}</pre>
+            <button class="copy-btn" onclick="copyText('cp-hdr')">複製</button></div>
+        </div>
+        <div class="api-section">
+          <div class="api-section-title">Request Body (JSON)</div>
+          <div class="code-block"><pre id="cp-body">${hl(payload)}</pre>
+            <button class="copy-btn" onclick="copyText('cp-body')">複製</button></div>
+        </div>
+        <div class="api-section">
+          <div class="api-section-title">完整 cURL 指令</div>
+          <div class="code-block"><pre id="cp-curl">${escHtml(curl)}</pre>
+            <button class="copy-btn" onclick="copyText('cp-curl')">複製</button></div>
+        </div>`
+    } else {
+      if (!lastRes) {
+        body.innerHTML = `<div class="empty-panel"><div class="icon">⏳</div><p>等待回應中…</p></div>`
+        return
+      }
+      const { status, data, latencyMs } = lastRes
+      const chipClass = status < 300 ? 'status-2xx' : status < 500 ? 'status-4xx' : 'status-5xx'
+      body.innerHTML = `
+        <div class="api-section">
+          <div class="api-section-title">狀態</div>
+          <div style="display:flex;gap:10px;align-items:center">
+            <span class="status-chip ${chipClass}">${status}</span>
+            <span style="color:#475569;font-family:sans-serif;font-size:12px">耗時 ${latencyMs} ms</span>
+          </div>
+        </div>
+        <div class="api-section">
+          <div class="api-section-title">Response Body (JSON)</div>
+          <div class="code-block"><pre id="cp-res">${hl(data)}</pre>
+            <button class="copy-btn" onclick="copyText('cp-res')">複製</button></div>
+        </div>`
+    }
+  }
+
+  /* ── Enter 快捷鍵 ── */
+  function handleKey(e) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      e.preventDefault(); sendQuestion()
+    }
+  }
+
+  /* ── 清除對話 ── */
+  function clearChat() {
+    history = []; lastReq = null; lastRes = null
+    const area = document.getElementById('chatArea')
+    area.innerHTML = `<div class="empty-state" id="emptyState">
+      <div class="icon">💬</div><p>填入 API Key 後開始測試對話</p></div>`
+    document.getElementById('apiPanelBody').innerHTML = `
+      <div class="empty-panel"><div class="icon">🔌</div>
+      <p>送出第一個問題<br/>即可在此查看完整的 API 呼叫內容</p></div>`
+  }
+
+  /* ── 加訊息泡泡 ── */
+  function appendBubble(role, text, opts = {}) {
+    const area = document.getElementById('chatArea')
+    document.getElementById('emptyState')?.remove()
+
+    const row = document.createElement('div')
+    row.className = `msg-row ${role}`
+
+    const avatar = document.createElement('div')
+    avatar.className = `avatar ${role}`
+    avatar.textContent = role === 'user' ? '👤' : '🤖'
+
+    const content = document.createElement('div')
+    content.className = 'msg-content'
+
+    const bubble = document.createElement('div')
+    let cls = role === 'user' ? 'user' : 'bot'
+    if (opts.error)    cls = 'error'
+    if (opts.thinking) cls = 'thinking'
+    bubble.className = `bubble ${cls}`
+    bubble.textContent = text
+    content.appendChild(bubble)
+
+    row.appendChild(role === 'user' ? content : avatar)
+    row.appendChild(role === 'user' ? avatar   : content)
+    area.appendChild(row)
+    area.scrollTop = area.scrollHeight
+    return { row, bubble, content }
+  }
+
+  /* ── 送出問題 ── */
+  async function sendQuestion() {
+    if (loading) return
+    const input   = document.getElementById('questionInput')
+    const question = input.value.trim()
+    if (!question) return
+
+    const base   = document.getElementById('apiBase').value.trim().replace(/\/$/, '')
+    const apiKey = document.getElementById('apiKey').value.trim()
+    if (!apiKey) { alert('請先填入 API Key'); return }
+
+    loading = true
+    input.value = ''; input.disabled = true
+    document.getElementById('sendBtn').disabled = true
+
+    appendBubble('user', question)
+    const { bubble: thinkBubble, content } = appendBubble('bot', '思考中…', { thinking: true })
+
+    const url     = `${base}/api/v1/public/bot/query`
+    const payload = { question, messages: history.slice(-20) }
+
+    /* 記錄 Request（切到 req tab 顯示） */
+    lastReq = { url, apiKey, payload }
+    lastRes = null
+    curTab  = 'req'
+    document.getElementById('tab-req').classList.add('active')
+    document.getElementById('tab-res').classList.remove('active')
+    renderPanel()
+
+    const t0 = Date.now()
+    try {
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+        body: JSON.stringify(payload),
+      })
+      const latencyMs = Date.now() - t0
+      const data = await resp.json()
+
+      lastRes = { status: resp.status, data, latencyMs }
+      switchTab('res')   // 自動切到 Response
+
+      if (!resp.ok) {
+        thinkBubble.className = 'bubble error'
+        thinkBubble.textContent = `❌ ${resp.status}: ${data.detail || JSON.stringify(data)}`
+        return
+      }
+
+      /* ── 更新泡泡 ── */
+      thinkBubble.className = 'bubble bot'
+      thinkBubble.textContent = data.answer
+
+      /* Sources */
+      if (data.sources?.length) {
+        const details = document.createElement('details')
+        details.className = 'sources'
+        const summary = document.createElement('summary')
+        summary.textContent = `📚 參考來源（${data.sources.length} 份）`
+        details.appendChild(summary)
+        data.sources.forEach(s => {
+          const item = document.createElement('div')
+          item.className = 'source-item'
+          item.innerHTML = `<div class="source-file">📄 ${escHtml(s.filename)}</div>
+                            <div class="source-excerpt">${escHtml(s.excerpt)}</div>`
+          details.appendChild(item)
+        })
+        content.appendChild(details)
+      }
+
+      /* Meta */
+      if (data.usage) {
+        const u = data.usage
+        const meta = document.createElement('div')
+        meta.className = 'msg-meta'
+        meta.textContent = `⚡ ${data.model}  ·  ${u.prompt_tokens}↑ ${u.completion_tokens}↓ tokens  ·  ${latencyMs} ms`
+        content.appendChild(meta)
+      }
+
+      /* 更新 history */
+      history.push({ role: 'user',      content: question    })
+      history.push({ role: 'assistant', content: data.answer })
+      if (history.length > 20) history = history.slice(-20)
+
+    } catch (err) {
+      lastRes = { status: 0, data: { error: err.message }, latencyMs: Date.now() - t0 }
+      switchTab('res')
+      thinkBubble.className = 'bubble error'
+      thinkBubble.textContent = `❌ 網路錯誤：${err.message}`
+    } finally {
+      loading = false; input.disabled = false
+      document.getElementById('sendBtn').disabled = false
+      input.focus()
+      document.getElementById('chatArea').scrollTop = 99999
+    }
+  }
+
+  function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  }
+</script>
+</body>
+</html>

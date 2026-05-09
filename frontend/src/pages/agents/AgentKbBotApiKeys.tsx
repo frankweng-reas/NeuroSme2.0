@@ -33,9 +33,10 @@ interface Props {
   canManage: boolean
   bots: Bot[]
   selectedBotId: number | null
+  selectedBot: Bot | null
 }
 
-export default function AgentKbBotApiKeys({ canManage, bots, selectedBotId }: Props) {
+export default function AgentKbBotApiKeys({ canManage, bots, selectedBotId, selectedBot }: Props) {
   const [keys, setKeys] = useState<ApiKey[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -47,6 +48,7 @@ export default function AgentKbBotApiKeys({ canManage, bots, selectedBotId }: Pr
 
   const [revokeTarget, setRevokeTarget] = useState<ApiKey | null>(null)
   const [revokeLoading, setRevokeLoading] = useState(false)
+  const [confirmOverwrite, setConfirmOverwrite] = useState(false)
 
   const [selectedKeyId, setSelectedKeyId] = useState<number | null>(null)
   const [usageData, setUsageData] = useState<ApiKeyUsageResponse | null>(null)
@@ -64,22 +66,25 @@ export default function AgentKbBotApiKeys({ canManage, bots, selectedBotId }: Pr
   }, [toast])
 
   const loadKeys = useCallback(() => {
+    if (selectedBotId == null) return
     setLoading(true)
-    listApiKeys()
+    listApiKeys(selectedBotId)
       .then(setKeys)
       .catch(() => setKeys([]))
       .finally(() => setLoading(false))
-  }, [])
+  }, [selectedBotId])
 
   useEffect(() => { loadKeys() }, [loadKeys])
 
-  const handleCreate = async () => {
+  const doCreate = async () => {
     const name = newName.trim()
-    if (!name) return
+    if (!name || selectedBotId == null) return
     setCreateLoading(true)
+    setConfirmOverwrite(false)
     try {
-      const res = await createApiKey(name)
-      setKeys((prev) => [res, ...prev])
+      const res = await createApiKey(name, selectedBotId)
+      // 後端已自動撤銷舊 Key，同步更新本地 state
+      setKeys((prev) => [res, ...prev.map((k) => ({ ...k, is_active: false }))])
       setPlainKey(res.plain_key)
       setCreating(false)
       setNewName('')
@@ -87,6 +92,17 @@ export default function AgentKbBotApiKeys({ canManage, bots, selectedBotId }: Pr
       setErrorModal({ title: '建立失敗', message: err instanceof Error ? err.message : '未知錯誤' })
     } finally {
       setCreateLoading(false)
+    }
+  }
+
+  const handleCreate = () => {
+    const name = newName.trim()
+    if (!name || selectedBotId == null) return
+    const hasActive = keys.some((k) => k.is_active)
+    if (hasActive) {
+      setConfirmOverwrite(true)  // 先顯示確認
+    } else {
+      void doCreate()
     }
   }
 
@@ -149,6 +165,16 @@ export default function AgentKbBotApiKeys({ canManage, bots, selectedBotId }: Pr
         variant="danger"
         onConfirm={() => { if (!revokeLoading) void handleRevoke() }}
         onCancel={() => !revokeLoading && setRevokeTarget(null)}
+      />
+
+      <ConfirmModal
+        open={confirmOverwrite}
+        title="取代現有 API Key"
+        message={`此 Bot 已有啟用中的 API Key。\n建立新 Key 後，舊 Key 將立即失效。\n\n確認繼續？`}
+        confirmText="建立新 Key"
+        variant="danger"
+        onConfirm={() => void doCreate()}
+        onCancel={() => setConfirmOverwrite(false)}
       />
 
       {/* 明文 Key 顯示 Modal */}
@@ -230,6 +256,7 @@ export default function AgentKbBotApiKeys({ canManage, bots, selectedBotId }: Pr
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
               onKeyDown={(e) => {
+                if (e.nativeEvent.isComposing) return
                 if (e.key === 'Enter') void handleCreate()
                 if (e.key === 'Escape') { setCreating(false); setNewName('') }
               }}
@@ -434,48 +461,21 @@ export default function AgentKbBotApiKeys({ canManage, bots, selectedBotId }: Pr
         <p className="mb-3 text-base font-semibold text-gray-700">如何使用 API</p>
         <div className="space-y-4 text-base text-gray-600">
 
-          {/* Bot ID 對照表 */}
-          <div>
-            <p className="mb-2 font-medium text-gray-800">Bot ID 對照</p>
-            {bots.length === 0 ? (
-              <p className="text-base text-gray-400">尚無 Bot，請先建立。</p>
-            ) : (
-              <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
-                <table className="w-full text-base">
-                  <thead>
-                    <tr className="border-b border-gray-100 bg-gray-50 text-left text-gray-500">
-                      <th className="px-4 py-2 font-medium">bot_id</th>
-                      <th className="px-4 py-2 font-medium">Bot 名稱</th>
-                      <th className="px-4 py-2 font-medium">狀態</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {bots.map((bot) => (
-                      <tr
-                        key={bot.id}
-                        className={`border-b border-gray-50 last:border-0 ${selectedBotId === bot.id ? 'bg-emerald-50' : ''}`}
-                      >
-                        <td className="px-4 py-2">
-                          <code className="rounded bg-gray-100 px-2 py-0.5 font-mono font-bold text-emerald-700">
-                            {bot.id}
-                          </code>
-                          {selectedBotId === bot.id && (
-                            <span className="ml-2 rounded-full bg-emerald-100 px-1.5 py-0.5 text-base text-emerald-600">目前選取</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-2 text-gray-700">{bot.name}</td>
-                        <td className="px-4 py-2">
-                          <span className={`rounded-full px-2 py-0.5 text-base ${bot.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-400'}`}>
-                            {bot.is_active ? '啟用' : '停用'}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+          {/* 目前 Bot 資訊 */}
+          {selectedBot && (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3">
+              <p className="text-base font-medium text-emerald-800">此頁的 API Key 僅限查詢</p>
+              <div className="mt-1 flex items-center gap-3">
+                <code className="rounded bg-white px-2 py-0.5 font-mono font-bold text-emerald-700">
+                  Bot #{selectedBot.id}
+                </code>
+                <span className="text-base text-emerald-700">{selectedBot.name}</span>
+                <span className={`rounded-full px-2 py-0.5 text-base font-medium ${selectedBot.is_active ? 'bg-emerald-200 text-emerald-800' : 'bg-gray-100 text-gray-400'}`}>
+                  {selectedBot.is_active ? '啟用中' : '已停用'}
+                </span>
               </div>
-            )}
-          </div>
+            </div>
+          )}
 
           <div className="border-t border-gray-200 pt-3 space-y-3">
             <p>
@@ -488,16 +488,19 @@ export default function AgentKbBotApiKeys({ canManage, bots, selectedBotId }: Pr
               <span className="font-medium text-gray-800">認證：</span>
               Header 加入 <code className="rounded bg-gray-200 px-1.5 py-0.5 font-mono text-base">X-API-Key: nsk_...</code>
             </p>
+            <p className="text-base text-gray-500">
+              API Key 已綁定此 Bot，請求時<strong>不需要</strong>帶入 <code className="rounded bg-gray-200 px-1 font-mono">bot_id</code>。
+            </p>
             <p className="font-medium text-gray-800">請求範例：</p>
             <pre className="overflow-x-auto rounded-lg border border-gray-200 bg-white p-3 font-mono text-base text-gray-700">{`curl -X POST ${window.location.origin}/api/v1/public/bot/query \\
   -H "X-API-Key: nsk_your_key_here" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "bot_id": ${selectedBotId ?? (bots[0]?.id ?? 1)},
     "question": "請問退貨政策是什麼？"
   }'`}</pre>
             <p className="text-base text-gray-500">
-              Rate Limit：每個 API Key 每小時最多 100 次請求。              詳細規格請參閱{' '}
+              Rate Limit：每個 API Key 每小時最多 100 次請求。{' '}
+              詳細規格請參閱{' '}
               <a
                 href="/api/v1/public/docs"
                 target="_blank"

@@ -665,7 +665,7 @@ export default function AgentKbBotBuilderUI({ agent }: Props) {
 
           {/* ── API 整合 ── */}
           {rightTab === 'api' && (
-            <AgentKbBotApiKeys canManage={canManage} bots={bots} selectedBotId={selectedBotId} />
+            <AgentKbBotApiKeys canManage={canManage} bots={bots} selectedBotId={selectedBotId} selectedBot={selectedBot} />
           )}
 
           {/* ── Bot 設定 ── */}

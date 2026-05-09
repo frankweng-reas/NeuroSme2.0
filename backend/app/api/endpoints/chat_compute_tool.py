@@ -29,6 +29,7 @@ from app.services.llm_service import (
     _get_provider_name,
     _twcc_model_id,
 )
+from app.services.llm_caller import build_llm_kwargs, LLMProviderNotConfigured
 from app.services.llm_utils import apply_api_base
 from app.models.user import User
 from app.schemas.intent_v4 import (
@@ -446,21 +447,19 @@ async def _call_llm(
         }
         return content, usage
 
-    if model.startswith("gemini/"):
-        os.environ["GEMINI_API_KEY"] = api_key
-    else:
-        os.environ["OPENAI_API_KEY"] = api_key
-
-    completion_kwargs: dict = {
-        "model": litellm_model,
-        "messages": messages,
-        "api_key": api_key,
-        "timeout": 60,
-        "temperature": 0,
-    }
-    apply_api_base(completion_kwargs, api_base)
-    if model.startswith("local/"):
-        completion_kwargs["think"] = False
+    # 非 TWCC：走共用層
+    try:
+        completion_kwargs = build_llm_kwargs(
+            model=model,
+            messages=messages,
+            db=db,
+            tenant_id=tenant_id,
+            stream=False,
+            temperature=0,
+            timeout=60,
+        )
+    except LLMProviderNotConfigured as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     resp = await litellm.acompletion(**completion_kwargs)
     choices = getattr(resp, "choices", None) or []

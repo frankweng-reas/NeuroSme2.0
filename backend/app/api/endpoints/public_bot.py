@@ -7,7 +7,6 @@ import logging
 from datetime import date, timezone
 from typing import Annotated
 
-import litellm
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -20,8 +19,8 @@ from app.models.bot import Bot, BotKnowledgeBase
 from app.services.agent_usage import log_agent_usage
 from app.services.chat_service import _load_system_prompt_from_file
 from app.services.km_service import format_km_context, km_retrieve_sync
-from app.services.llm_service import UsageMeta, _get_llm_params, _get_provider_name
-from app.services.llm_utils import apply_api_base
+from app.services.llm_caller import LLMCallError, LLMProviderNotConfigured, call_llm
+from app.services.llm_service import UsageMeta
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -43,7 +42,7 @@ class BotMessage(BaseModel):
 
 
 class BotQueryRequest(BaseModel):
-    bot_id: int = Field(..., description="Bot ID（需屬於此 API Key 對應的 tenant）")
+    bot_id: int | None = Field(None, description="Bot ID；若 API Key 已綁定特定 Bot 則可省略")
     question: str = Field(..., min_length=1, description="使用者問題")
     messages: list[BotMessage] = Field(
         default_factory=list,
@@ -124,9 +123,20 @@ async def bot_query(
 ):
     tenant_id = api_key.tenant_id
 
+    # 決定 bot_id：Key 綁定的優先；否則從 body 取
+    if api_key.bot_id is not None:
+        resolved_bot_id = api_key.bot_id
+        # 如果 body 也帶了 bot_id，必須一致
+        if body.bot_id is not None and body.bot_id != api_key.bot_id:
+            raise HTTPException(status_code=403, detail="此 API Key 僅限查詢 Bot ID " + str(api_key.bot_id))
+    elif body.bot_id is not None:
+        resolved_bot_id = body.bot_id
+    else:
+        raise HTTPException(status_code=400, detail="請提供 bot_id（此 Key 未綁定特定 Bot）")
+
     # 確認 Bot 屬於此 tenant 且為啟用狀態
     bot = db.query(Bot).filter(
-        Bot.id == body.bot_id,
+        Bot.id == resolved_bot_id,
         Bot.tenant_id == tenant_id,
     ).first()
     if not bot:
@@ -183,13 +193,6 @@ async def bot_query(
             detail="未指定模型，請在 Bot 設定選擇模型，或在請求中帶入 model 欄位",
         )
 
-    litellm_model, llm_api_key, api_base = _get_llm_params(model, db=db, tenant_id=tenant_id)
-    if not llm_api_key:
-        raise HTTPException(
-            status_code=503,
-            detail=f"{_get_provider_name(model)} API Key 未設定，請在 NeuroSme 管理介面設定對應的 key",
-        )
-
     # 組裝訊息
     system_parts: list[str] = []
     bot_system = (bot.system_prompt or "").strip()
@@ -205,57 +208,36 @@ async def bot_query(
     messages: list[dict] = []
     if system_parts:
         messages.append({"role": "system", "content": "\n\n".join(system_parts)})
-
     for m in body.messages[-(MAX_HISTORY_TURNS * 2):]:
         messages.append({"role": m.role, "content": m.content})
-
     messages.append({"role": "user", "content": body.question})
 
-    # 呼叫 LiteLLM
-    kwargs: dict = {
-        "model": litellm_model,
-        "messages": messages,
-        "api_key": llm_api_key,
-        "stream": False,
-    }
-    apply_api_base(kwargs, api_base)
-
-    import time as _time
-    t0 = _time.perf_counter()
+    # 呼叫 LLM（統一走 llm_caller 共用層）
     llm_status = "success"
     try:
-        resp = await litellm.acompletion(**kwargs)
-    except Exception as exc:
+        answer, usage, latency_ms = await call_llm(
+            model=model,
+            messages=messages,
+            db=db,
+            tenant_id=tenant_id,
+        )
+    except LLMProviderNotConfigured as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except LLMCallError as exc:
         llm_status = "error"
         log_agent_usage(
-            db=db,
-            agent_type="kb-bot-builder",
-            tenant_id=tenant_id,
-            model=model,
-            latency_ms=int((_time.perf_counter() - t0) * 1000),
-            status="error",
+            db=db, agent_type="kb-bot-builder", tenant_id=tenant_id,
+            model=model, latency_ms=0, status="error",
         )
-        logger.error("public bot_query LiteLLM error: %s", exc)
-        raise HTTPException(status_code=502, detail=f"LLM 呼叫失敗：{exc}") from exc
+        logger.error("public bot_query error: %s", exc)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    latency_ms = int((_time.perf_counter() - t0) * 1000)
-    answer = resp.choices[0].message.content or ""
-    usage: UsageMeta | None = None
-    if hasattr(resp, "usage") and resp.usage:
-        usage = UsageMeta(
-            prompt_tokens=resp.usage.prompt_tokens or 0,
-            completion_tokens=resp.usage.completion_tokens or 0,
-            total_tokens=resp.usage.total_tokens or 0,
-        )
-        _record_usage(
-            db,
-            api_key_id=api_key.id,
-            input_tokens=usage.prompt_tokens,
-            output_tokens=usage.completion_tokens,
-        )
-    else:
-        _record_usage(db, api_key_id=api_key.id, input_tokens=0, output_tokens=0)
-
+    _record_usage(
+        db,
+        api_key_id=api_key.id,
+        input_tokens=usage.prompt_tokens if usage else 0,
+        output_tokens=usage.completion_tokens if usage else 0,
+    )
     log_agent_usage(
         db=db,
         agent_type="kb-bot-builder",

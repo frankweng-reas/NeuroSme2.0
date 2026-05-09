@@ -9,8 +9,7 @@ from typing import Any
 import litellm
 from sqlalchemy.orm import Session
 
-from app.services.llm_service import _get_llm_params
-from app.services.llm_utils import apply_api_base
+from app.services.llm_caller import LLMCallError, LLMProviderNotConfigured, build_llm_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -233,26 +232,25 @@ async def extract_fields(
         {"role": "user", "content": content},
     ]
 
-    litellm_model, llm_api_key, api_base = _get_llm_params(model, db=db, tenant_id=tenant_id)
-    if not llm_api_key:
+    try:
+        kwargs = build_llm_kwargs(
+            model=model,
+            messages=messages,
+            db=db,
+            tenant_id=tenant_id,
+            stream=False,
+            temperature=0,
+            timeout=180,
+        )
+    except LLMProviderNotConfigured:
         raise ValueError(f"模型 {model} 的 API Key 未設定，請先在 Provider 設定中新增")
-
-    kwargs: dict = {
-        "model": litellm_model,
-        "messages": messages,
-        "api_key": llm_api_key,
-        "stream": False,
-        "timeout": 180,
-        "temperature": 0,
-    }
-    apply_api_base(kwargs, api_base)
-    # ollama_chat/ 前綴才支援 think 參數；停用 thinking mode 避免大幅延遲
-    if litellm_model.startswith("ollama_chat/"):
-        kwargs["think"] = False
 
     logger.info("ocr extract: model=%s pages=%d fields=%d", model, len(images), len(output_fields))
 
-    resp = await litellm.acompletion(**kwargs)
+    try:
+        resp = await litellm.acompletion(**kwargs)
+    except Exception as exc:
+        raise LLMCallError(f"OCR LLM 呼叫失敗：{exc}", cause=exc) from exc
     full_text = (resp.choices[0].message.content or "").strip()
 
     raw_text, extracted_fields = _parse_llm_response(full_text, output_fields)
@@ -260,7 +258,10 @@ async def extract_fields(
     # 若欄位為空（model 沒有產生 JSON block），自動重試一次
     if output_fields and not extracted_fields:
         logger.warning("ocr: extracted_fields empty, retrying once...")
-        resp = await litellm.acompletion(**kwargs)
+        try:
+            resp = await litellm.acompletion(**kwargs)
+        except Exception as exc:
+            raise LLMCallError(f"OCR LLM 重試失敗：{exc}", cause=exc) from exc
         full_text = (resp.choices[0].message.content or "").strip()
         raw_text, extracted_fields = _parse_llm_response(full_text, output_fields)
         if extracted_fields:

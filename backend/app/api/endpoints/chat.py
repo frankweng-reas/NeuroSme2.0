@@ -33,6 +33,7 @@ from app.services.llm_service import (
     _persist_chat_llm_request,
     _twcc_model_id,
 )
+from app.services.llm_caller import build_llm_kwargs_resolved
 from app.services.llm_utils import apply_api_base
 
 router = APIRouter()
@@ -459,21 +460,16 @@ async def chat_completions(
                 llm_request_id=rid_str,
             )
 
-        if model.startswith("gemini/"):
-            os.environ["GEMINI_API_KEY"] = api_key
-        else:
-            os.environ["OPENAI_API_KEY"] = api_key
-
-        completion_kwargs: dict = {
-            "model": litellm_model,
-            "messages": messages,
-            "api_key": api_key,
-            "timeout": vision_timeout,
-            "temperature": 0,
-        }
-        apply_api_base(completion_kwargs, api_base)
-        if model.startswith("local/"):
-            completion_kwargs["think"] = False
+        completion_kwargs = build_llm_kwargs_resolved(
+            litellm_model=litellm_model,
+            api_key=api_key,
+            api_base=api_base,
+            original_model=model,
+            messages=messages,
+            stream=False,
+            temperature=0,
+            timeout=vision_timeout,
+        )
 
         t0 = time.perf_counter()
         try:
@@ -653,26 +649,19 @@ async def chat_completions_stream(
                 usage_out = twcc_out.usage
                 resp_model = twcc_out.model or resp_model
             else:
-                if prepared.model.startswith("gemini/"):
-                    os.environ["GEMINI_API_KEY"] = prepared.api_key
-                else:
-                    os.environ["OPENAI_API_KEY"] = prepared.api_key
                 stream_timeout = 240 if prepared.has_vision_user_content else 120
-                completion_kwargs: dict = {
-                    "model": prepared.litellm_model,
-                    "messages": prepared.messages,
-                    "api_key": prepared.api_key,
-                    "timeout": stream_timeout,
-                    "temperature": 0,
-                    "stream": True,
+                completion_kwargs = build_llm_kwargs_resolved(
+                    litellm_model=prepared.litellm_model,
+                    api_key=prepared.api_key,
+                    api_base=prepared.api_base,
+                    original_model=prepared.model,
+                    messages=prepared.messages,
+                    stream=True,
+                    temperature=0,
+                    timeout=stream_timeout,
                     # 讓 LiteLLM 在串流結束後補送含 usage 的空 chunk（OpenAI / Gemini 皆適用）
-                    "stream_options": {"include_usage": True},
-                }
-                apply_api_base(completion_kwargs, prepared.api_base)
-                # Ollama thinking models 預設啟用 thinking mode，需停用以避免延遲
-                # 必須用 ollama_chat/ 走原生 /api/chat（OpenAI-compatible /v1 不支援 think 參數）
-                if prepared.model.startswith("local/"):
-                    completion_kwargs["think"] = False
+                    stream_options={"include_usage": True},
+                )
                 try:
                     stream_resp = await litellm.acompletion(**completion_kwargs)
                 except Exception as e:
