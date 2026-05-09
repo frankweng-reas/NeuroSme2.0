@@ -1,5 +1,7 @@
-import { apiFetch } from './client'
+import { ApiError, apiFetch } from './client'
 import { TOKEN_KEY } from '@/contexts/AuthContext'
+
+const API_BASE = '/api/v1'
 
 export interface QAItem {
   id: number
@@ -47,18 +49,22 @@ export interface ExportRequest {
 }
 
 export async function exportDocument(req: ExportRequest): Promise<Blob> {
-  const token = localStorage.getItem(TOKEN_KEY) || ''
-  const res = await fetch('/api/v1/doc-refiner/export', {
+  const token = localStorage.getItem(TOKEN_KEY)
+  const res = await fetch(`${API_BASE}/doc-refiner/export`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify(req),
   })
   if (!res.ok) {
-    const data = await res.json().catch(() => ({}))
-    throw new Error((data as { detail?: string }).detail || `匯出失敗（${res.status}）`)
+    let detail = `HTTP ${res.status}`
+    try {
+      const body = (await res.json()) as { detail?: unknown }
+      if (typeof body.detail === 'string') detail = body.detail
+    } catch { /* ignore */ }
+    throw new ApiError(detail || '匯出失敗', res.status, detail)
   }
   return res.blob()
 }
