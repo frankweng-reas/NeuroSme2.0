@@ -78,7 +78,7 @@ def _extract_text(pdf_bytes: bytes) -> tuple[str, int]:
 
 
 def _parse_llm_json(raw: str) -> dict:
-    """從 LLM 回覆中萃取 JSON，容忍 markdown code fence"""
+    """從 LLM 回覆中萃取 JSON，容忍 markdown code fence 與前言文字"""
     # 去掉 ```json ... ``` 包裝
     cleaned = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("`").strip()
     # 找第一個 { 到最後一個 }
@@ -86,7 +86,15 @@ def _parse_llm_json(raw: str) -> dict:
     end = cleaned.rfind("}")
     if start == -1 or end == -1:
         raise ValueError("LLM 回覆中找不到合法 JSON")
-    return json.loads(cleaned[start:end + 1])
+    candidate = cleaned[start:end + 1]
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError:
+        # 二次嘗試：用 regex 找最外層 JSON object
+        m = re.search(r'\{[\s\S]*\}', cleaned)
+        if m:
+            return json.loads(m.group())
+        raise ValueError("LLM 回覆中找不到合法 JSON")
 
 
 def _generate_pdf(mode: str, title: str, items: list[dict]) -> bytes:
@@ -214,7 +222,8 @@ async def process_document(
             "content": (
                 f"請將以下文件整理成「{mode_hint}」格式。\n"
                 f"文件名稱：{filename}\n\n"
-                f"--- 文件內容開始 ---\n{raw_text}\n--- 文件內容結束 ---"
+                f"--- 文件內容開始 ---\n{raw_text}\n--- 文件內容結束 ---\n\n"
+                f"請直接輸出 JSON，不要有任何前言、說明或 Markdown 格式。"
             ),
         },
     ]
