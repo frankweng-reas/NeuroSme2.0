@@ -25,6 +25,7 @@ export interface KmKnowledgeBase {
   model_name: string | null
   system_prompt: string | null
   scope: KbScope
+  answer_mode: 'rag' | 'direct'
   created_by: number | null
   doc_count: number
   ready_count: number
@@ -57,6 +58,7 @@ export async function createKnowledgeBase(data: {
   description?: string
   model_name?: string
   system_prompt?: string
+  answer_mode?: 'rag' | 'direct'
 }): Promise<KmKnowledgeBase> {
   return apiFetch<KmKnowledgeBase>('/km/knowledge-bases', {
     method: 'POST',
@@ -73,6 +75,7 @@ export async function updateKnowledgeBase(
     model_name?: string
     system_prompt?: string
     scope?: KbScope
+    answer_mode?: 'rag' | 'direct'
     widget_title?: string
     widget_logo_url?: string
     widget_color?: string

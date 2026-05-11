@@ -66,6 +66,13 @@ class ImportToKBResponse(BaseModel):
     imported_count: int
 
 
+class RewriteItemRequest(BaseModel):
+    question: str
+    answer: str
+    instruction: str
+    model: str = ""
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────────────────────────────────────
@@ -231,7 +238,7 @@ def _coerce_qa_item(item: dict) -> dict:
         or item.get("答案")
         or ""
     )
-    return {"question": str(question), "answer": str(answer)}
+    return {"question": str(question).strip(), "answer": str(answer).strip()}
 
 
 def _items_from_list(raw: list) -> list[dict]:
@@ -266,6 +273,22 @@ def _normalize_items(data: dict | list) -> list[dict]:
     for idx, item in enumerate(flat, 1):
         item.setdefault("id", idx)
     return flat
+
+
+def _extract_text_from_file(file_bytes: bytes, filename: str) -> tuple[str, int]:
+    """從上傳的檔案萃取純文字，回傳 (text, page_count)。
+    支援 PDF（pdfplumber + pypdf）與 TXT（UTF-8）。
+    """
+    if filename.lower().endswith(".txt"):
+        try:
+            text = file_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            text = file_bytes.decode("utf-8", errors="replace")
+        # 以每 2000 字估算頁數（僅用於進度顯示）
+        page_count = max(1, len(text) // 2000)
+        return text, page_count
+    # 預設走 PDF 解析
+    return _extract_text(file_bytes)
 
 
 def _parse_llm_json(raw: str) -> list[dict]:
@@ -340,28 +363,35 @@ def _generate_pdf(mode: str, title: str, items: list[dict]) -> bytes:
 
 @router.post("/process", summary="整理文件（SSE 串流）")
 async def process_document(
-    file: UploadFile = File(..., description="原始 PDF 檔案"),
+    file: UploadFile = File(..., description="原始 PDF 或 TXT 檔案"),
     model: str = Form("", description="指定 LLM model（留空使用租戶預設）"),
+    source_type: str = Form("doc", description="來源類型：doc（文件）或 note（筆記）"),
     db: Session = Depends(get_db),
     current: Annotated[User, Depends(get_current_user)] = ...,
 ):
-    """上傳 PDF，以 SSE 串流逐段回傳 Q&A 整理結果。"""
+    """上傳 PDF 或 TXT，以 SSE 串流逐段回傳 Q&A 整理結果。"""
 
-    pdf_bytes = await file.read()
-    if len(pdf_bytes) == 0:
+    fname = (file.filename or "").lower()
+    if not (fname.endswith(".pdf") or fname.endswith(".txt")):
+        raise HTTPException(status_code=400, detail="僅支援 PDF 或 TXT 格式")
+
+    file_bytes = await file.read()
+    if len(file_bytes) == 0:
         raise HTTPException(status_code=400, detail="上傳的檔案是空的")
-    if len(pdf_bytes) > _MAX_PDF_BYTES:
+    if len(file_bytes) > _MAX_PDF_BYTES:
         raise HTTPException(status_code=413, detail="檔案過大（上限 20 MB）")
 
     # 萃取文字
     try:
-        raw_text, page_count = _extract_text(pdf_bytes)
+        raw_text, page_count = _extract_text_from_file(file_bytes, file.filename or "")
     except Exception as exc:
-        logger.error("PDF 文字萃取失敗: %s", exc)
-        raise HTTPException(status_code=400, detail=f"PDF 解析失敗，請確認檔案完整性：{exc}") from exc
+        logger.error("文字萃取失敗: %s", exc)
+        raise HTTPException(status_code=400, detail=f"檔案解析失敗，請確認檔案完整性：{exc}") from exc
 
     if not raw_text.strip():
-        raise HTTPException(status_code=400, detail="無法從 PDF 萃取文字（可能是純圖片 PDF，請先跑 OCR）")
+        if fname.endswith(".pdf"):
+            raise HTTPException(status_code=400, detail="無法從 PDF 萃取文字（可能是純圖片 PDF，請先跑 OCR）")
+        raise HTTPException(status_code=400, detail="TXT 檔案內容為空")
 
     char_count = len(raw_text)
 
@@ -393,7 +423,13 @@ async def process_document(
             raise HTTPException(status_code=400, detail="請指定 model 參數，或在 AI 設定中設定 LLM Provider")
 
     filename = (file.filename or "文件").rsplit(".", 1)[0]
-    system_prompt = _load_system_prompt_from_file("doc_refiner") or ""
+    if source_type == "note":
+        prompt_key = "doc_refiner_note"
+    elif source_type == "sop":
+        prompt_key = "doc_refiner_sop"
+    else:
+        prompt_key = "doc_refiner_doc"
+    system_prompt = _load_system_prompt_from_file(prompt_key) or ""
     chunks = _split_text(raw_text)
     chunk_total = len(chunks)
 
@@ -405,58 +441,66 @@ async def process_document(
         total_pt = total_ct = total_tt = 0
         item_id = 1
 
-        for idx, chunk_text in enumerate(chunks, 1):
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {
-                    "role": "user",
-                    "content": (
-                        f"請將以下文件整理成 Q&A 格式。\n"
-                        f"文件名稱：{filename}"
-                        + (f"（第 {idx}/{chunk_total} 段）" if chunk_total > 1 else "")
-                        + f"\n\n--- 文件內容開始 ---\n{chunk_text}\n--- 文件內容結束 ---\n\n"
-                        f"請直接輸出 JSON array，以 [ 開頭，以 ] 結尾，不要有任何前言或 Markdown 格式。"
-                    ),
-                },
-            ]
+        try:
+            for idx, chunk_text in enumerate(chunks, 1):
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {
+                        "role": "user",
+                        "content": (
+                            f"請將以下文件整理成 Q&A 格式。\n"
+                            f"文件名稱：{filename}"
+                            + (f"（第 {idx}/{chunk_total} 段）" if chunk_total > 1 else "")
+                            + f"\n\n--- 文件內容開始 ---\n{chunk_text}\n--- 文件內容結束 ---\n\n"
+                            f"請直接輸出 JSON array，以 [ 開頭，以 ] 結尾，不要有任何前言或 Markdown 格式。"
+                        ),
+                    },
+                ]
 
-            try:
-                answer, llm_usage, _ = await call_llm(
-                    model=use_model,
-                    messages=messages,
-                    db=db,
-                    tenant_id=tenant_id,
-                    temperature=0.3,
-                )
-            except (LLMProviderNotConfigured, LLMCallError) as exc:
-                yield _sse({"type": "error", "detail": str(exc)})
-                return
+                try:
+                    answer, llm_usage, _ = await call_llm(
+                        model=use_model,
+                        messages=messages,
+                        db=db,
+                        tenant_id=tenant_id,
+                        temperature=0.3,
+                    )
+                except (LLMProviderNotConfigured, LLMCallError) as exc:
+                    yield _sse({"type": "error", "detail": str(exc)})
+                    return
+                except Exception as exc:
+                    logger.error("call_llm 非預期例外 chunk %d: %s", idx, exc)
+                    yield _sse({"type": "error", "detail": f"AI 呼叫失敗：{exc}"})
+                    return
 
-            # 累計 usage
-            if llm_usage:
-                total_pt += getattr(llm_usage, "prompt_tokens", 0) or 0
-                total_ct += getattr(llm_usage, "completion_tokens", 0) or 0
-                total_tt += getattr(llm_usage, "total_tokens", 0) or 0
+                # 累計 usage
+                if llm_usage:
+                    total_pt += getattr(llm_usage, "prompt_tokens", 0) or 0
+                    total_ct += getattr(llm_usage, "completion_tokens", 0) or 0
+                    total_tt += getattr(llm_usage, "total_tokens", 0) or 0
 
-            logger.info("chunk %d/%d raw answer (first 400): %s", idx, chunk_total, answer[:400])
-            try:
-                items = _parse_llm_json(answer)
-            except (ValueError, json.JSONDecodeError) as exc:
-                logger.error("chunk %d JSON 解析失敗: %s", idx, exc)
-                yield _sse({"type": "chunk_error", "chunk": idx, "detail": f"第 {idx} 段解析失敗，略過"})
-                continue
-            for item in items:
-                item["id"] = item_id
-                item_id += 1
+                logger.info("chunk %d/%d raw answer (first 400): %s", idx, chunk_total, answer[:400])
+                try:
+                    items = _parse_llm_json(answer)
+                except (ValueError, json.JSONDecodeError) as exc:
+                    logger.error("chunk %d JSON 解析失敗: %s", idx, exc)
+                    yield _sse({"type": "chunk_error", "chunk": idx, "detail": f"第 {idx} 段解析失敗，略過"})
+                    continue
+                for item in items:
+                    item["id"] = item_id
+                    item_id += 1
 
-            logger.info("chunk %d done, items=%d", idx, len(items))
-            yield _sse({"type": "items", "chunk": idx, "chunk_total": chunk_total, "items": items})
+                logger.info("chunk %d done, items=%d", idx, len(items))
+                yield _sse({"type": "items", "chunk": idx, "chunk_total": chunk_total, "items": items})
 
-        yield _sse({
-            "type": "done",
-            "model": use_model,
-            "usage": {"prompt_tokens": total_pt, "completion_tokens": total_ct, "total_tokens": total_tt},
-        })
+            yield _sse({
+                "type": "done",
+                "model": use_model,
+                "usage": {"prompt_tokens": total_pt, "completion_tokens": total_ct, "total_tokens": total_tt},
+            })
+        except Exception as exc:
+            logger.error("generate() 非預期例外: %s", exc)
+            yield _sse({"type": "error", "detail": f"處理失敗：{exc}"})
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
@@ -609,3 +653,83 @@ async def export_pdf(
         media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{utf8_name}"},
     )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# AI 改寫單條 Q&A
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.post("/rewrite-item", summary="AI 改寫單條 Q&A")
+async def rewrite_item(
+    body: RewriteItemRequest,
+    db: Session = Depends(get_db),
+    current: Annotated[User, Depends(get_current_user)] = ...,
+):
+    """根據指示改寫一條 Q&A，回傳新的 question / answer。"""
+    system_prompt = _load_system_prompt_from_file("doc_refiner_rewrite") or ""
+
+    use_model = body.model.strip()
+    if not use_model:
+        from app.models.llm_provider_config import LLMProviderConfig
+        cfg = (
+            db.query(LLMProviderConfig)
+            .filter(
+                LLMProviderConfig.tenant_id == current.tenant_id,
+                LLMProviderConfig.is_active.is_(True),
+            )
+            .order_by(LLMProviderConfig.id)
+            .first()
+        )
+        if cfg:
+            dm = (cfg.default_model or "").strip()
+            provider = cfg.provider
+            if provider == "gemini":
+                use_model = dm if dm.startswith("gemini/") else f"gemini/{dm}" if dm else "gemini/gemini-2.0-flash"
+            elif provider == "local":
+                use_model = dm if dm.startswith("local/") else f"local/{dm}" if dm else ""
+            elif provider == "twcc":
+                use_model = dm if dm.startswith("twcc/") else f"twcc/{dm}" if dm else ""
+            else:
+                use_model = dm or "gpt-4o-mini"
+    if not use_model:
+        raise HTTPException(status_code=400, detail="請指定 model 參數，或在 AI 設定中設定 LLM Provider")
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {
+            "role": "user",
+            "content": (
+                f"原始 Q&A：\n"
+                f"Q: {body.question}\n"
+                f"A: {body.answer}\n\n"
+                f"改寫指示：{body.instruction}\n\n"
+                f"請直接輸出 JSON，以 {{ 開頭，以 }} 結尾，不要有任何前言或 Markdown 格式。"
+            ),
+        },
+    ]
+
+    try:
+        answer, _, _ = await call_llm(
+            model=use_model,
+            messages=messages,
+            db=db,
+            tenant_id=current.tenant_id,
+            temperature=0.4,
+        )
+    except (LLMProviderNotConfigured, LLMCallError) as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    # 解析 JSON
+    raw = answer.strip()
+    # 移除可能的 ```json ... ``` 包裝
+    if raw.startswith("```"):
+        raw = re.sub(r"^```[^\n]*\n?", "", raw)
+        raw = re.sub(r"\n?```$", "", raw)
+    try:
+        obj = json.loads(raw)
+        return {
+            "question": str(obj.get("Q") or obj.get("question") or body.question).strip(),
+            "answer": str(obj.get("A") or obj.get("answer") or body.answer).strip(),
+        }
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=502, detail=f"AI 回傳格式錯誤：{raw[:200]}")

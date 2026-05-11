@@ -17,6 +17,8 @@ class KmKnowledgeBase(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     # personal = 只有建立者可見；company = 同 tenant 全員可見
     scope = Column(String(20), nullable=False, server_default="personal")
+    # rag = LLM 整合回答；faq = 向量精確比對後直接回傳原文答案
+    answer_mode = Column(String(20), nullable=False, server_default="rag")
 
     # Widget 設定
     public_token = Column(String(64), nullable=True, unique=True, index=True)

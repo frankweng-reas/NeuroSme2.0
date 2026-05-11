@@ -158,7 +158,7 @@ export default function AdminLLMSettings() {
   const [showSpeechForm, setShowSpeechForm] = useState(false)
   const [speechForm, setSpeechForm] = useState({ provider: 'local', base_url: '', api_key: '', model: '' })
   const [savingSpeech, setSavingSpeech] = useState(false)
-  const [showSpeechApiKey, setShowSpeechApiKey] = useState(false)
+  const [_showSpeechApiKey, setShowSpeechApiKey] = useState(false)
   const [testingSpeech, setTestingSpeech] = useState(false)
   const [speechTestResult, setSpeechTestResult] = useState<SpeechTestResult | null>(null)
   const [showDisableSpeechConfirm, setShowDisableSpeechConfirm] = useState(false)

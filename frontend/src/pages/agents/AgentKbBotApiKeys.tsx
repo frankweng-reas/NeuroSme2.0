@@ -36,7 +36,7 @@ interface Props {
   selectedBot: Bot | null
 }
 
-export default function AgentKbBotApiKeys({ canManage, bots, selectedBotId, selectedBot }: Props) {
+export default function AgentKbBotApiKeys({ canManage, bots: _bots, selectedBotId, selectedBot }: Props) {
   const [keys, setKeys] = useState<ApiKey[]>([])
   const [loading, setLoading] = useState(true)
 

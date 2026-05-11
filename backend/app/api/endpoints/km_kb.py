@@ -34,6 +34,7 @@ class KbCreate(BaseModel):
     model_name: str | None = None
     system_prompt: str | None = None
     scope: str = "personal"
+    answer_mode: str = "rag"  # 'rag' | 'direct'
 
 
 class KbUpdate(BaseModel):
@@ -42,6 +43,7 @@ class KbUpdate(BaseModel):
     model_name: str | None = None
     system_prompt: str | None = None
     scope: str | None = None
+    answer_mode: str | None = None  # 'rag' | 'direct'
     widget_title: str | None = None
     widget_logo_url: str | None = None
     widget_color: str | None = None
@@ -57,6 +59,7 @@ class KbResponse(BaseModel):
     model_name: str | None
     system_prompt: str | None
     scope: str
+    answer_mode: str
     created_by: int | None
     doc_count: int
     ready_count: int
@@ -83,6 +86,7 @@ def _to_response(kb: KmKnowledgeBase, db: Session) -> KbResponse:
         model_name=kb.model_name,
         system_prompt=kb.system_prompt,
         scope=kb.scope or "personal",
+        answer_mode=kb.answer_mode or "rag",
         created_by=kb.created_by,
         doc_count=len(all_docs),
         ready_count=sum(1 for d in all_docs if d.status == "ready"),
@@ -142,6 +146,7 @@ def create_knowledge_base(
         model_name=body.model_name or None,
         system_prompt=body.system_prompt or None,
         scope=scope,
+        answer_mode=body.answer_mode if body.answer_mode in ("rag", "direct") else "rag",
         created_by=current.id,
     )
     db.add(kb)
@@ -207,6 +212,10 @@ def update_knowledge_base(
         if not _can_manage(current.role):
             raise HTTPException(status_code=403, detail="只有管理員可以變更知識庫範圍")
         kb.scope = new_scope
+    if body.answer_mode is not None:
+        if body.answer_mode not in ("rag", "direct"):
+            raise HTTPException(status_code=400, detail="answer_mode 必須是 'rag' 或 'direct'")
+        kb.answer_mode = body.answer_mode
     if body.widget_title is not None:
         kb.widget_title = body.widget_title or None
     if body.widget_logo_url is not None:

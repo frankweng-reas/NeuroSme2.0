@@ -233,39 +233,45 @@ def _chunk_sliding(text: str, chunk_size: int, overlap: int) -> list[str]:
 
 
 def _chunk_faq(text: str) -> list[str]:
-    """FAQ 專用切割：每個 Q&A 對成一個 chunk。
+    """FAQ 專用切割：每個 Q&A 對成一個完整 chunk。
 
-    三層 fallback：
-      1a. 偵測明確的 Q&A pattern（Q:/A:, 問:/答:, 數字編號）
-      1b. 偵測 ●/○ bullet 格式（問題=●, 答案=○ 縮排）
-      2.  按雙換行段落切
-      3.  fallback：滑動視窗（chunk_size=300）
+    切割策略（依序嘗試）：
+      1. 以明確語意前綴（Q: / 問: / 問題: 等）為邊界，收集到下一個 Q 前綴為止
+         → 保證答案中的編號步驟不被誤切
+      2. ●/○ bullet 格式（● 問題 + ○ 答案）
+      3. 雙換行段落切
+      4. fallback 滑動視窗（chunk_size=300）
     """
-    # Layer 1a：Q&A 前綴 pattern（Q:, 問:, 1. 等）
-    qa_pattern = _re.compile(
-        r'(?:^|\n)(?=\s*(?:Q[：:】]|問[：:]|\d+[.、)）]\s))',
-        _re.MULTILINE,
+    # Layer 1：以 Q 語意前綴為邊界（只切 Q 不切 A，避免步驟被拆散）
+    # 支援格式：Q: / Q： / Question: / 問: / 問： / 問題: / 問題：
+    q_prefix = _re.compile(
+        r'(?m)^[ \t]*(?:Q[：:]|Question\s*[：:]|問[：:]|問題[：:])',
     )
-    parts = [p.strip() for p in qa_pattern.split(text) if p.strip()]
-    if len(parts) >= 2:
-        logger.debug("FAQ chunking：Q&A pattern，%d 對", len(parts))
-        return parts
+    q_positions = [m.start() for m in q_prefix.finditer(text)]
+    if len(q_positions) >= 2:
+        chunks = []
+        for i, start in enumerate(q_positions):
+            end = q_positions[i + 1] if i + 1 < len(q_positions) else len(text)
+            chunk = text[start:end].strip()
+            if chunk:
+                chunks.append(chunk)
+        logger.debug("FAQ chunking：Q-prefix，%d 對", len(chunks))
+        return chunks
 
-    # Layer 1b：● 問題 / ○ 答案 的 bullet 格式
-    # 以 ● 作為 chunk 邊界，每個 ● 問題 + 其後的 ○ 答案 = 一個 chunk
+    # Layer 2：● 問題 / ○ 答案 的 bullet 格式
     bullet_pattern = _re.compile(r'(?:^|\n)(?=\s*[●•]\s)', _re.MULTILINE)
     bullet_parts = [p.strip() for p in bullet_pattern.split(text) if p.strip()]
     if len(bullet_parts) >= 2:
         logger.debug("FAQ chunking：● bullet 格式，%d 對", len(bullet_parts))
         return bullet_parts
 
-    # Layer 2：按段落切（雙換行）
+    # Layer 3：按段落切（雙換行）
     paragraphs = [p.strip() for p in _re.split(r'\n{2,}', text) if p.strip()]
     if len(paragraphs) >= 2:
         logger.debug("FAQ chunking：段落模式，%d 段", len(paragraphs))
         return paragraphs
 
-    # Layer 3：滑動視窗 fallback
+    # Layer 4：滑動視窗 fallback
     logger.debug("FAQ chunking：fallback 滑動視窗")
     return _chunk_sliding(text, chunk_size=300, overlap=50)
 
@@ -468,14 +474,16 @@ def process_document(
         logger.info("KM embed 使用 provider=%s model=%s (doc_id=%d)", embed_provider, embed_model, doc_id)
 
         # 4. 批次 Embedding（每批 100 筆）
+        # 全文 embed（Q+A），提高召回率；精準選取交給 LLM（km_faq_llm_select）
+        embed_texts = chunks
         all_embeddings: list[list[float]] = []
         batch_size = 100
         embed_started = time.monotonic()
         embed_status = "success"
         total_prompt_tokens: int | None = None
         try:
-            for i in range(0, len(chunks), batch_size):
-                batch = chunks[i : i + batch_size]
+            for i in range(0, len(embed_texts), batch_size):
+                batch = embed_texts[i : i + batch_size]
                 batch_vectors, batch_tokens = embed_texts_sync(batch, model=embed_model, api_key=embed_key, provider=embed_provider, api_base=embed_base)
                 all_embeddings.extend(batch_vectors)
                 if batch_tokens is not None:
@@ -498,9 +506,14 @@ def process_document(
 
         # 5. 寫入 km_chunks，並鎖定 embedding config
         # BM25 tsvector 只對短、語意集中的類型有意義（faq/spec），其餘不建 index
+        # FAQ type：content_tsv 也只索引 Q 部分，與 embedding 一致
         BM25_DOC_TYPES = {"faq", "spec"}
         build_tsv = doc_type in BM25_DOC_TYPES
         for idx, (chunk_content, embedding) in enumerate(zip(chunks, all_embeddings)):
+            if doc_type == "faq":
+                tsv_text = extract_faq_question(chunk_content) or chunk_content
+            else:
+                tsv_text = chunk_content
             km_chunk = KmChunk(
                 document_id=doc_id,
                 chunk_index=idx,
@@ -509,7 +522,7 @@ def process_document(
                 content_tsv=(
                     db.execute(
                         sa.text("SELECT to_tsvector('public.cjk', :t)"),
-                        {"t": chunk_content},
+                        {"t": tsv_text},
                     ).scalar()
                     if build_tsv else None
                 ),
@@ -757,3 +770,256 @@ def format_km_context(chunks: list[KmChunk], show_source: bool = True) -> str:
             parts.append(chunk.content.strip())
 
     return "\n\n".join(parts)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# FAQ 精確比對模式
+# ──────────────────────────────────────────────────────────────────────────────
+
+FAQ_SIMILARITY_THRESHOLD = 0.45  # 低於此視為「找不到」；RRF 已排序，threshold 只作最後把關
+FAQ_TOP_K = 2                    # 最多回傳幾筆 FAQ 結果
+
+
+def extract_faq_question(content: str) -> str:
+    """從 FAQ chunk 中取出 Q（問題）部分。
+    支援格式：Q: / Q： / Question: / 問: / 問題:
+    """
+    match = _re.search(
+        r'^[ \t]*(?:Q[：:]|Question\s*[：:]|問[：:]|問題[：:])\s*(.+)',
+        content,
+        _re.MULTILINE,
+    )
+    return match.group(1).strip() if match else ""
+
+
+def extract_faq_answer(content: str) -> str:
+    """從 FAQ chunk 中取出 A（答案）部分的原文。
+    支援格式：A: / A： / Answer: / 答: / 答案:
+    """
+    match = _re.search(
+        r'(?:^|\n)[ \t]*(?:A[：:]|Answer\s*[：:]|答[：:]|答案[：:])\s*([\s\S]+)',
+        content,
+    )
+    return match.group(1).strip() if match else content.strip()
+
+
+def km_faq_retrieve_sync(
+    query: str,
+    db: Session,
+    tenant_id: str,
+    user_id: int,
+    knowledge_base_id: int,
+    top_k: int = 3,
+) -> "list[tuple[KmChunk, float]]":
+    """FAQ 精確比對：RRF（vector + BM25），兩者都只針對 Q 文字建立索引。
+
+    FAQ chunk 的 embedding 和 content_tsv 在上傳時已僅包含 Q 部分，
+    因此 user query ↔ Q 的相似度直接、準確，無需複雜 heuristics。
+
+    回傳 [(chunk, cosine_similarity), ...] 依 RRF 分數降序，空 list 表示失敗或無結果。
+    """
+    import sqlalchemy as _sa
+
+    FETCH_K = 20
+    RRF_K = 60
+    ALPHA = 0.7  # 向量權重（Q-only embedding 已夠精準，維持一般設定）
+
+    embed_params = _get_embed_params(db, tenant_id)
+    if not embed_params:
+        logger.warning("FAQ 檢索失敗：tenant_id=%s 無 Embedding provider", tenant_id)
+        return []
+
+    embed_provider, embed_model, embed_key, embed_base = embed_params
+    try:
+        vectors, _ = embed_texts_sync(
+            [query],
+            model=embed_model,
+            api_key=embed_key,
+            provider=embed_provider,
+            api_base=embed_base,
+            task_type="retrieval_query",
+        )
+        if not vectors:
+            return []
+        query_embedding = vectors[0]
+    except Exception as e:
+        logger.warning("FAQ embedding 失敗: %s", e)
+        return []
+
+    base_filter = [
+        KmDocument.knowledge_base_id == knowledge_base_id,
+        KmDocument.status == "ready",
+    ]
+
+    # ── 1. Vector search ──
+    sim_map: dict[int, float] = {}
+    chunk_map: dict[int, KmChunk] = {}
+    vector_rows = []
+    try:
+        distance_col = KmChunk.embedding.cosine_distance(query_embedding).label("_dist")
+        vector_rows = (
+            db.query(KmChunk, distance_col)
+            .join(KmDocument, KmChunk.document_id == KmDocument.id)
+            .filter(*base_filter)
+            .order_by(_sa.text("_dist"))
+            .limit(FETCH_K)
+            .all()
+        )
+        for chunk, dist in vector_rows:
+            sim_map[chunk.id] = 1.0 - float(dist)
+            chunk_map[chunk.id] = chunk
+    except Exception as e:
+        logger.warning("FAQ 向量搜尋失敗: %s", e)
+        return []
+
+    # ── 2. BM25 search ──
+    bm25_ids: list[int] = []
+    try:
+        tsv_raw = db.execute(
+            _sa.text("SELECT to_tsvector('public.cjk', :q)"), {"q": query}
+        ).scalar()
+        if tsv_raw:
+            lexemes = [
+                f"'{part.split(':')[0].strip(chr(39))}'"
+                for part in str(tsv_raw).split()
+                if part
+            ]
+            if lexemes:
+                or_tsquery = " | ".join(lexemes)
+                tsq = _sa.func.to_tsquery("public.cjk", or_tsquery)
+                bm25_rows = (
+                    db.query(KmChunk)
+                    .join(KmDocument, KmChunk.document_id == KmDocument.id)
+                    .filter(*base_filter, KmChunk.content_tsv.op("@@")(tsq))
+                    .order_by(_sa.func.ts_rank(KmChunk.content_tsv, tsq, 1).desc())
+                    .limit(FETCH_K)
+                    .all()
+                )
+                for chunk in bm25_rows:
+                    chunk_map[chunk.id] = chunk
+                    bm25_ids.append(chunk.id)
+    except Exception as bm25_err:
+        logger.info("FAQ BM25 搜尋失敗: %s", bm25_err)
+
+    # ── 2b. 補算 BM25 命中但不在 vector top-20 的 cosine similarity ──
+    bm25_only_ids = [cid for cid in bm25_ids if cid not in sim_map]
+    if bm25_only_ids:
+        try:
+            dist_col = KmChunk.embedding.cosine_distance(query_embedding).label("_dist")
+            for chunk, dist in (
+                db.query(KmChunk, dist_col)
+                .filter(KmChunk.id.in_(bm25_only_ids))
+                .all()
+            ):
+                sim_map[chunk.id] = 1.0 - float(dist)
+                chunk_map[chunk.id] = chunk
+        except Exception as e:
+            logger.info("FAQ 補算 BM25-only similarity 失敗: %s", e)
+
+    # ── 3. RRF 合併排序 ──
+    scores: dict[int, float] = {}
+    for rank, (chunk, _dist) in enumerate(vector_rows, start=1):
+        scores[chunk.id] = scores.get(chunk.id, 0.0) + ALPHA / (RRF_K + rank)
+    for rank, cid in enumerate(bm25_ids, start=1):
+        scores[cid] = scores.get(cid, 0.0) + (1 - ALPHA) / (RRF_K + rank)
+
+    sorted_ids = sorted(scores, key=lambda cid: scores[cid], reverse=True)
+
+    # ── 4. threshold + top-k ──
+    # Q-only BM25 讓 RRF 排名更準確，不設 gate，讓 RRF 分數自然篩選
+    results: list[tuple[KmChunk, float]] = []
+    for cid in sorted_ids:
+        sim = sim_map.get(cid)
+        if sim is None or sim < FAQ_SIMILARITY_THRESHOLD:
+            continue
+        results.append((chunk_map[cid], sim))
+        if len(results) >= top_k:
+            break
+
+    logger.info(
+        "FAQ retrieve: vector=%d bm25=%d top-%d similarities=%s",
+        len(vector_rows), len(bm25_ids), top_k,
+        [f"{s:.4f}" for _, s in results],
+    )
+    return results
+
+
+async def km_faq_llm_select(
+    query: str,
+    candidates: "list[tuple[KmChunk, float]]",
+    model: str,
+    db: Session,
+    tenant_id: str,
+) -> "list[tuple[KmChunk, float]]":
+    """用 LLM 從候選 FAQ chunks 中選出最相關的。
+
+    候選清單由 km_faq_retrieve_sync 提供（已含 RRF 排序）。
+    LLM 只做「選哪幾個」，不生成答案，保證原文 A 零失真。
+
+    找不到相關 → 回傳空 list；LLM 失敗 → fallback 回傳全部候選。
+    """
+    import json
+    import re
+
+    from app.services.llm_caller import LLMProviderNotConfigured, call_llm
+
+    if not candidates:
+        return []
+
+    lines: list[str] = []
+    for i, (chunk, _) in enumerate(candidates, 1):
+        q = extract_faq_question(chunk.content)
+        a = extract_faq_answer(chunk.content)
+        a_preview = a[:150].replace("\n", " ") + ("…" if len(a) > 150 else "")
+        lines.append(f"{i}. Q：{q}\n   A：{a_preview}")
+
+    candidates_text = "\n\n".join(lines)
+
+    from pathlib import Path
+    _prompt_file = Path(__file__).resolve().parents[2] / "config" / "system_prompt_faq_direct.md"
+    try:
+        system_prompt = _prompt_file.read_text(encoding="utf-8").strip()
+    except OSError:
+        system_prompt = (
+            "你是 FAQ 篩選器。根據使用者問題，從候選 FAQ 中選出最相關的項目。\n"
+            "只回傳 JSON，格式：{\"selected\": [1, 2]}（編號陣列，1-based）。\n"
+            "沒有相關項目時回傳：{\"selected\": []}。\n"
+            "不要輸出任何 JSON 以外的文字。"
+        )
+    user_msg = f"使用者問題：{query}\n\n候選 FAQ：\n{candidates_text}"
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_msg},
+    ]
+
+    try:
+        answer, _, _ = await call_llm(
+            model=model,
+            messages=messages,
+            db=db,
+            tenant_id=tenant_id,
+            temperature=0,
+            timeout=30,
+        )
+        m = re.search(r'\{[^{}]*\}', answer, re.DOTALL)
+        if m:
+            data = json.loads(m.group())
+            selected_indices = [int(x) for x in data.get("selected", [])]
+            selected = [
+                candidates[i - 1]
+                for i in selected_indices
+                if 1 <= i <= len(candidates)
+            ]
+            logger.info(
+                "FAQ LLM select: query=%r candidates=%d selected=%s",
+                query, len(candidates), selected_indices,
+            )
+            return selected
+        logger.warning("FAQ LLM select: 無法解析 JSON，fallback。原始回應: %r", answer)
+    except LLMProviderNotConfigured:
+        logger.warning("FAQ LLM select: LLM 未設定，fallback 到全部候選")
+    except Exception as e:
+        logger.warning("FAQ LLM select 失敗，fallback 到全部候選: %s", e)
+
+    return candidates  # fallback：LLM 失敗時直接回傳全部候選

@@ -192,6 +192,8 @@ class ChatCompletionPrepared:
     has_vision_user_content: bool
     agent_id: str = "chat"
     sources: list[dict] = field(default_factory=list)
+    faq_direct_answer: str | None = None  # 已棄用，保留相容
+    faq_candidates: list | None = None    # direct 模式：候選 [(KmChunk, float), ...]
 
 
 def _prepare_chat_completion(req: ChatRequest, db: Session, current: User) -> ChatCompletionPrepared:
@@ -270,7 +272,7 @@ def _prepare_chat_completion(req: ChatRequest, db: Session, current: User) -> Ch
         else:
             logger.info("KM RAG: no relevant chunks found (tenant=%r, user=%s)", tenant_id, current.id)
 
-        # 讀取 KB 設定的 model 與 system_prompt
+        # 讀取 KB 設定的 model、system_prompt、answer_mode
         if req.knowledge_base_id:
             from app.models.km_knowledge_base import KmKnowledgeBase
             kb = db.query(KmKnowledgeBase).filter(
@@ -280,6 +282,40 @@ def _prepare_chat_completion(req: ChatRequest, db: Session, current: User) -> Ch
             if kb:
                 kb_model_name = (kb.model_name or "").strip() or None
                 kb_system_prompt = (kb.system_prompt or "").strip() or None
+
+                # direct 模式：RRF 撈候選 → 交給 async endpoint 做 LLM 選取
+                if getattr(kb, 'answer_mode', 'rag') == 'direct':
+                    from app.services.km_service import FAQ_TOP_K, km_faq_retrieve_sync
+
+                    direct_model = kb_model_name or (req.model or "").strip()
+                    direct_litellm, direct_key, direct_base = ("", None, None)
+                    if direct_model:
+                        direct_litellm, direct_key, direct_base = _get_llm_params(
+                            direct_model, db=db, tenant_id=tenant_id
+                        )
+
+                    candidates = km_faq_retrieve_sync(
+                        req.content, db, tenant_id, current.id,
+                        req.knowledge_base_id, top_k=FAQ_TOP_K,
+                    )
+                    return ChatCompletionPrepared(
+                        tenant_id=tenant_id,
+                        messages=[],
+                        model=direct_model,
+                        litellm_model=direct_litellm,
+                        api_key=direct_key or "__faq_direct__",
+                        api_base=direct_base,
+                        thread_uuid=thread_uuid,
+                        trace_raw=trace_raw,
+                        user_id=current.id,
+                        has_vision_user_content=False,
+                        agent_id=aid,
+                        sources=[
+                            {"filename": c.document.filename}
+                            for c, _ in candidates if c.document
+                        ],
+                        faq_candidates=candidates,
+                    )
     else:
         data = _get_selected_source_files_content(db, current.id, tenant_id, aid)
 
@@ -389,6 +425,53 @@ async def chat_completions(
     logger.info(f"chat_completions: model={req.model!r}, content_len={len(req.content) if req.content else 0}")
     try:
         prepared = _prepare_chat_completion(req, db, current)
+
+        # direct 模式：LLM 選取 FAQ → 原文回傳
+        if prepared.faq_candidates is not None:
+            from app.services.km_service import (
+                km_faq_llm_select, extract_faq_question, extract_faq_answer,
+            )
+            candidates = prepared.faq_candidates
+            if candidates and prepared.model:
+                selected = await km_faq_llm_select(
+                    req.content, candidates, prepared.model, db, prepared.tenant_id
+                )
+            else:
+                selected = candidates  # 無 model 或無候選時 fallback
+
+            if not selected:
+                faq_answer = "根據目前的知識庫，找不到相關資訊。"
+            else:
+                parts = []
+                for chunk, _ in selected:
+                    q = extract_faq_question(chunk.content)
+                    a = extract_faq_answer(chunk.content)
+                    parts.append(f"**Q: {q}**\n\n{a}" if q else f"**Q:**\n\n{a}")
+                sources_text = "\n".join(
+                    f"- {c.document.filename}"
+                    for c, _ in selected if c.document
+                )
+                faq_answer = (
+                    "以下可能是你需要的答案：\n\n"
+                    + "\n\n---\n\n".join(parts)
+                    + (f"\n\n---\n**參考來源：**\n{sources_text}" if sources_text else "")
+                )
+            return ChatResponse(
+                content=faq_answer,
+                model="faq-direct",
+                usage=None,
+                finish_reason="stop",
+            )
+
+        # FAQ 精確比對模式（舊路徑，保留相容）
+        if prepared.faq_direct_answer is not None:
+            return ChatResponse(
+                content=prepared.faq_direct_answer,
+                model="faq-direct",
+                usage=None,
+                finish_reason="stop",
+            )
+
         tenant_id = prepared.tenant_id
         thread_uuid = prepared.thread_uuid
         trace_raw = prepared.trace_raw
@@ -547,6 +630,58 @@ async def chat_completions_stream(
         prepared = _prepare_chat_completion(req, db, current)
     except HTTPException:
         raise
+
+    # direct 模式：LLM 選取 FAQ → SSE 原文回傳
+    if prepared.faq_candidates is not None:
+        from app.services.km_service import (
+            km_faq_llm_select, extract_faq_question, extract_faq_answer,
+        )
+        candidates = prepared.faq_candidates
+        if candidates and prepared.model:
+            selected = await km_faq_llm_select(
+                req.content, candidates, prepared.model, db, prepared.tenant_id
+            )
+        else:
+            selected = candidates
+
+        if not selected:
+            faq_answer = "根據目前的知識庫，找不到相關資訊。"
+        else:
+            parts = []
+            for chunk, _ in selected:
+                q = extract_faq_question(chunk.content)
+                a = extract_faq_answer(chunk.content)
+                parts.append(f"**Q: {q}**\n\n{a}" if q else f"**Q:**\n\n{a}")
+            sources_text = "\n".join(
+                f"- {c.document.filename}"
+                for c, _ in selected if c.document
+            )
+            faq_answer = (
+                "以下可能是你需要的答案：\n\n"
+                + "\n\n---\n\n".join(parts)
+                + (f"\n\n---\n**參考來源：**\n{sources_text}" if sources_text else "")
+            )
+
+        async def faq_sse():
+            yield _sse_line({"event": "delta", "text": faq_answer})
+            yield _sse_line({
+                "event": "done", "content": faq_answer, "model": "faq-direct",
+                "finish_reason": "stop", "usage": None,
+                "sources": prepared.sources,
+            })
+
+        return StreamingResponse(faq_sse(), media_type="text/event-stream")
+
+    # FAQ 精確比對模式（舊路徑，保留相容）
+    if prepared.faq_direct_answer is not None:
+        faq_answer = prepared.faq_direct_answer
+
+        async def faq_sse():
+            yield _sse_line({"event": "delta", "text": faq_answer})
+            yield _sse_line({"event": "done", "content": faq_answer, "model": "faq-direct",
+                             "finish_reason": "stop", "usage": None})
+
+        return StreamingResponse(faq_sse(), media_type="text/event-stream")
 
     # _prepare_chat_completion 中 km_retrieve_sync 會 flush embedding usage log，
     # 但 event_gen() 之後改用新 SessionLocal，原始 db session 不再 commit，

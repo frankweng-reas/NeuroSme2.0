@@ -124,6 +124,12 @@ async def upload_km_document(
         ).first()
         if not kb:
             raise HTTPException(status_code=404, detail="知識庫不存在")
+        # direct 模式知識庫只接受 faq 文件類型
+        if getattr(kb, 'answer_mode', 'rag') == 'direct' and doc_type != 'faq':
+            raise HTTPException(
+                status_code=400,
+                detail="此知識庫為「精確直答」模式，只能上傳 FAQ 類型文件",
+            )
         # 權限：company KB 需 manager+；personal KB 只有 KB 建立者或 admin+ 可上傳
         is_admin = current.role in ("admin", "super_admin")
         can_manage = current.role in ("admin", "super_admin", "manager")

@@ -49,11 +49,13 @@ export async function* processDocumentStream(
   file: File,
   model?: string,
   signal?: AbortSignal,
+  sourceType: 'doc' | 'note' | 'sop' = 'doc',
 ): AsyncGenerator<StreamEvent> {
   const token = localStorage.getItem(TOKEN_KEY) ?? ''
   const fd = new FormData()
   fd.append('file', file)
   if (model) fd.append('model', model)
+  fd.append('source_type', sourceType)
 
   const res = await fetch(`${API_BASE}/doc-refiner/process`, {
     method: 'POST',
@@ -148,6 +150,39 @@ export async function exportTxt(req: ExportRequest): Promise<Blob> {
     throw new ApiError(detail || '匯出失敗', res.status, detail)
   }
   return res.blob()
+}
+
+export interface RewriteItemRequest {
+  question: string
+  answer: string
+  instruction: string
+  model?: string
+}
+
+export interface RewriteItemResponse {
+  question: string
+  answer: string
+}
+
+export async function rewriteQAItem(req: RewriteItemRequest): Promise<RewriteItemResponse> {
+  const token = localStorage.getItem(TOKEN_KEY)
+  const res = await fetch(`${API_BASE}/doc-refiner/rewrite-item`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(req),
+  })
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`
+    try {
+      const body = (await res.json()) as { detail?: unknown }
+      if (typeof body.detail === 'string') detail = body.detail
+    } catch { /* ignore */ }
+    throw new ApiError(detail || '改寫失敗', res.status, detail)
+  }
+  return res.json() as Promise<RewriteItemResponse>
 }
 
 export async function exportDocument(req: ExportRequest): Promise<Blob> {

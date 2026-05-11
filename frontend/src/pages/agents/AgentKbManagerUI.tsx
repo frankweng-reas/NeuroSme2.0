@@ -90,20 +90,17 @@ export default function AgentKbManagerUI({ agent }: Props) {
     try { return localStorage.getItem('kb-section-company') === 'open' } catch { return false }
   })
 
-  const [creatingKb, setCreatingKb] = useState(false)
-  const [newKbName, setNewKbName] = useState('')
-  const [newKbModel, setNewKbModel] = useState('')
-  const [newKbSaving, setNewKbSaving] = useState(false)
-  const newKbInputRef = useRef<HTMLInputElement>(null)
+  const [creatingKbModal, setCreatingKbModal] = useState(false)
 
   const [deleteKbTarget, setDeleteKbTarget] = useState<KmKnowledgeBase | null>(null)
 
-  // KB 設定 Modal
+  // KB 設定 Modal（新增 & 編輯共用）
   const [settingsKb, setSettingsKb] = useState<KmKnowledgeBase | null>(null)
   const [settingsName, setSettingsName] = useState('')
   const [settingsModel, setSettingsModel] = useState('')
   const [settingsPrompt, setSettingsPrompt] = useState('')
   const [settingsScope, setSettingsScope] = useState<KbScope>('personal')
+  const [settingsAnswerMode, setSettingsAnswerMode] = useState<'rag' | 'direct'>('rag')
   const [settingsSaving, setSettingsSaving] = useState(false)
 
   const loadKbs = useCallback(() => {
@@ -128,24 +125,21 @@ export default function AgentKbManagerUI({ agent }: Props) {
     return () => document.removeEventListener('mousedown', handler)
   }, [kbMenuId])
 
-  useEffect(() => { if (creatingKb) newKbInputRef.current?.focus() }, [creatingKb])
+  useEffect(() => { if (creatingKbModal) {} }, [creatingKbModal])
 
-  const handleCreateKb = async () => {
-    const name = newKbName.trim()
-    if (!name) return
-    setNewKbSaving(true)
-    try {
-      const kb = await createKnowledgeBase({ name, model_name: newKbModel })
-      setKbs((prev) => [...prev, kb])
-      setSelectedKbId(kb.id)
-      setCreatingKb(false)
-      setNewKbName('')
-      setNewKbModel('')
-    } catch (err) {
-      setErrorModal({ title: '建立知識庫失敗', message: err instanceof Error ? err.message : '建立失敗' })
-    } finally {
-      setNewKbSaving(false)
-    }
+  const openCreateKbModal = () => {
+    setSettingsKb(null)
+    setSettingsName('')
+    setSettingsModel('')
+    setSettingsPrompt('')
+    setSettingsScope('personal')
+    setSettingsAnswerMode('rag')
+    setCreatingKbModal(true)
+  }
+
+  const closeSettingsModal = () => {
+    setSettingsKb(null)
+    setCreatingKbModal(false)
   }
 
   const handleDeleteKb = async () => {
@@ -165,21 +159,37 @@ export default function AgentKbManagerUI({ agent }: Props) {
   }
 
   const handleSaveSettings = async () => {
-    if (!settingsKb) return
     if (!settingsName.trim()) return
     setSettingsSaving(true)
     try {
-      const updated = await updateKnowledgeBase(settingsKb.id, {
-        name: settingsName.trim(),
-        model_name: settingsModel,
-        system_prompt: settingsPrompt,
-        scope: settingsScope,
-      })
-      setKbs((prev) => prev.map((kb) => kb.id === updated.id ? updated : kb))
-      setSettingsKb(null)
-      showToast('設定已儲存')
+      if (creatingKbModal) {
+        // 新增模式
+        const kb = await createKnowledgeBase({
+          name: settingsName.trim(),
+          model_name: settingsModel,
+          answer_mode: settingsAnswerMode,
+          scope: settingsScope,
+          system_prompt: settingsPrompt,
+        })
+        setKbs((prev) => [...prev, kb])
+        setSelectedKbId(kb.id)
+        setCreatingKbModal(false)
+        showToast('知識庫已建立')
+      } else {
+        if (!settingsKb) return
+        const updated = await updateKnowledgeBase(settingsKb.id, {
+          name: settingsName.trim(),
+          model_name: settingsModel,
+          system_prompt: settingsPrompt,
+          scope: settingsScope,
+          answer_mode: settingsAnswerMode,
+        })
+        setKbs((prev) => prev.map((kb) => kb.id === updated.id ? updated : kb))
+        setSettingsKb(null)
+        showToast('設定已儲存')
+      }
     } catch (err) {
-      setErrorModal({ title: '儲存設定失敗', message: err instanceof Error ? err.message : '儲存失敗' })
+      setErrorModal({ title: creatingKbModal ? '建立知識庫失敗' : '儲存設定失敗', message: err instanceof Error ? err.message : '操作失敗' })
     } finally {
       setSettingsSaving(false)
     }
@@ -227,6 +237,9 @@ export default function AgentKbManagerUI({ agent }: Props) {
   useEffect(() => {
     if (selectedKbId != null) {
       loadDocs(selectedKbId)
+      // direct 模式知識庫自動鎖定 faq 文件類型
+      const kb = kbs.find((k) => k.id === selectedKbId)
+      if (kb?.answer_mode === 'direct') setUploadDocType('faq')
       // 嘗試復原舊 thread；沒有則建新的
       const savedThreadId = localStorage.getItem(threadStorageKey(selectedKbId))
       if (savedThreadId) {
@@ -458,6 +471,11 @@ export default function AgentKbManagerUI({ agent }: Props) {
               <div>
                 <p className="mb-1 text-base font-semibold text-gray-700">文件類型</p>
                 <p className="mb-3 text-base text-gray-400">選擇適合類型可提升搜尋準確度</p>
+                {selectedKb?.answer_mode === 'direct' && (
+                  <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-base text-amber-700">
+                    精確直答模式只支援 FAQ 問答集類型
+                  </p>
+                )}
                 <div className="grid grid-cols-2 gap-3">
                   {([
                     { value: 'article',   emoji: '📄', label: '一般文章',   sub: '說明文件、公告' },
@@ -465,9 +483,13 @@ export default function AgentKbManagerUI({ agent }: Props) {
                     { value: 'spec',      emoji: '🔧', label: '技術規格',   sub: '參數表、Datasheet' },
                     { value: 'policy',    emoji: '📋', label: '政策 / 條款', sub: '合約、規章' },
                     { value: 'reference', emoji: '📑', label: '參考資料',   sub: '菜單、價目表、術語表' },
-                  ] as const).map(({ value, emoji, label, sub }) => (
-                    <button key={value} type="button" disabled={uploading} onClick={() => setUploadDocType(value)}
-                      className={`flex items-start gap-3 rounded-xl border-2 px-4 py-3 text-left transition-all disabled:opacity-60 ${uploadDocType === value ? 'border-sky-400 bg-sky-50 ring-2 ring-sky-200' : 'border-gray-200 bg-gray-50 hover:border-sky-200'}`}>
+                  ] as const).map(({ value, emoji, label, sub }) => {
+                    const isDirectLocked = selectedKb?.answer_mode === 'direct' && value !== 'faq'
+                    return (
+                    <button key={value} type="button"
+                      disabled={uploading || isDirectLocked}
+                      onClick={() => !isDirectLocked && setUploadDocType(value)}
+                      className={`flex items-start gap-3 rounded-xl border-2 px-4 py-3 text-left transition-all ${isDirectLocked ? 'cursor-not-allowed opacity-30' : 'disabled:opacity-60'} ${uploadDocType === value ? 'border-sky-400 bg-sky-50 ring-2 ring-sky-200' : 'border-gray-200 bg-gray-50 hover:border-sky-200'}`}>
                       <span className="mt-0.5 text-2xl leading-none">{emoji}</span>
                       <div>
                         <p className={`text-base font-medium ${uploadDocType === value ? 'text-sky-700' : 'text-gray-800'}`}>{label}</p>
@@ -475,7 +497,8 @@ export default function AgentKbManagerUI({ agent }: Props) {
                       </div>
                       {uploadDocType === value && <Check className="ml-auto mt-0.5 h-4 w-4 shrink-0 text-sky-500" />}
                     </button>
-                  ))}
+                    )
+                  })}
                 </div>
               </div>
               {uploading && (
@@ -500,12 +523,12 @@ export default function AgentKbManagerUI({ agent }: Props) {
       )}
 
       {/* KB 設定 Modal */}
-      {settingsKb && (
+      {(settingsKb || creatingKbModal) && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/45 p-4">
           <div className="flex w-full max-w-2xl flex-col rounded-xl border border-gray-200 bg-white shadow-xl max-h-[90vh]">
             <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
-              <h2 className="text-base font-semibold text-gray-900">知識庫設定</h2>
-              <button type="button" onClick={() => setSettingsKb(null)} className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100">
+              <h2 className="text-base font-semibold text-gray-900">{creatingKbModal ? '新增知識庫' : '知識庫設定'}</h2>
+              <button type="button" onClick={closeSettingsModal} className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100">
                 <X className="h-4 w-4" />
               </button>
             </div>
@@ -550,6 +573,27 @@ export default function AgentKbManagerUI({ agent }: Props) {
                 </div>
               </div>
               <div>
+                <label className="mb-1.5 block text-base font-medium text-gray-700">回答模式</label>
+                <p className="mb-2 text-base text-gray-400">FAQ 模式會直接回傳原文答案，不經 AI 改寫，建議搭配 Doc Refiner 整理的 Q&A 內容</p>
+                <div className="flex gap-3">
+                  {([
+                    { value: 'rag', label: '✨ AI 整合回答', sub: '整合多份文件，彈性回答' },
+                    { value: 'direct', label: '🎯 精確直答', sub: '直接回傳原文，100% 忠實' },
+                  ] as const).map(({ value, label, sub }) => (
+                    <button key={value} type="button"
+                      onClick={() => setSettingsAnswerMode(value)}
+                      className={`flex flex-1 flex-col items-start rounded-xl border-2 px-4 py-3 text-left transition-all ${
+                        settingsAnswerMode === value
+                          ? 'border-sky-400 bg-sky-50 ring-2 ring-sky-200'
+                          : 'border-gray-200 bg-gray-50 hover:border-sky-200'
+                      }`}>
+                      <span className={`text-base font-medium ${settingsAnswerMode === value ? 'text-sky-700' : 'text-gray-800'}`}>{label}</span>
+                      <span className="text-base text-gray-400">{sub}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
                 <label className="mb-1.5 block text-base font-medium text-gray-700">
                   自訂系統提示詞<span className="ml-1 font-normal text-gray-400">（選填）</span>
                 </label>
@@ -559,11 +603,11 @@ export default function AgentKbManagerUI({ agent }: Props) {
               </div>
             </div>
             <div className="flex justify-end gap-2 border-t border-gray-100 px-5 py-4">
-              <button type="button" onClick={() => setSettingsKb(null)}
+              <button type="button" onClick={closeSettingsModal}
                 className="rounded-lg border border-gray-300 px-4 py-2 text-base text-gray-700 hover:bg-gray-50">取消</button>
-              <button type="button" onClick={() => void handleSaveSettings()} disabled={settingsSaving}
+              <button type="button" onClick={() => void handleSaveSettings()} disabled={settingsSaving || !settingsName.trim()}
                 className="flex items-center gap-1.5 rounded-lg bg-sky-600 px-4 py-2 text-base font-medium text-white hover:bg-sky-700 disabled:opacity-60">
-                {settingsSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}儲存
+                {settingsSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{creatingKbModal ? '建立' : '儲存'}
               </button>
             </div>
           </div>
@@ -614,7 +658,7 @@ export default function AgentKbManagerUI({ agent }: Props) {
                   <span className="text-lg font-semibold text-white">知識庫</span>
                 </div>
                 <div className="flex items-center gap-0.5">
-                  <button type="button" onClick={() => { setCreatingKb(true); setKbMenuId(null) }}
+                  <button type="button" onClick={() => { openCreateKbModal(); setKbMenuId(null) }}
                     className="rounded-lg p-1.5 text-white/70 hover:bg-white/15 hover:text-white" title="新增知識庫">
                     <Plus className="h-4 w-4" />
                   </button>
@@ -629,28 +673,6 @@ export default function AgentKbManagerUI({ agent }: Props) {
 
           {!sidebarCollapsed && (
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-              {creatingKb && (
-                <div className="shrink-0 border-b border-white/10 px-3 py-2 space-y-1.5">
-                  <input ref={newKbInputRef} value={newKbName} onChange={(e) => setNewKbName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.nativeEvent.isComposing) return
-                      if (e.key === 'Enter') void handleCreateKb()
-                      if (e.key === 'Escape') { setCreatingKb(false); setNewKbName(''); setNewKbModel('') }
-                    }}
-                    placeholder="知識庫名稱…"
-                    className="w-full rounded-md bg-white/15 px-2 py-1.5 text-lg text-white placeholder-white/40 outline-none focus:bg-white/20" maxLength={100} />
-                  <LLMModelSelect value={newKbModel} onChange={setNewKbModel} label="" compact labelPosition="stacked"
-                    selectClassName="w-full rounded-md border border-white/20 bg-white/10 px-2 py-1.5 text-lg text-white focus:outline-none focus:border-white/40" />
-                  <div className="flex gap-1.5">
-                    <button type="button" onClick={() => void handleCreateKb()} disabled={newKbSaving || !newKbName.trim()}
-                      className="flex flex-1 items-center justify-center gap-1 rounded-md bg-sky-500/40 py-1 text-lg font-medium text-white hover:bg-sky-500/60 disabled:opacity-50">
-                      {newKbSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}建立
-                    </button>
-                    <button type="button" onClick={() => { setCreatingKb(false); setNewKbName(''); setNewKbModel('') }}
-                      className="rounded-md px-2 py-1 text-lg text-white/60 hover:bg-white/10 hover:text-white">取消</button>
-                  </div>
-                </div>
-              )}
               <div className="min-h-0 flex-1 overflow-y-auto py-1.5">
                 {kbsLoading ? (
                   <div className="flex justify-center py-6"><Loader2 className="h-4 w-4 animate-spin text-white/50" /></div>
@@ -681,7 +703,7 @@ export default function AgentKbManagerUI({ agent }: Props) {
                       </button>
                       {kbMenuId === kb.id && (
                         <div className="absolute right-0 top-full z-20 mt-0.5 w-24 overflow-hidden rounded-lg border border-white/20 bg-[#1a3a52] shadow-xl">
-                          <button type="button" onClick={() => { setSettingsKb(kb); setSettingsName(kb.name); setSettingsModel(kb.model_name ?? ''); setSettingsPrompt(kb.system_prompt ?? ''); setSettingsScope(kb.scope ?? 'personal'); setKbMenuId(null) }}
+                          <button type="button" onClick={() => { setSettingsKb(kb); setSettingsName(kb.name); setSettingsModel(kb.model_name ?? ''); setSettingsPrompt(kb.system_prompt ?? ''); setSettingsScope(kb.scope ?? 'personal'); setSettingsAnswerMode(kb.answer_mode ?? 'rag'); setKbMenuId(null) }}
                             className="flex w-full items-center gap-2 px-3 py-2 text-left text-lg text-white/80 hover:bg-white/10 hover:text-white">
                             <Settings className="h-3 w-3" />設定
                           </button>

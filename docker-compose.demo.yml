@@ -1,0 +1,47 @@
+services:
+  demo-backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      # 覆寫 127.0.0.1 → host-gateway，讓容器內可存取 host 上的 PG 與 LocalAuth
+      DATABASE_URL: "postgresql://neurosme:neurosme_secret@host.docker.internal:5434/neurosme2"
+      LOCALAUTH_ADMIN_URL: "http://host.docker.internal:4000"
+      CORS_ORIGINS: '["https://ee.neurosme.ai:4443"]'
+    volumes:
+      # 與 dev 共用同一份 data（stored_files / duckdb）
+      - ./backend/data:/app/data
+      # 與 dev 共用 backend config（system prompts 等）
+      - ./backend/config:/app/config:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - demo-net
+
+  demo-frontend:
+    build:
+      context: ./frontend
+      # 靜態檔在 build 時 COPY 進 image，與 host dist/ 完全隔離
+      args:
+        VITE_APP_NAME: NeuroSme
+        VITE_AUTH_ALLOW_REGISTER: "true"
+        VITE_AUTH_ALLOW_FORGOT_PASSWORD: "true"
+    restart: unless-stopped
+    ports:
+      - "4443:4443"
+    volumes:
+      # 只 override nginx config（加入 SSL + API proxy），靜態檔已在 image 內
+      - ./nginx.demo.conf:/etc/nginx/conf.d/default.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - demo-backend
+    networks:
+      - demo-net
+
+networks:
+  demo-net:
+    driver: bridge

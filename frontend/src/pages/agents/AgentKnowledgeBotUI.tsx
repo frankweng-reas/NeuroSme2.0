@@ -600,7 +600,6 @@ export default function AgentKnowledgeBotUI({ agent }: Props) {
   }
 
   const selectedKb = kbs.find((kb) => kb.id === selectedKbId) ?? null
-  const readyCount = docs.filter((d) => d.status === 'ready').length
 
   // ─────────────────────────────────────────────────────────────────────────
   return (

@@ -177,7 +177,6 @@ export default function AdminUserPermissions() {
   const selectedUser = users.find((u) => u.id === selectedUserId)
   const isOnlyAdmin = selectedUser?.role === 'admin' && users.filter((u) => u.role === 'admin').length <= 1
   const isCheckedModel = (modelValue: string) => allowedModels === null || allowedModels.has(modelValue)
-  const inheritAllModels = allowedModels === null
 
   return (
     <div className="flex h-full min-h-0 flex-col">
