@@ -5,6 +5,7 @@ export type ApiKeyType = 'bot' | 'voice' | 'general'
 export interface ApiKey {
   id: number
   name: string
+  label: string | null
   key_prefix: string
   is_active: boolean
   bot_id: number | null
@@ -38,10 +39,11 @@ export async function createApiKey(
   name: string,
   botId?: number,
   keyType: ApiKeyType = 'bot',
+  label?: string,
 ): Promise<ApiKeyCreateResponse> {
   return apiFetch<ApiKeyCreateResponse>('/api-keys', {
     method: 'POST',
-    body: JSON.stringify({ name, bot_id: botId ?? null, key_type: keyType }),
+    body: JSON.stringify({ name, bot_id: botId ?? null, key_type: keyType, label: label ?? null }),
   })
 }
 

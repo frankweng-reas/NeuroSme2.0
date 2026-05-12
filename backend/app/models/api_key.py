@@ -13,6 +13,7 @@ class ApiKey(Base):
     bot_id = Column(Integer, ForeignKey("km_bots.id", ondelete="SET NULL"), nullable=True, index=True)
     key_type = Column(String(20), nullable=False, default="bot")  # 'bot' | 'voice' | 'general'
     name = Column(String(100), nullable=False)
+    label = Column(String(100), nullable=True)  # 用途備註，例如 'LINE', 'FB Messenger'
     key_prefix = Column(String(12), nullable=False)
     key_hash = Column(String(64), nullable=False, unique=True, index=True)
     is_active = Column(Boolean, nullable=False, default=True)

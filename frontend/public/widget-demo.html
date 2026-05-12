@@ -3,60 +3,133 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Widget Demo</title>
+  <title>NeuroSme Widget Demo</title>
   <style>
+    * { box-sizing: border-box; }
     body {
-      font-family: sans-serif;
+      font-family: system-ui, -apple-system, sans-serif;
       margin: 0;
       padding: 48px 64px;
-      background: #f5f5f5;
-      color: #333;
+      background: #f0f4f8;
+      color: #1e293b;
+      min-height: 100vh;
     }
-    h1 { color: #1A3A52; margin-bottom: 8px; }
-    p  { color: #555; line-height: 1.7; max-width: 640px; }
+    h1 { color: #1A3A52; margin: 0 0 8px; font-size: 1.6rem; }
+    .subtitle { color: #64748b; font-size: 1rem; margin: 0 0 32px; }
     .card {
       background: white;
-      border-radius: 12px;
-      padding: 24px 32px;
-      max-width: 640px;
-      box-shadow: 0 1px 6px rgba(0,0,0,0.08);
-      margin-top: 24px;
+      border-radius: 16px;
+      padding: 28px 32px;
+      max-width: 680px;
+      box-shadow: 0 1px 8px rgba(0,0,0,0.08);
+      margin-bottom: 20px;
+    }
+    .card h2 { margin: 0 0 12px; color: #1A3A52; font-size: 1rem; }
+    .card p  { margin: 0; color: #475569; line-height: 1.7; font-size: 0.95rem; }
+    code {
+      background: #f1f5f9;
+      border-radius: 4px;
+      padding: 1px 6px;
+      font-size: 0.85em;
+      color: #0f172a;
+    }
+    .embed-snippet {
+      background: #0f172a;
+      color: #e2e8f0;
+      border-radius: 10px;
+      padding: 16px 20px;
+      font-size: 0.8rem;
+      line-height: 1.7;
+      overflow-x: auto;
+      white-space: pre;
+      margin-top: 12px;
+    }
+    .badge {
+      display: inline-block;
+      background: #dcfce7;
+      color: #166534;
+      border-radius: 999px;
+      padding: 2px 10px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      margin-left: 8px;
+      vertical-align: middle;
     }
   </style>
 </head>
 <body>
 
-  <h1>NeuroSme Widget Demo</h1>
-  <p>點擊右下角的 💬 按鈕開啟 AI 客服 Widget，點 ✕ 關閉。</p>
+  <h1>NeuroSme Widget Demo <span class="badge">LIVE</span></h1>
+  <p class="subtitle">點擊右下角的 💬 按鈕開啟 AI 客服 Widget，點 ✕ 關閉。</p>
 
   <div class="card">
-    <h2 style="margin-top:0;color:#1A3A52;">關於本 Demo</h2>
-    <p>Widget 以 <code>iframe</code> 嵌入，預設隱藏，點擊氣泡按鈕切換開關。<br/>
-    語言自動偵測頁面 <code>lang</code> 屬性，此頁為 <code>zh-TW</code>。</p>
+    <h2>關於本 Demo</h2>
+    <p>
+      Widget 以 <code>iframe</code> 嵌入頁面，預設隱藏，點擊右下角氣泡按鈕切換開關。<br />
+      語言自動偵測頁面 <code>lang</code> 屬性，此頁為 <code>zh-TW</code>。<br />
+      嵌入任何網站只需貼入以下程式碼片段。
+    </p>
+    <div class="embed-snippet" id="snippet"><!-- 載入中… --></div>
   </div>
 
-<!-- NeuroSme Widget -->
+  <div class="card">
+    <h2>技術規格</h2>
+    <p>
+      • iframe src：<code>/widget/bot/{token}?embed=1&lang=zh-TW</code><br />
+      • 建議尺寸：寬 380–420 px，高 580–640 px<br />
+      • 支援 HTTPS 跨網域嵌入（需後端 CORS 設定）
+    </p>
+  </div>
+
+<!-- NeuroSme Widget ─────────────────────── -->
 <button id="ns-btn" onclick="nsTgl()"
   style="position:fixed;bottom:24px;right:24px;z-index:10000;
          width:56px;height:56px;border-radius:50%;border:none;
          background:#1A3A52;color:#fff;font-size:26px;
-         cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.2)">💬</button>
-<iframe id="ns-ifr" width="400" height="600" frameborder="0"
+         cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.25);
+         transition:transform .15s">💬</button>
+
+<iframe id="ns-ifr" frameborder="0"
   style="display:none;position:fixed;bottom:88px;right:24px;z-index:9999;
-         border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,.18)"></iframe>
+         width:400px;height:600px;
+         border-radius:16px;box-shadow:0 8px 32px rgba(0,0,0,.18);
+         border:none"></iframe>
+
 <script>
-function nsTgl() {
-  var f = document.getElementById('ns-ifr');
-  var b = document.getElementById('ns-btn');
-  var o = f.style.display !== 'none';
-  if (!o && !f.src) {
-    var l = document.documentElement.lang || navigator.language || 'zh-TW';
-    f.src = 'https://ee.neurosme.ai/widget/901039442256462da34c3ffc1bfa6732?embed=1&lang=' + encodeURIComponent(l);
-  }
-  f.style.display = o ? 'none' : 'block';
-  b.innerHTML = o ? '💬' : '✕';
-}
+(function () {
+  var TOKEN = 'ba3e7898fceb4cf0b9152b1921abddec';
+  var BASE  = window.location.origin;                          // 同源 → 自動跟著 demo server
+  var LANG  = document.documentElement.lang || navigator.language || 'zh-TW';
+  var WIDGET_URL = BASE + '/widget/bot/' + TOKEN + '?embed=1&lang=' + encodeURIComponent(LANG);
+
+  // 填入 embed snippet
+  document.getElementById('snippet').textContent =
+    '<button id="ns-btn" onclick="nsTgl()">💬</button>\n' +
+    '<iframe id="ns-ifr" frameborder="0"\n' +
+    '  style="display:none;position:fixed;bottom:88px;right:24px;\n' +
+    '         width:400px;height:600px;border-radius:16px"></iframe>\n' +
+    '<script>\n' +
+    'function nsTgl() {\n' +
+    '  var f = document.getElementById(\'ns-ifr\');\n' +
+    '  var open = f.style.display !== \'none\';\n' +
+    '  if (!open && !f.src) f.src = \'' + WIDGET_URL + '\';\n' +
+    '  f.style.display = open ? \'none\' : \'block\';\n' +
+    '}\n' +
+    '<\/script>';
+
+  // 浮遊按鈕開關
+  window.nsTgl = function () {
+    var f = document.getElementById('ns-ifr');
+    var b = document.getElementById('ns-btn');
+    var open = f.style.display !== 'none';
+    if (!open && !f.src) f.src = WIDGET_URL;
+    f.style.display = open ? 'none' : 'block';
+    b.innerHTML  = open ? '💬' : '✕';
+    b.style.transform = open ? '' : 'rotate(0deg)';
+  };
+})();
 </script>
+<!-- ─────────────────────────────────────── -->
 
 </body>
 </html>

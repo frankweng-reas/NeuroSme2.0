@@ -36,11 +36,13 @@ class ApiKeyCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100, description="API Key 名稱，用於識別用途")
     bot_id: int | None = Field(None, description="綁定的 Bot ID；key_type='bot' 時必填")
     key_type: str = Field("bot", description="Key 用途類型：bot | voice | general")
+    label: str | None = Field(None, max_length=100, description="用途備註，例如 LINE、FB Messenger、官網")
 
 
 class ApiKeyResponse(BaseModel):
     id: int
     name: str
+    label: str | None
     key_prefix: str
     is_active: bool
     bot_id: int | None
@@ -81,6 +83,7 @@ def _to_response(key: ApiKey) -> ApiKeyResponse:
     return ApiKeyResponse(
         id=key.id,
         name=key.name,
+        label=key.label,
         key_prefix=key.key_prefix,
         is_active=key.is_active,
         bot_id=key.bot_id,
@@ -112,15 +115,10 @@ def create_api_key(
 
     key_type = body.key_type if body.key_type in KEY_TYPES else "bot"
 
-    # bot 類型必須綁定 bot_id；若綁定 Bot，先撤銷該 Bot 現有的所有 active Key
+    # bot 類型必須綁定 bot_id
     if key_type == "bot":
         if body.bot_id is None:
             raise HTTPException(status_code=422, detail="key_type='bot' 時必須提供 bot_id")
-        db.query(ApiKey).filter(
-            ApiKey.tenant_id == current.tenant_id,
-            ApiKey.bot_id == body.bot_id,
-            ApiKey.is_active == True,
-        ).update({"is_active": False})
 
     raw_key = "nsk_" + os.urandom(16).hex()
     key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
@@ -131,6 +129,7 @@ def create_api_key(
         bot_id=body.bot_id if key_type == "bot" else None,
         key_type=key_type,
         name=body.name,
+        label=body.label,
         key_prefix=key_prefix,
         key_hash=key_hash,
         is_active=True,

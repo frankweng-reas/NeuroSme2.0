@@ -9,6 +9,7 @@ import {
   BarChart2,
   Check,
   ChevronRight,
+  Copy,
   Loader2,
   MoreHorizontal,
   Plus,
@@ -19,10 +20,8 @@ import { chatCompletionsStream } from '@/api/chat'
 import {
   createBot,
   deleteBot,
-  generateBotToken,
   getBotQueryStats,
   listBots,
-  revokeBotToken,
   updateBot,
   type Bot as BotType,
   type BotKbItem,
@@ -47,9 +46,37 @@ import LLMModelSelect from '@/components/LLMModelSelect'
 import type { Agent, UserRole } from '@/types'
 import AgentKbBotApiKeys from './AgentKbBotApiKeys'
 
+// ── 嵌入碼產生器 ──────────────────────────────────────────────────────────────
+const makeEmbedCode = (origin: string, token: string, color: string) =>
+  [
+    `<!-- NeuroSme Bot Widget -->`,
+    `<button id="ns-btn" onclick="nsTgl()"`,
+    `  style="position:fixed;bottom:24px;right:24px;z-index:10000;`,
+    `         width:56px;height:56px;border-radius:50%;border:none;`,
+    `         background:${color};color:#fff;font-size:26px;`,
+    `         cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.2)">💬</button>`,
+    `<iframe id="ns-ifr" frameborder="0"`,
+    `  style="display:none;position:fixed;bottom:88px;right:24px;z-index:9999;`,
+    `         width:400px;height:600px;`,
+    `         border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,.18)"></iframe>`,
+    `<script>`,
+    `function nsTgl() {`,
+    `  var f = document.getElementById('ns-ifr');`,
+    `  var b = document.getElementById('ns-btn');`,
+    `  var o = f.style.display !== 'none';`,
+    `  if (!o && !f.src) f.src = '${origin}/widget/bot/${token}?embed=1';`,
+    `  f.style.display = o ? 'none' : 'block';`,
+    `  b.innerHTML = o ? '💬' : '✕';`,
+    `}`,
+    `<\/script>`,
+  ].join('\n')
+
+const makeIframeCode = (origin: string, token: string) =>
+  `<iframe\n  src="${origin}/widget/bot/${token}?embed=1"\n  style="width:400px;height:600px;border:none;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,.18)"\n  frameborder="0"\n></iframe>`
+
 interface Props { agent: Agent }
 
-const BOT_COLOR = '#0d3d35'
+const BOT_COLOR = '#343434'
 
 const threadStorageKey = (botId: number) => `kb-bot-thread-${botId}`
 
@@ -58,7 +85,6 @@ type RightTab = 'chat' | 'history' | 'api' | 'settings' | 'deploy' | 'stats'
 export default function AgentKbBotBuilderUI({ agent }: Props) {
   const [userRole, setUserRole] = useState<UserRole>('member')
   const canManage = userRole === 'admin' || userRole === 'super_admin' || userRole === 'manager'
-  const isAdmin = userRole === 'admin' || userRole === 'super_admin'
 
   useEffect(() => {
     getMe().then((me) => setUserRole(me.role as UserRole)).catch(() => {})
@@ -85,11 +111,13 @@ export default function AgentKbBotBuilderUI({ agent }: Props) {
   const [kbs, setKbs] = useState<KmKnowledgeBase[]>([])
 
   // ── 右欄 Tab ──────────────────────────────────────────────────────────────
-  const [rightTab, setRightTab] = useState<RightTab>('chat')
+  const [rightTab, setRightTab] = useState<RightTab>('settings')
 
   // ── Bot 設定欄位 ──────────────────────────────────────────────────────────
   const [settingsModel, setSettingsModel] = useState('')
   const [settingsPrompt, setSettingsPrompt] = useState('')
+  const [settingsFallbackEnabled, setSettingsFallbackEnabled] = useState(false)
+  const [settingsFallbackMessage, setSettingsFallbackMessage] = useState('')
   const [settingsWidgetTitle, setSettingsWidgetTitle] = useState('')
   const [settingsWidgetLogoUrl, setSettingsWidgetLogoUrl] = useState('')
   const [settingsWidgetColor, setSettingsWidgetColor] = useState('#1A3A52')
@@ -104,6 +132,15 @@ export default function AgentKbBotBuilderUI({ agent }: Props) {
   const [wSessionsLoading, setWSessionsLoading] = useState(false)
   const [wDetail, setWDetail] = useState<WidgetSessionDetail | null>(null)
   const [wDetailLoading, setWDetailLoading] = useState(false)
+  const [wCopied, setWCopied] = useState(false)
+
+  // ── 部署 tab：嵌入碼複製狀態 ─────────────────────────────────────────────
+  const [deployCopied, setDeployCopied] = useState<'url' | 'embed' | 'iframe' | null>(null)
+  const deployHandleCopy = (text: string, type: 'url' | 'embed' | 'iframe') => {
+    navigator.clipboard.writeText(text)
+    setDeployCopied(type)
+    setTimeout(() => setDeployCopied(null), 2000)
+  }
 
   // ── 查詢統計 ──────────────────────────────────────────────────────────────
   const [statsDays, setStatsDays] = useState<7 | 30 | 90>(30)
@@ -160,6 +197,8 @@ export default function AgentKbBotBuilderUI({ agent }: Props) {
     setSettingsName(selectedBot.name)
     setSettingsModel(selectedBot.model_name ?? '')
     setSettingsPrompt(selectedBot.system_prompt ?? '')
+    setSettingsFallbackEnabled(selectedBot.fallback_message_enabled ?? false)
+    setSettingsFallbackMessage(selectedBot.fallback_message ?? '')
     setSettingsWidgetTitle(selectedBot.widget_title ?? '')
     setSettingsWidgetLogoUrl(selectedBot.widget_logo_url ?? '')
     setSettingsWidgetColor(selectedBot.widget_color ?? '#1A3A52')
@@ -269,6 +308,8 @@ export default function AgentKbBotBuilderUI({ agent }: Props) {
         name: settingsName.trim() || selectedBot.name,
         model_name: settingsModel,
         system_prompt: settingsPrompt,
+        fallback_message: settingsFallbackMessage,
+        fallback_message_enabled: settingsFallbackEnabled,
         widget_title: settingsWidgetTitle,
         widget_logo_url: settingsWidgetLogoUrl || undefined,
         widget_color: settingsWidgetColor,
@@ -286,27 +327,7 @@ export default function AgentKbBotBuilderUI({ agent }: Props) {
     }
   }
 
-  const handleGenerateToken = async () => {
-    if (!selectedBot || !isAdmin) return
-    try {
-      const updated = await generateBotToken(selectedBot.id)
-      setBots((prev) => prev.map((b) => b.id === updated.id ? updated : b))
-      showToast('Widget Token 已產生')
-    } catch (err) {
-      setErrorModal({ title: '產生 Token 失敗', message: err instanceof Error ? err.message : '失敗' })
-    }
-  }
-
-  const handleRevokeToken = async () => {
-    if (!selectedBot || !isAdmin) return
-    try {
-      const updated = await revokeBotToken(selectedBot.id)
-      setBots((prev) => prev.map((b) => b.id === updated.id ? updated : b))
-      showToast('Widget Token 已停用')
-    } catch (err) {
-      setErrorModal({ title: '停用 Token 失敗', message: err instanceof Error ? err.message : '失敗' })
-    }
-  }
+  // ── Bot CRUD ──────────────────────────────────────────────────────────────
 
   // ── Chat ──────────────────────────────────────────────────────────────────
   const latestBotIdRef = useRef(selectedBotId)
@@ -439,7 +460,7 @@ export default function AgentKbBotBuilderUI({ agent }: Props) {
       <div className="mt-4 flex min-h-0 flex-1 gap-3 overflow-hidden">
 
         {/* ══ 左欄：Bot 列表 ═══════════════════════════════════════════════ */}
-        <div className={`flex shrink-0 flex-col overflow-hidden rounded-xl border border-gray-300/50 shadow-md transition-[width] duration-200 ${sidebarCollapsed ? 'w-12' : 'w-72'}`}
+        <div className={`flex shrink-0 flex-col overflow-hidden rounded-xl border border-gray-700 shadow-md transition-[width] duration-200 ${sidebarCollapsed ? 'w-12' : 'w-72'}`}
           style={{ backgroundColor: BOT_COLOR }}>
           <div className={`flex shrink-0 items-center justify-between border-b border-white/20 py-2.5 ${sidebarCollapsed ? 'px-2' : 'pl-4 pr-2'}`}>
             {sidebarCollapsed ? (
@@ -454,12 +475,10 @@ export default function AgentKbBotBuilderUI({ agent }: Props) {
                   <span className="text-lg font-semibold text-emerald-100">Bots</span>
                 </div>
                 <div className="flex items-center gap-0.5">
-                  {canManage && (
-                    <button type="button" onClick={() => { setCreatingBot(true); setBotMenuId(null) }}
+                  <button type="button" onClick={() => { setCreatingBot(true); setBotMenuId(null) }}
                       className="rounded-lg p-1.5 text-emerald-300/70 hover:bg-white/15 hover:text-emerald-100" title="新增 Bot">
                       <Plus className="h-4 w-4" />
                     </button>
-                  )}
                   <button type="button" onClick={() => setSidebarCollapsed(true)}
                     className="rounded-lg px-1 py-1 text-emerald-300/60 hover:bg-white/10 hover:text-emerald-100" title="折疊">
                     {'<<'}
@@ -497,28 +516,26 @@ export default function AgentKbBotBuilderUI({ agent }: Props) {
                 ) : bots.length === 0 ? (
                   <div className="px-4 py-6 text-center">
                     <p className="text-lg leading-relaxed text-emerald-200/40">
-                      尚無 Bot{canManage && <> ，點擊 <Plus className="inline h-3 w-3" /> 新增</>}
+                      尚無 Bot{<> ，點擊 <Plus className="inline h-3 w-3" /> 新增</>}
                     </p>
                   </div>
                 ) : (
                   <ul className="space-y-0.5 px-2">
                     {bots.map((bot) => (
                       <li key={bot.id} className="relative" ref={botMenuId === bot.id ? botMenuRef : undefined}>
-                        {(
-                          <button type="button" onClick={() => { setSelectedBotId(bot.id); setBotMenuId(null) }}
+                        <button type="button" onClick={() => { setSelectedBotId(bot.id); setBotMenuId(null) }}
                             className={`group flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-lg transition-colors ${
                               selectedBotId === bot.id ? 'bg-emerald-400/25 text-emerald-50' : 'text-emerald-100/75 hover:bg-white/10 hover:text-emerald-100'
                             }`}>
                             <span className="min-w-0 flex-1 truncate font-medium">{bot.name}</span>
                             {!bot.is_active && <span className="shrink-0 rounded bg-black/20 px-1 text-lg text-emerald-300/60">停用</span>}
-                            {canManage && (
+                            {
                               <button type="button" onClick={(e) => { e.stopPropagation(); setBotMenuId(botMenuId === bot.id ? null : bot.id) }}
                                 className="shrink-0 rounded p-0.5 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-white/20">
                                 <MoreHorizontal className="h-3.5 w-3.5" />
                               </button>
-                            )}
+                            }
                           </button>
-                        )}
                         {botMenuId === bot.id && (
                           <div className="absolute right-0 top-full z-20 mt-0.5 w-32 overflow-hidden rounded-lg border border-white/20 shadow-xl" style={{ backgroundColor: BOT_COLOR }}>
                             <button type="button" onClick={() => { setSelectedBotId(bot.id); setRightTab('settings'); setBotMenuId(null) }}
@@ -542,30 +559,37 @@ export default function AgentKbBotBuilderUI({ agent }: Props) {
 
         {/* ══ 右欄 ════════════════════════════════════════════════════════ */}
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-gray-200/80 bg-white shadow-md ring-1 ring-gray-200/50">
-          <div className="flex shrink-0 items-center gap-0 border-b-2 border-gray-200 bg-white px-4">
+          <div className="flex shrink-0 items-center gap-1 border-b border-gray-700 bg-[#343434] px-3 py-2">
             {(
               [
-                { key: 'chat',     label: '測試 Chat' },
-                { key: 'history',  label: '訪客對話' },
-                { key: 'api',      label: 'API 整合' },
                 { key: 'settings', label: 'Bot 設定' },
                 { key: 'deploy',   label: '部署' },
+                { key: 'chat',     label: '測試 Chat' },
+                { key: 'divider2', label: '' },
                 { key: 'stats',    label: '查詢統計' },
+                { key: 'history',  label: '訪客對話' },
+                { key: 'divider',  label: '' },
+                { key: 'api',      label: 'API 整合' },
               ] as const
-            ).map(({ key, label }) => (
-              <button
-                key={key}
-                type="button"
-                onClick={() => setRightTab(key)}
-                className={`relative px-4 py-3 text-lg font-semibold transition-colors focus:outline-none ${
-                  rightTab === key
-                    ? 'text-emerald-700 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:rounded-full after:bg-emerald-600'
-                    : 'text-gray-400 hover:text-gray-600'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
+            ).map(({ key, label }) => {
+              if (key === 'divider' || key === 'divider2') {
+                return <div key="divider" className="mx-1 h-5 w-px bg-gray-600" />
+              }
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setRightTab(key as RightTab)}
+                  className={`rounded-lg px-3 py-1.5 text-lg font-medium transition-all focus:outline-none ${
+                    rightTab === key
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'text-gray-300 hover:bg-white/10 hover:text-white'
+                  }`}
+                >
+                  {label}
+                </button>
+              )
+            })}
 
 
             {rightTab === 'chat' && selectedBot && (
@@ -673,10 +697,39 @@ export default function AgentKbBotBuilderUI({ agent }: Props) {
                 ) : (
                   <>
                     <div className="mb-4 rounded-xl border border-gray-100 bg-gray-50 p-3 text-base text-gray-600">
-                      <p><span className="font-medium">訪客：</span>{wDetail.visitor_name || '匿名'}</p>
-                      {wDetail.visitor_email && <p><span className="font-medium">Email：</span>{wDetail.visitor_email}</p>}
-                      {wDetail.visitor_phone && <p><span className="font-medium">電話：</span>{wDetail.visitor_phone}</p>}
-                      <p><span className="font-medium">開始時間：</span>{new Date(wDetail.created_at).toLocaleString('zh-TW')}</p>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="space-y-0.5">
+                          <p><span className="font-medium">訪客：</span>{wDetail.visitor_name || '匿名'}</p>
+                          {wDetail.visitor_email && <p><span className="font-medium">Email：</span>{wDetail.visitor_email}</p>}
+                          {wDetail.visitor_phone && <p><span className="font-medium">電話：</span>{wDetail.visitor_phone}</p>}
+                          <p><span className="font-medium">開始時間：</span>{new Date(wDetail.created_at).toLocaleString('zh-TW')}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const lines = wDetail.messages.map((m) =>
+                              `${m.role === 'user' ? '訪客' : 'Bot'}：${m.content}`
+                            )
+                            const text = [
+                              `【訪客對話】${wDetail.visitor_name || '匿名'}`,
+                              `時間：${new Date(wDetail.created_at).toLocaleString('zh-TW')}`,
+                              '',
+                              ...lines,
+                            ].join('\n')
+                            navigator.clipboard.writeText(text).then(() => {
+                              setWCopied(true)
+                              setTimeout(() => setWCopied(false), 2000)
+                            })
+                          }}
+                          className="shrink-0 flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-base text-gray-500 hover:bg-gray-100 transition-colors"
+                          title="複製整段對話"
+                        >
+                          {wCopied
+                            ? <><Check className="h-3.5 w-3.5 text-emerald-500" /><span className="text-emerald-600">已複製</span></>
+                            : <><Copy className="h-3.5 w-3.5" />複製對話</>
+                          }
+                        </button>
+                      </div>
                     </div>
                     <ul className="space-y-3">
                       {wDetail.messages.map((m) => (
@@ -714,7 +767,7 @@ export default function AgentKbBotBuilderUI({ agent }: Props) {
                       type="text"
                       value={settingsName}
                       onChange={(e) => setSettingsName(e.target.value)}
-                      disabled={!canManage}
+                      
                       maxLength={100}
                       className="w-full rounded-lg border border-gray-300 px-3 py-2 text-base text-gray-800 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:opacity-60"
                     />
@@ -738,7 +791,7 @@ export default function AgentKbBotBuilderUI({ agent }: Props) {
                         const checked = settingsKbIds.some((item) => item.knowledge_base_id === kb.id)
                         return (
                           <label key={kb.id} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-gray-50">
-                            <input type="checkbox" checked={checked} onChange={() => toggleKb(kb.id)} disabled={!canManage}
+                            <input type="checkbox" checked={checked} onChange={() => toggleKb(kb.id)} 
                               className="h-4 w-4 shrink-0 cursor-pointer accent-emerald-600" />
                             <span className="flex-1 text-base text-gray-700">{kb.name}</span>
                             <span className="text-base text-gray-400">{kb.ready_count} 份</span>
@@ -753,12 +806,45 @@ export default function AgentKbBotBuilderUI({ agent }: Props) {
                     <label className="mb-1.5 block text-base font-medium text-gray-700">
                       自訂系統提示詞<span className="ml-1 font-normal text-gray-400">（選填）</span>
                     </label>
-                    <textarea value={settingsPrompt} onChange={(e) => setSettingsPrompt(e.target.value)} disabled={!canManage} rows={8}
+                    <textarea value={settingsPrompt} onChange={(e) => setSettingsPrompt(e.target.value)} rows={8}
                       placeholder="你是 XX 公司的客服助手，請根據知識庫文件回答問題…"
                       className="w-full rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 font-mono text-base text-gray-800 placeholder-amber-300 focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400 disabled:opacity-60" />
                   </div>
 
-                  {canManage && (
+                  {/* 找不到答案時的回覆 */}
+                  <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-4">
+                    <div className="mb-3 flex items-center justify-between">
+                      <div>
+                        <p className="text-base font-medium text-gray-700">找不到答案時的回覆</p>
+                        <p className="mt-0.5 text-sm text-gray-400">
+                          啟用後，當 Bot 在知識庫中找不到相關資訊時，將回覆下方設定的內容。
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSettingsFallbackEnabled((v) => !v)}
+                        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none ${
+                          settingsFallbackEnabled ? 'bg-emerald-500' : 'bg-gray-300'
+                        }`}
+                        role="switch"
+                        aria-checked={settingsFallbackEnabled}
+                      >
+                        <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+                          settingsFallbackEnabled ? 'translate-x-5' : 'translate-x-0'
+                        }`} />
+                      </button>
+                    </div>
+                    <textarea
+                      value={settingsFallbackMessage}
+                      onChange={(e) => setSettingsFallbackMessage(e.target.value)}
+                      disabled={!settingsFallbackEnabled}
+                      rows={4}
+                      placeholder={`很抱歉，目前無法回答您的問題。\n如需協助，請聯繫客服：service@company.com`}
+                      className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-base text-gray-800 placeholder-gray-300 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:opacity-50"
+                    />
+                  </div>
+
+                  {
                     <div className="flex justify-end">
                       <button type="button" onClick={() => void handleSaveSettings()} disabled={settingsSaving}
                         className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-base font-medium text-white hover:opacity-90 disabled:opacity-60"
@@ -766,7 +852,7 @@ export default function AgentKbBotBuilderUI({ agent }: Props) {
                         {settingsSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}儲存 Bot 設定
                       </button>
                     </div>
-                  )}
+                  }
                 </>
               )}
             </div>
@@ -791,7 +877,7 @@ export default function AgentKbBotBuilderUI({ agent }: Props) {
                           暫停後 Widget、API、測試 Chat 均拒絕服務；恢復後 Widget URL 不變
                         </p>
                       </div>
-                      {canManage ? (
+                      {true ? (
                         <button
                           type="button"
                           onClick={() => void handleToggleActive()}
@@ -800,8 +886,8 @@ export default function AgentKbBotBuilderUI({ agent }: Props) {
                           <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${selectedBot.is_active ? 'translate-x-6' : 'translate-x-1'}`} />
                         </button>
                       ) : (
-                        <span className={`rounded-full px-3 py-1 text-base font-medium ${selectedBot.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>
-                          {selectedBot.is_active ? '運行中' : '已暫停'}
+                        <span className={`rounded-full px-3 py-1 text-base font-medium ${selectedBot!.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>
+                          {selectedBot!.is_active ? '運行中' : '已暫停'}
                         </span>
                       )}
                     </div>
@@ -810,38 +896,79 @@ export default function AgentKbBotBuilderUI({ agent }: Props) {
                   {/* ── 嵌入式 Widget ── */}
                   <div className="rounded-xl border border-gray-200 px-4 py-4">
                     <p className="mb-1 text-base font-semibold text-gray-700">嵌入式 Widget</p>
-                    <p className="mb-3 text-base text-gray-400">產生 Token 後可將 Bot Widget 嵌入到任何網頁</p>
-                    {selectedBot.public_token ? (
-                      <div className="space-y-3">
-                        <div className="flex items-center gap-2">
-                          <input readOnly value={`${window.location.origin}/widget/bot/${selectedBot.public_token}`}
-                            className="flex-1 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-base font-mono text-gray-700 focus:outline-none"
-                            onClick={(e) => (e.target as HTMLInputElement).select()} />
-                          <button type="button" onClick={() => {
-                            navigator.clipboard.writeText(`${window.location.origin}/widget/bot/${selectedBot.public_token}`)
-                            showToast('連結已複製')
-                          }} className="shrink-0 rounded-lg border border-gray-300 px-3 py-2 text-base text-gray-700 hover:bg-gray-50">複製</button>
-                        </div>
-                        {isAdmin && (
-                          <div className="rounded-lg border border-red-100 bg-red-50 px-3 py-2">
-                            <p className="text-base text-red-700 font-medium">撤銷 Widget Token</p>
-                            <p className="mt-0.5 text-base text-red-500">撤銷後舊 Widget 連結永久失效，需重新產生新 Token（URL 會改變）</p>
-                            <button type="button" onClick={() => void handleRevokeToken()} className="mt-2 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-base text-red-600 hover:bg-red-50">確認撤銷</button>
+                    {selectedBot.public_token ? (() => {
+                      const origin = window.location.origin
+                      const token = selectedBot.public_token!
+                      const color = selectedBot.widget_color || '#1A3A52'
+                      const widgetUrl = `${origin}/widget/bot/${token}`
+                      const embedCode = makeEmbedCode(origin, token, color)
+                      const iframeCode = makeIframeCode(origin, token)
+                      return (
+                        <div className="space-y-4">
+                          <p className="text-sm text-emerald-600 font-medium">✓ 已部署上線</p>
+
+                          {/* Widget 直接連結 */}
+                          <div>
+                            <p className="mb-1.5 text-sm font-medium text-gray-600">Widget 連結</p>
+                            <div className="flex items-center gap-2">
+                              <input readOnly value={widgetUrl}
+                                className="flex-1 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-mono text-gray-700 focus:outline-none"
+                                onClick={(e) => (e.target as HTMLInputElement).select()} />
+                              <button type="button"
+                                onClick={() => deployHandleCopy(widgetUrl, 'url')}
+                                className="shrink-0 flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                                {deployCopied === 'url' ? <Check className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4" />}
+                                {deployCopied === 'url' ? '已複製' : '複製'}
+                              </button>
+                            </div>
+                            <p className="mt-1 text-xs text-gray-400">可在新分頁開啟預覽；若要嵌入網站，請複製下方的嵌入碼（已含 <code className="bg-gray-100 px-0.5 rounded">?embed=1</code>）</p>
                           </div>
-                        )}
-                      </div>
-                    ) : (
-                      <div>
-                        <p className="mb-2 text-base text-gray-400">尚未產生 Widget Token</p>
-                        {isAdmin ? (
-                          <button type="button" onClick={() => void handleGenerateToken()}
-                            className="rounded-lg px-4 py-2 text-base font-medium text-white hover:opacity-90"
-                            style={{ backgroundColor: BOT_COLOR }}>
-                            產生 Widget Token
-                          </button>
-                        ) : (
-                          <p className="text-base text-gray-400">請聯繫系統管理員開通</p>
-                        )}
+
+                          {/* 浮動按鈕 Embed Code */}
+                          <div>
+                            <div className="mb-1.5 flex items-center justify-between">
+                              <div>
+                                <p className="text-sm font-medium text-gray-600">浮動按鈕嵌入碼</p>
+                                <p className="text-xs text-gray-400">貼入目標網頁 &lt;body&gt; 尾端，右下角顯示聊天按鈕</p>
+                              </div>
+                              <button type="button"
+                                onClick={() => deployHandleCopy(embedCode, 'embed')}
+                                className="flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50">
+                                {deployCopied === 'embed' ? <Check className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4" />}
+                                {deployCopied === 'embed' ? '已複製' : '複製'}
+                              </button>
+                            </div>
+                            <textarea readOnly value={embedCode} rows={6}
+                              className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 font-mono text-xs text-gray-700 focus:outline-none resize-none"
+                              onClick={(e) => (e.target as HTMLTextAreaElement).select()} />
+                          </div>
+
+                          {/* Pure iframe 嵌入碼 */}
+                          <div>
+                            <div className="mb-1.5 flex items-center justify-between">
+                              <div>
+                                <p className="text-sm font-medium text-gray-600">純 iframe 嵌入碼</p>
+                                <p className="text-xs text-gray-400">固定尺寸嵌入，自行控制位置與樣式</p>
+                              </div>
+                              <button type="button"
+                                onClick={() => deployHandleCopy(iframeCode, 'iframe')}
+                                className="flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50">
+                                {deployCopied === 'iframe' ? <Check className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4" />}
+                                {deployCopied === 'iframe' ? '已複製' : '複製'}
+                              </button>
+                            </div>
+                            <textarea readOnly value={iframeCode} rows={4}
+                              className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 font-mono text-xs text-gray-700 focus:outline-none resize-none"
+                              onClick={(e) => (e.target as HTMLTextAreaElement).select()} />
+                          </div>
+                        </div>
+                      )
+                    })() : (
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+                        <p className="text-base font-medium text-amber-700">尚未部署</p>
+                        <p className="mt-1 text-base text-amber-600">
+                          Widget Token 由系統管理員統一管理。請洽管理員至「後台設定 → Bot 部署管理」開通此 Bot 的對外部署。
+                        </p>
                       </div>
                     )}
                   </div>
@@ -864,7 +991,7 @@ export default function AgentKbBotBuilderUI({ agent }: Props) {
                         <div className="flex gap-2">
                           <label className="cursor-pointer rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-base text-gray-700 hover:bg-gray-50">
                             上傳圖片
-                            <input type="file" accept="image/*" className="hidden" disabled={!canManage}
+                            <input type="file" accept="image/*" className="hidden" 
                               onChange={(e) => {
                                 const file = e.target.files?.[0]
                                 if (!file) return
@@ -886,7 +1013,7 @@ export default function AgentKbBotBuilderUI({ agent }: Props) {
                     {/* 顯示名稱 */}
                     <div>
                       <label className="mb-1 block text-base font-medium text-gray-700">Widget 顯示名稱</label>
-                      <input type="text" value={settingsWidgetTitle} onChange={(e) => setSettingsWidgetTitle(e.target.value)} disabled={!canManage}
+                      <input type="text" value={settingsWidgetTitle} onChange={(e) => setSettingsWidgetTitle(e.target.value)} 
                         placeholder={selectedBot.name}
                         className="w-full rounded-lg border border-gray-300 px-3 py-2 text-base text-gray-800 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500" />
                     </div>
@@ -896,15 +1023,15 @@ export default function AgentKbBotBuilderUI({ agent }: Props) {
                       <div className="flex-1">
                         <label className="mb-1 block text-base font-medium text-gray-700">主色</label>
                         <div className="flex items-center gap-2">
-                          <input type="color" value={settingsWidgetColor} onChange={(e) => setSettingsWidgetColor(e.target.value)} disabled={!canManage}
+                          <input type="color" value={settingsWidgetColor} onChange={(e) => setSettingsWidgetColor(e.target.value)} 
                             className="h-9 w-12 cursor-pointer rounded border border-gray-300 p-0.5 disabled:opacity-60" />
-                          <input type="text" value={settingsWidgetColor} onChange={(e) => setSettingsWidgetColor(e.target.value)} disabled={!canManage}
+                          <input type="text" value={settingsWidgetColor} onChange={(e) => setSettingsWidgetColor(e.target.value)} 
                             className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-base text-gray-800 focus:border-emerald-500 focus:outline-none" />
                         </div>
                       </div>
                       <div className="w-36">
                         <label className="mb-1 block text-base font-medium text-gray-700">語言</label>
-                        <select value={settingsWidgetLang} onChange={(e) => setSettingsWidgetLang(e.target.value)} disabled={!canManage}
+                        <select value={settingsWidgetLang} onChange={(e) => setSettingsWidgetLang(e.target.value)} 
                           className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-base focus:border-emerald-500 focus:outline-none">
                           <option value="zh-TW">繁中</option>
                           <option value="zh-CN">簡中</option>
@@ -919,7 +1046,7 @@ export default function AgentKbBotBuilderUI({ agent }: Props) {
                       <label className="flex cursor-pointer items-center gap-2.5">
                         <input type="checkbox" checked={settingsWidgetVoiceEnabled}
                           onChange={(e) => setSettingsWidgetVoiceEnabled(e.target.checked)}
-                          disabled={!canManage}
+                          
                           className="h-4 w-4 rounded border-gray-300 accent-emerald-600" />
                         <span className="text-base font-medium text-gray-700">啟用語音</span>
                         <span className="text-base text-gray-400">（顯示麥克風按鈕）</span>
@@ -932,7 +1059,7 @@ export default function AgentKbBotBuilderUI({ agent }: Props) {
                           </label>
                           <textarea value={settingsWidgetVoicePrompt}
                             onChange={(e) => setSettingsWidgetVoicePrompt(e.target.value)}
-                            disabled={!canManage}
+                            
                             rows={3}
                             placeholder="例：常見詞彙：專有名詞A、產品名稱B..."
                             className="w-full resize-y rounded-lg border border-gray-300 px-3 py-2 text-base text-gray-800 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500" />
@@ -940,15 +1067,13 @@ export default function AgentKbBotBuilderUI({ agent }: Props) {
                       )}
                     </div>
 
-                    {canManage && (
-                      <div className="flex justify-end">
+                    <div className="flex justify-end">
                         <button type="button" onClick={() => void handleSaveSettings()} disabled={settingsSaving}
                           className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-base font-medium text-white hover:opacity-90 disabled:opacity-60"
                           style={{ backgroundColor: BOT_COLOR }}>
                           {settingsSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}儲存
                         </button>
                       </div>
-                    )}
                   </div>
                 </>
               )}

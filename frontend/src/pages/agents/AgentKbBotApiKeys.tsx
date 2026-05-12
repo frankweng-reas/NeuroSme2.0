@@ -42,28 +42,19 @@ export default function AgentKbBotApiKeys({ canManage, bots: _bots, selectedBotI
 
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
+  const [newLabel, setNewLabel] = useState('')
   const [createLoading, setCreateLoading] = useState(false)
   const [plainKey, setPlainKey] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
 
   const [revokeTarget, setRevokeTarget] = useState<ApiKey | null>(null)
   const [revokeLoading, setRevokeLoading] = useState(false)
-  const [confirmOverwrite, setConfirmOverwrite] = useState(false)
 
   const [selectedKeyId, setSelectedKeyId] = useState<number | null>(null)
   const [usageData, setUsageData] = useState<ApiKeyUsageResponse | null>(null)
   const [usageLoading, setUsageLoading] = useState(false)
 
   const [errorModal, setErrorModal] = useState<{ title?: string; message: string } | null>(null)
-  const [toast, setToast] = useState<string | null>(null)
-
-  const showToast = useCallback((msg: string) => setToast(msg), [])
-
-  useEffect(() => {
-    if (!toast) return
-    const id = setTimeout(() => setToast(null), 3000)
-    return () => clearTimeout(id)
-  }, [toast])
 
   const loadKeys = useCallback(() => {
     if (selectedBotId == null) return
@@ -80,14 +71,13 @@ export default function AgentKbBotApiKeys({ canManage, bots: _bots, selectedBotI
     const name = newName.trim()
     if (!name || selectedBotId == null) return
     setCreateLoading(true)
-    setConfirmOverwrite(false)
     try {
-      const res = await createApiKey(name, selectedBotId)
-      // 後端已自動撤銷舊 Key，同步更新本地 state
-      setKeys((prev) => [res, ...prev.map((k) => ({ ...k, is_active: false }))])
+      const res = await createApiKey(name, selectedBotId, 'bot', newLabel.trim() || undefined)
+      setKeys((prev) => [res, ...prev])
       setPlainKey(res.plain_key)
       setCreating(false)
       setNewName('')
+      setNewLabel('')
     } catch (err) {
       setErrorModal({ title: '建立失敗', message: err instanceof Error ? err.message : '未知錯誤' })
     } finally {
@@ -98,12 +88,7 @@ export default function AgentKbBotApiKeys({ canManage, bots: _bots, selectedBotI
   const handleCreate = () => {
     const name = newName.trim()
     if (!name || selectedBotId == null) return
-    const hasActive = keys.some((k) => k.is_active)
-    if (hasActive) {
-      setConfirmOverwrite(true)  // 先顯示確認
-    } else {
-      void doCreate()
-    }
+    void doCreate()
   }
 
   const handleRevoke = async () => {
@@ -143,13 +128,6 @@ export default function AgentKbBotApiKeys({ canManage, bots: _bots, selectedBotI
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
-      {/* Toast */}
-      {toast && (
-        <div className="fixed bottom-8 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-gray-800 px-4 py-2 text-base text-white shadow-lg">
-          {toast}
-        </div>
-      )}
-
       <ErrorModal
         open={errorModal !== null}
         title={errorModal?.title}
@@ -165,16 +143,6 @@ export default function AgentKbBotApiKeys({ canManage, bots: _bots, selectedBotI
         variant="danger"
         onConfirm={() => { if (!revokeLoading) void handleRevoke() }}
         onCancel={() => !revokeLoading && setRevokeTarget(null)}
-      />
-
-      <ConfirmModal
-        open={confirmOverwrite}
-        title="取代現有 API Key"
-        message={`此 Bot 已有啟用中的 API Key。\n建立新 Key 後，舊 Key 將立即失效。\n\n確認繼續？`}
-        confirmText="建立新 Key"
-        variant="danger"
-        onConfirm={() => void doCreate()}
-        onCancel={() => setConfirmOverwrite(false)}
       />
 
       {/* 明文 Key 顯示 Modal */}
@@ -249,37 +217,47 @@ export default function AgentKbBotApiKeys({ canManage, bots: _bots, selectedBotI
         </div>
 
         {creating && (
-          <div className="flex items-center gap-3 border-b border-gray-100 bg-emerald-50/50 px-5 py-3">
-            <input
-              autoFocus
-              type="text"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.nativeEvent.isComposing) return
-                if (e.key === 'Enter') void handleCreate()
-                if (e.key === 'Escape') { setCreating(false); setNewName('') }
-              }}
-              placeholder="Key 名稱（例：LINE Bot 整合）"
-              className="flex-1 rounded-lg border border-gray-300 px-3 py-1.5 text-base focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-              maxLength={100}
-            />
-            <button
-              type="button"
-              onClick={() => void handleCreate()}
-              disabled={createLoading || !newName.trim()}
-              className="flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-base text-white disabled:opacity-50"
-            >
-              {createLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-              建立
-            </button>
-            <button
-              type="button"
-              onClick={() => { setCreating(false); setNewName('') }}
-              className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100"
-            >
-              <X className="h-4 w-4" />
-            </button>
+          <div className="flex flex-col gap-2 border-b border-gray-100 bg-emerald-50/50 px-5 py-3">
+            <div className="flex items-center gap-3">
+              <input
+                autoFocus
+                type="text"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.nativeEvent.isComposing) return
+                  if (e.key === 'Enter') void handleCreate()
+                  if (e.key === 'Escape') { setCreating(false); setNewName(''); setNewLabel('') }
+                }}
+                placeholder="Key 名稱（必填，例：LINE Bot 整合）"
+                className="flex-1 rounded-lg border border-gray-300 px-3 py-1.5 text-base focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                maxLength={100}
+              />
+              <input
+                type="text"
+                value={newLabel}
+                onChange={(e) => setNewLabel(e.target.value)}
+                placeholder="用途備註（選填，例：LINE、FB）"
+                className="w-44 rounded-lg border border-gray-300 px-3 py-1.5 text-base focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                maxLength={100}
+              />
+              <button
+                type="button"
+                onClick={() => void handleCreate()}
+                disabled={createLoading || !newName.trim()}
+                className="flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-base text-white disabled:opacity-50"
+              >
+                {createLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                建立
+              </button>
+              <button
+                type="button"
+                onClick={() => { setCreating(false); setNewName(''); setNewLabel('') }}
+                className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
           </div>
         )}
 
@@ -316,6 +294,11 @@ export default function AgentKbBotApiKeys({ canManage, bots: _bots, selectedBotI
                     }`}>
                       {k.is_active ? '啟用' : '已撤銷'}
                     </span>
+                    {k.label && (
+                      <span className="shrink-0 rounded-full bg-blue-100 px-1.5 py-0.5 text-base font-medium text-blue-600">
+                        {k.label}
+                      </span>
+                    )}
                   </div>
                   <div className="mt-0.5 flex items-center gap-3">
                     <span className="font-mono text-base text-gray-400">{k.key_prefix}{'•'.repeat(8)}</span>
@@ -330,25 +313,14 @@ export default function AgentKbBotApiKeys({ canManage, bots: _bots, selectedBotI
                   </div>
                 </button>
                 <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      showToast('Key 前綴已複製（僅供識別，不含完整金鑰）')
-                      navigator.clipboard.writeText(k.key_prefix).catch(() => {})
-                    }}
-                    className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
-                    title="複製 Key 前綴（非完整金鑰）"
-                  >
-                    <Copy className="h-3.5 w-3.5" />
-                  </button>
                   {canManage && k.is_active && (
                     <button
                       type="button"
                       onClick={() => setRevokeTarget(k)}
-                      className="rounded-lg p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-500"
+                      className="rounded-lg p-2 text-gray-400 hover:bg-red-50 hover:text-red-500"
                       title="撤銷此 Key"
                     >
-                      <Trash2 className="h-3.5 w-3.5" />
+                      <Trash2 className="h-4 w-4" />
                     </button>
                   )}
                 </div>
@@ -464,8 +436,8 @@ export default function AgentKbBotApiKeys({ canManage, bots: _bots, selectedBotI
           {/* 目前 Bot 資訊 */}
           {selectedBot && (
             <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3">
-              <p className="text-base font-medium text-emerald-800">此頁的 API Key 僅限查詢</p>
-              <div className="mt-1 flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <p className="text-base font-medium text-emerald-800">此頁的 API Key 僅限查詢</p>
                 <code className="rounded bg-white px-2 py-0.5 font-mono font-bold text-emerald-700">
                   Bot #{selectedBot.id}
                 </code>
@@ -491,12 +463,22 @@ export default function AgentKbBotApiKeys({ canManage, bots: _bots, selectedBotI
             <p className="text-base text-gray-500">
               API Key 已綁定此 Bot，請求時<strong>不需要</strong>帶入 <code className="rounded bg-gray-200 px-1 font-mono">bot_id</code>。
             </p>
-            <p className="font-medium text-gray-800">請求範例：</p>
+            <p className="font-medium text-gray-800">請求範例（含多輪對話歷史）：</p>
             <pre className="overflow-x-auto rounded-lg border border-gray-200 bg-white p-3 font-mono text-base text-gray-700">{`curl -X POST ${window.location.origin}/api/v1/public/bot/query \\
   -H "X-API-Key: nsk_your_key_here" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "question": "請問退貨政策是什麼？"
+    "question": "那運費怎麼算？",
+    "messages": [
+      {
+        "role": "user",
+        "content": "請問可以退貨嗎？"
+      },
+      {
+        "role": "assistant",
+        "content": "可以，商品到貨 7 天內可申請退貨，請保持商品原狀並附上發票。"
+      }
+    ]
   }'`}</pre>
             <p className="text-base text-gray-500">
               Rate Limit：每個 API Key 每小時最多 100 次請求。{' '}
