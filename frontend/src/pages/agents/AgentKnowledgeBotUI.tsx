@@ -121,10 +121,6 @@ export default function AgentKnowledgeBotUI({ agent }: Props) {
   const [settingsKb, setSettingsKb] = useState<KmKnowledgeBase | null>(null)
   const [settingsKbModel, setSettingsKbModel] = useState('')
   const [settingsKbPrompt, setSettingsKbPrompt] = useState('')
-  const [settingsKbWidgetTitle, setSettingsKbWidgetTitle] = useState('')
-  const [settingsKbWidgetColor, setSettingsKbWidgetColor] = useState('#1A3A52')
-  const [settingsKbWidgetLang, setSettingsKbWidgetLang] = useState('zh-TW')
-  const [settingsKbWidgetLogoUrl, setSettingsKbWidgetLogoUrl] = useState('')
   const [settingsKbSaving, setSettingsKbSaving] = useState(false)
 
   // ── 左欄：Bot 列表 ────────────────────────────────────────────────────────
@@ -335,10 +331,6 @@ export default function AgentKnowledgeBotUI({ agent }: Props) {
       const updated = await updateKnowledgeBase(settingsKb.id, {
         model_name: settingsKbModel,
         system_prompt: settingsKbPrompt,
-        widget_title: settingsKbWidgetTitle,
-        widget_color: settingsKbWidgetColor,
-        widget_lang: settingsKbWidgetLang,
-        widget_logo_url: settingsKbWidgetLogoUrl || undefined,
       })
       setKbs((prev) => prev.map((kb) => kb.id === updated.id ? updated : kb))
       setSettingsKb(null)
@@ -701,36 +693,6 @@ export default function AgentKnowledgeBotUI({ agent }: Props) {
                   placeholder="你是 XX 公司的客服助手…"
                   className="w-full rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 font-mono text-base text-gray-800 placeholder-amber-300 focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400" />
               </div>
-              <div className="border-t border-gray-100 pt-3 space-y-3">
-                <p className="text-base font-semibold text-gray-700">Widget 外觀</p>
-                <div>
-                  <label className="mb-1 block text-base font-medium text-gray-700">顯示名稱</label>
-                  <input type="text" value={settingsKbWidgetTitle} onChange={(e) => setSettingsKbWidgetTitle(e.target.value)}
-                    placeholder={settingsKb.name}
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-base text-gray-800 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500" />
-                </div>
-                <div className="flex gap-3">
-                  <div className="flex-1">
-                    <label className="mb-1 block text-base font-medium text-gray-700">主色</label>
-                    <div className="flex items-center gap-2">
-                      <input type="color" value={settingsKbWidgetColor} onChange={(e) => setSettingsKbWidgetColor(e.target.value)}
-                        className="h-9 w-12 cursor-pointer rounded border border-gray-300 p-0.5" />
-                      <input type="text" value={settingsKbWidgetColor} onChange={(e) => setSettingsKbWidgetColor(e.target.value)}
-                        className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-base text-gray-800 focus:border-sky-500 focus:outline-none" />
-                    </div>
-                  </div>
-                  <div className="w-36">
-                    <label className="mb-1 block text-base font-medium text-gray-700">語言</label>
-                    <select value={settingsKbWidgetLang} onChange={(e) => setSettingsKbWidgetLang(e.target.value)}
-                      className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-base focus:border-sky-500 focus:outline-none">
-                      <option value="zh-TW">繁中</option>
-                      <option value="zh-CN">簡中</option>
-                      <option value="en">English</option>
-                      <option value="ja">日本語</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
             </div>
             <div className="flex justify-end gap-2 border-t border-gray-100 px-5 py-4">
               <button type="button" onClick={() => setSettingsKb(null)}
@@ -879,8 +841,6 @@ export default function AgentKnowledgeBotUI({ agent }: Props) {
                                 </button>
                                 <button type="button" onClick={() => {
                                   setSettingsKb(kb); setSettingsKbModel(kb.model_name ?? ''); setSettingsKbPrompt(kb.system_prompt ?? '')
-                                  setSettingsKbWidgetTitle(kb.widget_title ?? ''); setSettingsKbWidgetColor(kb.widget_color ?? '#1A3A52')
-                                  setSettingsKbWidgetLang(kb.widget_lang ?? 'zh-TW'); setSettingsKbWidgetLogoUrl(kb.widget_logo_url ?? '')
                                   setKbMenuId(null)
                                 }}
                                   className="flex w-full items-center gap-2 px-3 py-2 text-left text-base text-white/80 hover:bg-white/10 hover:text-white">

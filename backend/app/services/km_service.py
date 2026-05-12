@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.models.km_chunk import KmChunk
 from app.models.km_document import KmDocument
+from app.models.km_query_log import KmQueryLog
 from app.models.km_knowledge_base import KmKnowledgeBase
 from app.models.llm_provider_config import LLMProviderConfig
 from app.models.tenant_config import TenantConfig
@@ -950,21 +951,24 @@ async def km_faq_llm_select(
     model: str,
     db: Session,
     tenant_id: str,
-) -> "list[tuple[KmChunk, float]]":
+) -> "tuple[list[tuple[KmChunk, float]], object | None, int]":
     """用 LLM 從候選 FAQ chunks 中選出最相關的。
 
     候選清單由 km_faq_retrieve_sync 提供（已含 RRF 排序）。
     LLM 只做「選哪幾個」，不生成答案，保證原文 A 零失真。
 
-    找不到相關 → 回傳空 list；LLM 失敗 → fallback 回傳全部候選。
+    回傳 (selected, usage, latency_ms)：
+      - 找不到相關 → selected = []
+      - LLM 失敗 → fallback：selected = candidates（全部），usage = None，latency_ms = 0
     """
+    import time as _time
     import json
     import re
 
     from app.services.llm_caller import LLMProviderNotConfigured, call_llm
 
     if not candidates:
-        return []
+        return [], None, 0
 
     lines: list[str] = []
     for i, (chunk, _) in enumerate(candidates, 1):
@@ -993,8 +997,9 @@ async def km_faq_llm_select(
         {"role": "user", "content": user_msg},
     ]
 
+    t0 = _time.perf_counter()
     try:
-        answer, _, _ = await call_llm(
+        answer, usage, latency_ms = await call_llm(
             model=model,
             messages=messages,
             db=db,
@@ -1015,11 +1020,80 @@ async def km_faq_llm_select(
                 "FAQ LLM select: query=%r candidates=%d selected=%s",
                 query, len(candidates), selected_indices,
             )
-            return selected
+            return selected, usage, latency_ms
         logger.warning("FAQ LLM select: 無法解析 JSON，fallback。原始回應: %r", answer)
+        return candidates, usage, latency_ms
     except LLMProviderNotConfigured:
         logger.warning("FAQ LLM select: LLM 未設定，fallback 到全部候選")
     except Exception as e:
         logger.warning("FAQ LLM select 失敗，fallback 到全部候選: %s", e)
 
-    return candidates  # fallback：LLM 失敗時直接回傳全部候選
+    elapsed = int((_time.perf_counter() - t0) * 1000)
+    return candidates, None, elapsed  # fallback：LLM 失敗時直接回傳全部候選
+
+
+def log_km_query(
+    db: Session,
+    *,
+    tenant_id: str,
+    user_id: int | None,
+    knowledge_base_id: int,
+    answer_mode: str,
+    query: str,
+    hit: bool,
+    matched_chunk_ids: list[str],
+    session_type: str = "internal",
+    widget_session_id: str | None = None,
+    chat_thread_id: str | None = None,
+) -> None:
+    """記錄一次 KB 查詢結果，供零命中統計與知識庫品質分析使用。
+
+    hit=False 代表零命中（RAG 無相關 chunks / direct 無 LLM 選取結果）。
+    此函式設計為「靜默失敗」—— 任何例外都只 warning log，不影響主流程。
+    """
+    import uuid as _uuid
+    try:
+        row = KmQueryLog(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            knowledge_base_id=knowledge_base_id,
+            answer_mode=answer_mode,
+            query=query,
+            hit=hit,
+            matched_chunk_ids=matched_chunk_ids or [],
+            session_type=session_type,
+            widget_session_id=widget_session_id or None,
+            chat_thread_id=_uuid.UUID(str(chat_thread_id)) if chat_thread_id else None,
+        )
+        db.add(row)
+        db.flush()
+    except Exception as e:
+        logger.warning("log_km_query 寫入失敗（不影響主流程）: %s", e)
+
+
+def log_bot_query(
+    db: Session,
+    *,
+    tenant_id: str,
+    bot_id: int,
+    session_id: str | None,
+    query: str,
+    hit: bool,
+) -> None:
+    """記錄一次 Bot Widget 查詢結果，供零命中統計與 Bot 品質分析使用。
+
+    此函式設計為「靜默失敗」—— 任何例外都只 warning log，不影響主流程。
+    """
+    try:
+        from app.models.bot_query_log import BotQueryLog
+        row = BotQueryLog(
+            tenant_id=tenant_id,
+            bot_id=bot_id,
+            session_id=session_id or None,
+            query=query,
+            hit=hit,
+        )
+        db.add(row)
+        db.flush()
+    except Exception as e:
+        logger.warning("log_bot_query 寫入失敗（不影響主流程）: %s", e)

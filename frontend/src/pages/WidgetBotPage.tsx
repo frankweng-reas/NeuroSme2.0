@@ -170,7 +170,8 @@ function WidgetBotInner({ token, isEmbed, langOverride }: { token: string; isEmb
               return next
             })
           },
-          onDone: () => {
+          onDone: (content?) => {
+            if (content) assistantText = content
             setMessages((prev) => {
               const next = [...prev]
               if (next[startIdx]) next[startIdx] = { ...next[startIdx], content: assistantText }

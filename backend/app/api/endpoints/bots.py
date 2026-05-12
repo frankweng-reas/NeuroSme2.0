@@ -293,3 +293,118 @@ def revoke_bot_token(
     db.commit()
     db.refresh(bot)
     return _to_response(bot, db)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Bot Query Stats
+# ──────────────────────────────────────────────────────────────────────────────
+
+class BotQueryStatsSummary(BaseModel):
+    total_queries: int
+    hit_count: int
+    zero_hit_count: int
+    hit_rate: float
+
+
+class BotQueryItem(BaseModel):
+    query: str
+    count: int
+    hit: bool
+    last_asked_at: str
+
+
+class BotQueryStatsResponse(BaseModel):
+    summary: BotQueryStatsSummary
+    queries: list[BotQueryItem]
+    total: int
+    offset: int
+
+
+BotQueryStatsView = str  # 'top_queries' | 'zero_hit'
+
+
+@router.get("/{bot_id}/query-stats", response_model=BotQueryStatsResponse)
+def get_bot_query_stats(
+    bot_id: int,
+    days: int = 30,
+    view: BotQueryStatsView = "top_queries",
+    limit: int = 20,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    current: Annotated[User, Depends(get_current_user)] = ...,
+):
+    """取得 Bot 查詢統計：摘要 + 查詢清單（top_queries / zero_hit）"""
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import func as sqlfunc, text as sqtext
+
+    bot = db.query(Bot).filter(Bot.id == bot_id, Bot.tenant_id == current.tenant_id).first()
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot 不存在")
+
+    from app.models.bot_query_log import BotQueryLog
+
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    base_q = db.query(BotQueryLog).filter(
+        BotQueryLog.bot_id == bot_id,
+        BotQueryLog.created_at >= since,
+    )
+
+    total_queries = base_q.count()
+    hit_count = base_q.filter(BotQueryLog.hit == True).count()  # noqa: E712
+    zero_hit_count = total_queries - hit_count
+    hit_rate = hit_count / total_queries if total_queries > 0 else 0.0
+
+    summary = BotQueryStatsSummary(
+        total_queries=total_queries,
+        hit_count=hit_count,
+        zero_hit_count=zero_hit_count,
+        hit_rate=hit_rate,
+    )
+
+    # 查詢清單：依 query 分組，計次數
+    hit_filter = True if view == "top_queries" else False  # noqa: E712
+    rows = (
+        db.query(
+            BotQueryLog.query,
+            sqlfunc.count(BotQueryLog.id).label("cnt"),
+            sqlfunc.bool_and(BotQueryLog.hit).label("hit"),
+            sqlfunc.max(BotQueryLog.created_at).label("last_at"),
+        )
+        .filter(
+            BotQueryLog.bot_id == bot_id,
+            BotQueryLog.created_at >= since,
+            BotQueryLog.hit == hit_filter,
+        )
+        .group_by(BotQueryLog.query)
+        .order_by(sqlfunc.count(BotQueryLog.id).desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    count_q = (
+        db.query(sqlfunc.count(sqlfunc.distinct(BotQueryLog.query)))
+        .filter(
+            BotQueryLog.bot_id == bot_id,
+            BotQueryLog.created_at >= since,
+            BotQueryLog.hit == hit_filter,
+        )
+        .scalar()
+    ) or 0
+
+    queries = [
+        BotQueryItem(
+            query=r.query,
+            count=r.cnt,
+            hit=bool(r.hit),
+            last_asked_at=r.last_at.isoformat() if r.last_at else "",
+        )
+        for r in rows
+    ]
+
+    return BotQueryStatsResponse(
+        summary=summary,
+        queries=queries,
+        total=count_q,
+        offset=offset,
+    )

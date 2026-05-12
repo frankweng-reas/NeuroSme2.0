@@ -26,6 +26,7 @@ from app.services.chat_service import (
     _merge_system_into_first_user,
     _parse_optional_chat_thread_id,
 )
+from app.services.agent_usage import log_agent_usage
 from app.services.llm_service import (
     UsageMeta,
     _get_llm_params,
@@ -194,6 +195,8 @@ class ChatCompletionPrepared:
     sources: list[dict] = field(default_factory=list)
     faq_direct_answer: str | None = None  # 已棄用，保留相容
     faq_candidates: list | None = None    # direct 模式：候選 [(KmChunk, float), ...]
+    knowledge_base_id: int | None = None  # 用於 km_query_logs
+    context_chunk_ids: list[str] = field(default_factory=list)  # RAG 命中的 chunk UUID 字串
 
 
 def _prepare_chat_completion(req: ChatRequest, db: Session, current: User) -> ChatCompletionPrepared:
@@ -202,6 +205,10 @@ def _prepare_chat_completion(req: ChatRequest, db: Session, current: User) -> Ch
     tenant_id, aid = _check_agent_access(db, current, req.agent_id.strip())
     trace_raw = (req.trace_id or "").strip() or None
     thread_uuid = _parse_optional_chat_thread_id(db, current, tenant_id, aid, req.chat_thread_id)
+
+    # 用於 km_query_logs
+    _km_kb_id: int | None = None
+    _km_chunk_ids: list[str] = []
 
     # 若前端未帶 prompt_type，以 aid 作為 fallback（確保 Chat Agent 等一對一對應的 agent 永遠載到對應 system prompt）
     pt = (req.prompt_type or "").strip() or aid
@@ -263,6 +270,8 @@ def _prepare_chat_completion(req: ChatRequest, db: Session, current: User) -> Ch
         data = format_km_context(chunks)
         if chunks:
             logger.info("KM RAG: retrieved %d chunks for query", len(chunks))
+            _km_kb_id = req.knowledge_base_id
+            _km_chunk_ids = [str(c.id) for c in chunks]
             seen: set[str] = set()
             for chunk in chunks:
                 fname = chunk.document.filename if chunk.document else "未知文件"
@@ -270,6 +279,7 @@ def _prepare_chat_completion(req: ChatRequest, db: Session, current: User) -> Ch
                     seen.add(fname)
                     km_sources.append({"filename": fname})
         else:
+            _km_kb_id = req.knowledge_base_id
             logger.info("KM RAG: no relevant chunks found (tenant=%r, user=%s)", tenant_id, current.id)
 
         # 讀取 KB 設定的 model、system_prompt、answer_mode
@@ -315,6 +325,7 @@ def _prepare_chat_completion(req: ChatRequest, db: Session, current: User) -> Ch
                             for c, _ in candidates if c.document
                         ],
                         faq_candidates=candidates,
+                        knowledge_base_id=req.knowledge_base_id,
                     )
     else:
         data = _get_selected_source_files_content(db, current.id, tenant_id, aid)
@@ -392,6 +403,8 @@ def _prepare_chat_completion(req: ChatRequest, db: Session, current: User) -> Ch
         has_vision_user_content=has_vision,
         agent_id=aid,
         sources=km_sources,
+        knowledge_base_id=_km_kb_id,
+        context_chunk_ids=_km_chunk_ids,
     )
 
 
@@ -416,6 +429,34 @@ def _sse_event_error(message: object) -> str:
     return _sse_line({"event": "error", "message": _sse_error_user_message(message)})
 
 
+# ─── RAG hit / [NOT_FOUND] marker ────────────────────────────────────────────
+_NOT_FOUND_MARKER = "[NOT_FOUND]"
+_NOT_FOUND_KM_MSG = "根據目前的知識庫文件，找不到相關資訊。"
+_NOT_FOUND_CS_MSG = "很抱歉，目前的知識庫中未找到相關資訊，建議您聯繫客服專員進一步協助。"
+
+
+def _rag_hit_from_response(content: str | None, context_chunk_ids: list[str]) -> bool:
+    """判斷 RAG 查詢是否命中。
+    1. 無任何 chunk 被擷取 → False
+    2. LLM 回傳含 [NOT_FOUND] marker → False
+    3. 其餘 → True
+    """
+    if not context_chunk_ids:
+        return False
+    if _NOT_FOUND_MARKER in (content or ""):
+        return False
+    return True
+
+
+def _clean_rag_response(content: str | None, agent_type: str | None = None) -> str:
+    """若 LLM 回傳 [NOT_FOUND] marker，替換成用戶友善的訊息。"""
+    if content and _NOT_FOUND_MARKER in content:
+        if agent_type == "cs":
+            return _NOT_FOUND_CS_MSG
+        return _NOT_FOUND_KM_MSG
+    return content or ""
+
+
 @router.post("/completions", response_model=ChatResponse)
 async def chat_completions(
     req: ChatRequest,
@@ -433,11 +474,11 @@ async def chat_completions(
             )
             candidates = prepared.faq_candidates
             if candidates and prepared.model:
-                selected = await km_faq_llm_select(
+                selected, llm_usage, llm_latency = await km_faq_llm_select(
                     req.content, candidates, prepared.model, db, prepared.tenant_id
                 )
             else:
-                selected = candidates  # 無 model 或無候選時 fallback
+                selected, llm_usage, llm_latency = candidates, None, 0
 
             if not selected:
                 faq_answer = "根據目前的知識庫，找不到相關資訊。"
@@ -456,6 +497,57 @@ async def chat_completions(
                     + "\n\n---\n\n".join(parts)
                     + (f"\n\n---\n**參考來源：**\n{sources_text}" if sources_text else "")
                 )
+
+            # Layer 1：記錄 LLM 用量
+            if prepared.thread_uuid:
+                _persist_chat_llm_request(
+                    db,
+                    tenant_id=prepared.tenant_id,
+                    user_id=prepared.user_id,
+                    thread_id=prepared.thread_uuid,
+                    model=prepared.model or "faq-direct",
+                    trace_id=prepared.trace_raw,
+                    latency_ms=llm_latency,
+                    status="success",
+                    usage=llm_usage,
+                    finish_reason="stop",
+                    error_code=None,
+                    error_message=None,
+                    agent_id=prepared.agent_id,
+                )
+                db.commit()
+            else:
+                log_agent_usage(
+                    db=db,
+                    agent_type=prepared.agent_id,
+                    tenant_id=prepared.tenant_id,
+                    user_id=prepared.user_id,
+                    model=prepared.model or None,
+                    prompt_tokens=llm_usage.prompt_tokens if llm_usage else None,
+                    completion_tokens=llm_usage.completion_tokens if llm_usage else None,
+                    total_tokens=llm_usage.total_tokens if llm_usage else None,
+                    latency_ms=llm_latency,
+                    status="success",
+                )
+                db.commit()
+
+            # Layer 2：記錄 KB 查詢結果
+            if prepared.knowledge_base_id:
+                from app.services.km_service import log_km_query
+                log_km_query(
+                    db,
+                    tenant_id=prepared.tenant_id,
+                    user_id=prepared.user_id,
+                    knowledge_base_id=prepared.knowledge_base_id,
+                    answer_mode="direct",
+                    query=req.content or "",
+                    hit=bool(selected),
+                    matched_chunk_ids=[str(c.id) for c, _ in selected],
+                    session_type="internal",
+                    chat_thread_id=prepared.thread_uuid,
+                )
+                db.commit()
+
             return ChatResponse(
                 content=faq_answer,
                 model="faq-direct",
@@ -600,8 +692,28 @@ async def chat_completions(
             )
             db.commit()
             rid_str = str(rid)
+
+        # Layer 2：記錄 KB 查詢結果（RAG 路徑，step 4：以 LLM 回傳內容判斷 hit）
+        if prepared.knowledge_base_id:
+            from app.services.km_service import log_km_query
+            _rag_hit = _rag_hit_from_response(parsed.content, prepared.context_chunk_ids)
+            log_km_query(
+                db,
+                tenant_id=prepared.tenant_id,
+                user_id=prepared.user_id,
+                knowledge_base_id=prepared.knowledge_base_id,
+                answer_mode="rag",
+                query=req.content or "",
+                hit=_rag_hit,
+                matched_chunk_ids=prepared.context_chunk_ids,
+                session_type="internal",
+                chat_thread_id=prepared.thread_uuid,
+            )
+            db.commit()
+
+        clean_content = _clean_rag_response(parsed.content, prepared.agent_id)
         return ChatResponse(
-            content=parsed.content,
+            content=clean_content,
             model=parsed.model,
             usage=parsed.usage,
             finish_reason=parsed.finish_reason,
@@ -638,11 +750,11 @@ async def chat_completions_stream(
         )
         candidates = prepared.faq_candidates
         if candidates and prepared.model:
-            selected = await km_faq_llm_select(
+            selected, llm_usage, llm_latency = await km_faq_llm_select(
                 req.content, candidates, prepared.model, db, prepared.tenant_id
             )
         else:
-            selected = candidates
+            selected, llm_usage, llm_latency = candidates, None, 0
 
         if not selected:
             faq_answer = "根據目前的知識庫，找不到相關資訊。"
@@ -661,6 +773,56 @@ async def chat_completions_stream(
                 + "\n\n---\n\n".join(parts)
                 + (f"\n\n---\n**參考來源：**\n{sources_text}" if sources_text else "")
             )
+
+        # Layer 1：記錄 LLM 用量
+        if prepared.thread_uuid:
+            _persist_chat_llm_request(
+                db,
+                tenant_id=prepared.tenant_id,
+                user_id=prepared.user_id,
+                thread_id=prepared.thread_uuid,
+                model=prepared.model or "faq-direct",
+                trace_id=prepared.trace_raw,
+                latency_ms=llm_latency,
+                status="success",
+                usage=llm_usage,
+                finish_reason="stop",
+                error_code=None,
+                error_message=None,
+                agent_id=prepared.agent_id,
+            )
+            db.commit()
+        else:
+            log_agent_usage(
+                db=db,
+                agent_type=prepared.agent_id,
+                tenant_id=prepared.tenant_id,
+                user_id=prepared.user_id,
+                model=prepared.model or None,
+                prompt_tokens=llm_usage.prompt_tokens if llm_usage else None,
+                completion_tokens=llm_usage.completion_tokens if llm_usage else None,
+                total_tokens=llm_usage.total_tokens if llm_usage else None,
+                latency_ms=llm_latency,
+                status="success",
+            )
+            db.commit()
+
+        # Layer 2：記錄 KB 查詢結果（direct 路徑，stream）
+        if prepared.knowledge_base_id:
+            from app.services.km_service import log_km_query
+            log_km_query(
+                db,
+                tenant_id=prepared.tenant_id,
+                user_id=prepared.user_id,
+                knowledge_base_id=prepared.knowledge_base_id,
+                answer_mode="direct",
+                query=req.content or "",
+                hit=bool(selected),
+                matched_chunk_ids=[str(c.id) for c, _ in selected],
+                session_type="internal",
+                chat_thread_id=prepared.thread_uuid,
+            )
+            db.commit()
 
         async def faq_sse():
             yield _sse_line({"event": "delta", "text": faq_answer})
@@ -860,9 +1022,35 @@ async def chat_completions_stream(
                 total_tokens=(prompt_chars + completion_chars) // 3,
             )
         rid_str = persist_ok(usage_out, finish_reason)
+
+        # Layer 2：記錄 KB 查詢結果（RAG 路徑，stream，step 4：以完整回應判斷 hit）
+        if prepared.knowledge_base_id:
+            from app.services.km_service import log_km_query
+            s = SessionLocal()
+            try:
+                _rag_hit = _rag_hit_from_response("".join(parts), prepared.context_chunk_ids)
+                log_km_query(
+                    s,
+                    tenant_id=prepared.tenant_id,
+                    user_id=prepared.user_id,
+                    knowledge_base_id=prepared.knowledge_base_id,
+                    answer_mode="rag",
+                    query=req.content or "",
+                    hit=_rag_hit,
+                    matched_chunk_ids=prepared.context_chunk_ids,
+                    session_type="internal",
+                    chat_thread_id=prepared.thread_uuid,
+                )
+                s.commit()
+            except Exception as _log_err:
+                logger.warning("km_query_log 寫入失敗: %s", _log_err)
+            finally:
+                s.close()
+
+        clean_full = _clean_rag_response(full, prepared.agent_id)
         done_payload = {
             "event": "done",
-            "content": full,
+            "content": clean_full,
             "model": resp_model or "",
             "usage": usage_out.model_dump() if usage_out else None,
             "finish_reason": finish_reason,

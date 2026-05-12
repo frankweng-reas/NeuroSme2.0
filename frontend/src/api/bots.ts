@@ -86,3 +86,41 @@ export async function generateBotToken(id: number): Promise<Bot> {
 export async function revokeBotToken(id: number): Promise<Bot> {
   return apiFetch<Bot>(`/bots/${id}/token`, { method: 'DELETE' })
 }
+
+// ── Bot Query Stats ────────────────────────────────────────────────────────────
+
+export interface BotQueryStatsSummary {
+  total_queries: number
+  hit_count: number
+  zero_hit_count: number
+  hit_rate: number
+}
+
+export interface BotQueryItem {
+  query: string
+  count: number
+  hit: boolean
+  last_asked_at: string
+}
+
+export interface BotQueryStatsResponse {
+  summary: BotQueryStatsSummary
+  queries: BotQueryItem[]
+  total: number
+  offset: number
+}
+
+export type BotQueryStatsView = 'top_queries' | 'zero_hit'
+
+export async function getBotQueryStats(
+  botId: number,
+  params: { days?: number; view?: BotQueryStatsView; limit?: number; offset?: number } = {}
+): Promise<BotQueryStatsResponse> {
+  const q = new URLSearchParams()
+  if (params.days !== undefined) q.set('days', String(params.days))
+  if (params.view) q.set('view', params.view)
+  if (params.limit !== undefined) q.set('limit', String(params.limit))
+  if (params.offset !== undefined) q.set('offset', String(params.offset))
+  const qs = q.toString()
+  return apiFetch<BotQueryStatsResponse>(`/bots/${botId}/query-stats${qs ? `?${qs}` : ''}`)
+}

@@ -31,14 +31,6 @@ export interface KmKnowledgeBase {
   ready_count: number
   bot_count: number
   created_at: string
-  // Widget
-  public_token: string | null
-  widget_title: string | null
-  widget_logo_url: string | null
-  widget_color: string | null
-  widget_lang: string | null
-  widget_voice_enabled: boolean
-  widget_voice_prompt: string | null
 }
 
 export async function listKnowledgeBases(): Promise<KmKnowledgeBase[]> {
@@ -59,6 +51,7 @@ export async function createKnowledgeBase(data: {
   model_name?: string
   system_prompt?: string
   answer_mode?: 'rag' | 'direct'
+  scope?: KbScope
 }): Promise<KmKnowledgeBase> {
   return apiFetch<KmKnowledgeBase>('/km/knowledge-bases', {
     method: 'POST',
@@ -76,12 +69,6 @@ export async function updateKnowledgeBase(
     system_prompt?: string
     scope?: KbScope
     answer_mode?: 'rag' | 'direct'
-    widget_title?: string
-    widget_logo_url?: string
-    widget_color?: string
-    widget_lang?: string
-    widget_voice_enabled?: boolean
-    widget_voice_prompt?: string
   }
 ): Promise<KmKnowledgeBase> {
   return apiFetch<KmKnowledgeBase>(`/km/knowledge-bases/${id}`, {
@@ -91,17 +78,6 @@ export async function updateKnowledgeBase(
   })
 }
 
-export async function generateWidgetToken(id: number): Promise<KmKnowledgeBase> {
-  return apiFetch<KmKnowledgeBase>(`/km/knowledge-bases/${id}/generate-token`, {
-    method: 'POST',
-  })
-}
-
-export async function revokeWidgetToken(id: number): Promise<KmKnowledgeBase> {
-  return apiFetch<KmKnowledgeBase>(`/km/knowledge-bases/${id}/token`, {
-    method: 'DELETE',
-  })
-}
 
 export async function deleteKnowledgeBase(id: number): Promise<void> {
   return apiFetch<void>(`/km/knowledge-bases/${id}`, { method: 'DELETE' })
@@ -179,4 +155,48 @@ export async function uploadKmDocument(
     xhr.onerror = () => reject(new Error('網路錯誤'))
     xhr.send(form)
   })
+}
+
+// ── 查詢統計 ──────────────────────────────────────────────────────────────────
+
+export interface QueryStatsSummary {
+  total_queries: number
+  hit_count: number
+  zero_hit_count: number
+  hit_rate: number  // 0.0 ~ 1.0
+}
+
+export interface QueryItem {
+  query: string
+  count: number
+  hit: boolean
+  last_asked_at: string
+}
+
+export interface QueryStatsResponse {
+  summary: QueryStatsSummary
+  queries: QueryItem[]
+  total: number
+  has_more: boolean
+}
+
+export type QueryStatsView = 'top_queries' | 'zero_hit'
+
+export async function getKbQueryStats(
+  kbId: number,
+  options: {
+    days?: number
+    view?: QueryStatsView
+    limit?: number
+    offset?: number
+  } = {},
+): Promise<QueryStatsResponse> {
+  const { days = 30, view = 'top_queries', limit = 20, offset = 0 } = options
+  const params = new URLSearchParams({
+    days: String(days),
+    view,
+    limit: String(limit),
+    offset: String(offset),
+  })
+  return apiFetch<QueryStatsResponse>(`/km/knowledge-bases/${kbId}/query-stats?${params}`)
 }

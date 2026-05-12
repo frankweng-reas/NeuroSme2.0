@@ -5,11 +5,14 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
+  BarChart2,
   Check,
   ChevronRight,
   FileText,
   Headphones,
   Loader2,
+  Maximize2,
+  Minimize2,
   MoreHorizontal,
   Plus,
   RefreshCw,
@@ -24,6 +27,7 @@ import {
   createKnowledgeBase,
   deleteKnowledgeBase,
   deleteKmDocument,
+  getKbQueryStats,
   listKbDocuments,
   listKnowledgeBases,
   updateKnowledgeBase,
@@ -31,6 +35,8 @@ import {
   type KbScope,
   type KmDocument,
   type KmKnowledgeBase,
+  type QueryStatsResponse,
+  type QueryStatsView,
 } from '@/api/km'
 import { getMe } from '@/api/users'
 import { appendChatMessage, createChatThread, listChatMessages } from '@/api/chatThreads'
@@ -77,6 +83,7 @@ export default function AgentKbManagerUI({ agent }: Props) {
 
   // ── 左欄：KB 列表 ─────────────────────────────────────────────────────────
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [midExpanded, setMidExpanded] = useState(false)
   const [kbs, setKbs] = useState<KmKnowledgeBase[]>([])
   const [kbsLoading, setKbsLoading] = useState(true)
   const [selectedKbId, setSelectedKbId] = useState<number | null>(null)
@@ -208,6 +215,35 @@ export default function AgentKbManagerUI({ agent }: Props) {
   const [deleteDocTarget, setDeleteDocTarget] = useState<KmDocument | null>(null)
   const [deleteDocLoading, setDeleteDocLoading] = useState(false)
 
+  // ── 中欄：Tab 切換（文件管理 / 查詢統計） ─────────────────────────────────
+  const [centerTab, setCenterTab] = useState<'docs' | 'stats'>('docs')
+
+  // ── 中欄：查詢統計 ─────────────────────────────────────────────────────────
+  const [statsDays, setStatsDays] = useState<7 | 30 | 90>(30)
+  const [statsView, setStatsView] = useState<QueryStatsView>('top_queries')
+  const [statsData, setStatsData] = useState<QueryStatsResponse | null>(null)
+  const [statsLoading, setStatsLoading] = useState(false)
+  const [statsOffset, setStatsOffset] = useState(0)
+  const STATS_LIMIT = 20
+
+  const loadStats = useCallback((kbId: number, days: 7 | 30 | 90, view: QueryStatsView, offset = 0) => {
+    setStatsLoading(true)
+    getKbQueryStats(kbId, { days, view, limit: STATS_LIMIT, offset })
+      .then((data) => {
+        if (offset === 0) {
+          setStatsData(data)
+        } else {
+          setStatsData((prev) => prev ? {
+            ...data,
+            queries: [...prev.queries, ...data.queries],
+          } : data)
+        }
+        setStatsOffset(offset)
+      })
+      .catch(() => {})
+      .finally(() => setStatsLoading(false))
+  }, [])
+
   const storageKey = (kbId: number) => `kb-manager-docs-${kbId}`
 
   const loadDocs = useCallback((kbId: number) => {
@@ -237,6 +273,12 @@ export default function AgentKbManagerUI({ agent }: Props) {
   useEffect(() => {
     if (selectedKbId != null) {
       loadDocs(selectedKbId)
+      // 切換 KB 時重置統計狀態
+      setCenterTab('docs')
+      setStatsData(null)
+      setStatsOffset(0)
+      setStatsDays(30)
+      setStatsView('top_queries')
       // direct 模式知識庫自動鎖定 faq 文件類型
       const kb = kbs.find((k) => k.id === selectedKbId)
       if (kb?.answer_mode === 'direct') setUploadDocType('faq')
@@ -769,19 +811,19 @@ export default function AgentKbManagerUI({ agent }: Props) {
           )}
         </div>
 
-        {/* ══ 中欄：文件管理 ════════════════════════════════════════════════ */}
-        <div className="flex w-80 shrink-0 flex-col overflow-hidden rounded-xl border border-gray-200/80 bg-white shadow-md">
+        {/* ══ 中欄：文件管理 / 查詢統計 ══════════════════════════════════════ */}
+        <div className={`flex shrink-0 flex-col overflow-hidden rounded-xl border border-gray-200/80 bg-white shadow-md transition-[width] duration-200 ${midExpanded ? 'w-[600px]' : 'w-80'}`}>
+          {/* 標題列 */}
           <div className="flex shrink-0 items-center justify-between border-b border-gray-100 px-4 py-3">
             <div className="min-w-0 flex-1">
               {selectedKb ? (
                 <>
                   <h2 className="truncate text-base font-semibold text-gray-800">{selectedKb.name}</h2>
                   <p className="text-base text-gray-400">
-                    {selectedKb.doc_count} 份文件・{selectedKb.ready_count} 份就緒
                     {selectedKb.scope === 'company' && (
-                      <span className={`ml-2 rounded-full px-2 py-0.5 text-base font-medium ${selectedKb.bot_count > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-400'}`}>
-                        {selectedKb.bot_count > 0 ? `${selectedKb.bot_count} 個 Bot 使用中` : '未被 Bot 使用'}
-                      </span>
+                      selectedKb.bot_count > 0
+                        ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-base font-medium text-emerald-700">{selectedKb.bot_count} 個 Bot 使用中</span>
+                        : <span className="rounded-full bg-gray-100 px-2 py-0.5 text-base font-medium text-gray-400">未被 Bot 使用</span>
                     )}
                   </p>
                 </>
@@ -789,94 +831,270 @@ export default function AgentKbManagerUI({ agent }: Props) {
                 <p className="text-base text-gray-400">請選擇知識庫</p>
               )}
             </div>
-            {selectedKbId && (
+            {selectedKbId && centerTab === 'docs' && (
               <button type="button" onClick={() => loadDocs(selectedKbId)}
                 className="shrink-0 rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600">
                 <RefreshCw className="h-3.5 w-3.5" />
               </button>
             )}
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            {!selectedKbId ? (
-              <div className="flex h-full items-center justify-center">
-                <p className="text-base text-gray-300">← 選擇知識庫</p>
-              </div>
-            ) : docsLoading ? (
-              <div className="flex h-full items-center justify-center">
-                <Loader2 className="h-5 w-5 animate-spin text-gray-300" />
-              </div>
-            ) : docs.length === 0 ? (
-              <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
-                <FileText className="h-8 w-8 text-gray-200" />
-                <p className="text-base text-gray-400">尚無文件</p>
-                {canUploadToSelectedKb && <p className="text-base text-gray-300">點擊下方「上傳文件」開始建立知識庫</p>}
-              </div>
-            ) : (
-              <>
-                {(() => {
-                  const readyIds = docs.filter((d) => d.status === 'ready').map((d) => d.id)
-                  const allSelected = readyIds.length > 0 && readyIds.every((id) => selectedDocIds.has(id))
-                  const toggleAll = (select: boolean) => {
-                    const next = select ? new Set(readyIds) : new Set<number>()
-                    setSelectedDocIds(next)
-                    if (selectedKbId != null) localStorage.setItem(storageKey(selectedKbId), JSON.stringify([...next]))
-                  }
-                  return readyIds.length > 0 ? (
-                    <div className="flex items-center gap-2 border-b border-gray-100 px-4 py-2">
-                      <span className="flex-1 text-base text-gray-400">已選 {selectedDocIds.size} / {readyIds.length} 份</span>
-                      <button type="button" onClick={() => toggleAll(true)} disabled={allSelected}
-                        className="rounded px-2 py-0.5 text-base text-sky-600 hover:bg-sky-50 disabled:opacity-40">全選</button>
-                      <span className="text-gray-200">|</span>
-                      <button type="button" onClick={() => toggleAll(false)} disabled={selectedDocIds.size === 0}
-                        className="rounded px-2 py-0.5 text-base text-gray-500 hover:bg-gray-100 disabled:opacity-40">全不選</button>
-                    </div>
-                  ) : null
-                })()}
-                <ul className="divide-y divide-gray-50">
-                  {docs.map((doc) => (
-                    <li key={doc.id} className="group flex items-start gap-3 px-4 py-3 hover:bg-gray-50">
-                      {doc.status === 'ready' ? (
-                        <input type="checkbox" checked={selectedDocIds.has(doc.id)}
-                          onChange={(e) => setSelectedDocIds((prev) => {
-                            const next = new Set(prev)
-                            if (e.target.checked) next.add(doc.id); else next.delete(doc.id)
-                            if (selectedKbId != null) localStorage.setItem(storageKey(selectedKbId), JSON.stringify([...next]))
-                            return next
-                          })}
-                          className="mt-1 h-3.5 w-3.5 shrink-0 cursor-pointer accent-sky-500" />
-                      ) : (
-                        <FileText className="mt-0.5 h-4 w-4 shrink-0 text-gray-300" />
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <p className="line-clamp-2 break-all text-base font-medium text-gray-700">{doc.filename}</p>
-                        <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
-                          <StatusBadge status={doc.status} />
-                          {doc.chunk_count != null && doc.status === 'ready' && <span className="text-base text-gray-400">{doc.chunk_count} 段</span>}
-                          {doc.size_bytes != null && <span className="text-base text-gray-300">{formatBytes(doc.size_bytes)}</span>}
-                        </div>
-                        {doc.status === 'error' && doc.error_message && (
-                          <p className="mt-0.5 truncate text-base text-red-400">{doc.error_message}</p>
-                        )}
-                      </div>
-                      {canUploadToSelectedKb && (
-                        <button type="button" onClick={() => setDeleteDocTarget(doc)}
-                          className="mt-0.5 shrink-0 rounded p-1.5 text-gray-300 opacity-0 transition-all group-hover:opacity-100 hover:bg-red-50 hover:text-red-400">
-                          <Trash2 className="h-5 w-5" />
-                        </button>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-          </div>
-          {canUploadToSelectedKb && (
-            <div className="shrink-0 border-t border-gray-100 p-3">
-              <button type="button" onClick={() => setUploadModalOpen(true)}
-                className="flex w-full items-center justify-center gap-2 rounded-lg py-2.5 text-base font-medium text-white hover:opacity-90"
-                style={{ backgroundColor: HEADER_COLOR }}>
-                <Upload className="h-4 w-4" />上傳文件
+            {selectedKbId && centerTab === 'stats' && (
+              <button type="button" onClick={() => loadStats(selectedKbId, statsDays, statsView, 0)}
+                className="shrink-0 rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600">
+                <RefreshCw className={`h-3.5 w-3.5 ${statsLoading ? 'animate-spin' : ''}`} />
               </button>
+            )}
+            <button
+              type="button"
+              title={midExpanded ? '縮小' : '放大'}
+              onClick={() => setMidExpanded((v) => !v)}
+              className="shrink-0 rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+            >
+              {midExpanded ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+            </button>
+          </div>
+
+          {/* Tab bar（只在選了 KB 且有查詢功能時顯示） */}
+          {selectedKbId && (
+            <div className="flex shrink-0 border-b border-gray-100">
+              <button
+                type="button"
+                onClick={() => setCenterTab('docs')}
+                className={`flex flex-1 items-center justify-center gap-1.5 py-2 text-base font-medium transition-colors ${
+                  centerTab === 'docs'
+                    ? 'border-b-2 border-sky-500 text-sky-600'
+                    : 'text-gray-400 hover:text-gray-600'
+                }`}
+              >
+                <FileText className="h-3.5 w-3.5" />文件管理
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setCenterTab('stats')
+                  if (!statsData) loadStats(selectedKbId, statsDays, statsView, 0)
+                }}
+                className={`flex flex-1 items-center justify-center gap-1.5 py-2 text-base font-medium transition-colors ${
+                  centerTab === 'stats'
+                    ? 'border-b-2 border-sky-500 text-sky-600'
+                    : 'text-gray-400 hover:text-gray-600'
+                }`}
+              >
+                <BarChart2 className="h-3.5 w-3.5" />查詢統計
+              </button>
+            </div>
+          )}
+
+          {/* ── 文件管理內容 ── */}
+          {centerTab === 'docs' && (
+            <>
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                {!selectedKbId ? (
+                  <div className="flex h-full items-center justify-center">
+                    <p className="text-base text-gray-300">← 選擇知識庫</p>
+                  </div>
+                ) : docsLoading ? (
+                  <div className="flex h-full items-center justify-center">
+                    <Loader2 className="h-5 w-5 animate-spin text-gray-300" />
+                  </div>
+                ) : docs.length === 0 ? (
+                  <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
+                    <FileText className="h-8 w-8 text-gray-200" />
+                    <p className="text-base text-gray-400">尚無文件</p>
+                    {canUploadToSelectedKb && <p className="text-base text-gray-300">點擊下方「上傳文件」開始建立知識庫</p>}
+                  </div>
+                ) : (
+                  <>
+                    {(() => {
+                      const readyIds = docs.filter((d) => d.status === 'ready').map((d) => d.id)
+                      const allSelected = readyIds.length > 0 && readyIds.every((id) => selectedDocIds.has(id))
+                      const toggleAll = (select: boolean) => {
+                        const next = select ? new Set(readyIds) : new Set<number>()
+                        setSelectedDocIds(next)
+                        if (selectedKbId != null) localStorage.setItem(storageKey(selectedKbId), JSON.stringify([...next]))
+                      }
+                      return readyIds.length > 0 ? (
+                        <div className="flex items-center gap-2 border-b border-gray-100 bg-gray-100 px-4 py-2">
+                          <span className="flex-1 text-base text-gray-400">已選 {selectedDocIds.size} / {readyIds.length} 份</span>
+                          <button type="button" onClick={() => toggleAll(true)} disabled={allSelected}
+                            className="rounded px-2 py-0.5 text-base text-sky-600 hover:bg-sky-50 disabled:opacity-40">全選</button>
+                          <span className="text-gray-200">|</span>
+                          <button type="button" onClick={() => toggleAll(false)} disabled={selectedDocIds.size === 0}
+                            className="rounded px-2 py-0.5 text-base text-gray-500 hover:bg-gray-100 disabled:opacity-40">全不選</button>
+                        </div>
+                      ) : null
+                    })()}
+                    <ul className="divide-y divide-gray-50">
+                      {docs.map((doc) => (
+                        <li key={doc.id} className="group flex items-start gap-3 px-4 py-3 hover:bg-gray-50">
+                          {doc.status === 'ready' ? (
+                            <input type="checkbox" checked={selectedDocIds.has(doc.id)}
+                              onChange={(e) => setSelectedDocIds((prev) => {
+                                const next = new Set(prev)
+                                if (e.target.checked) next.add(doc.id); else next.delete(doc.id)
+                                if (selectedKbId != null) localStorage.setItem(storageKey(selectedKbId), JSON.stringify([...next]))
+                                return next
+                              })}
+                              className="mt-1 h-3.5 w-3.5 shrink-0 cursor-pointer accent-sky-500" />
+                          ) : (
+                            <FileText className="mt-0.5 h-4 w-4 shrink-0 text-gray-300" />
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <p className="line-clamp-2 break-all text-base font-medium text-gray-700">{doc.filename}</p>
+                            <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                              <StatusBadge status={doc.status} />
+                              {doc.chunk_count != null && doc.status === 'ready' && <span className="text-base text-gray-400">{doc.chunk_count} 段</span>}
+                              {doc.size_bytes != null && <span className="text-base text-gray-300">{formatBytes(doc.size_bytes)}</span>}
+                            </div>
+                            {doc.status === 'error' && doc.error_message && (
+                              <p className="mt-0.5 truncate text-base text-red-400">{doc.error_message}</p>
+                            )}
+                          </div>
+                          {canUploadToSelectedKb && (
+                            <button type="button" onClick={() => setDeleteDocTarget(doc)}
+                              className="mt-0.5 shrink-0 rounded p-1.5 text-gray-300 opacity-0 transition-all group-hover:opacity-100 hover:bg-red-50 hover:text-red-400">
+                              <Trash2 className="h-5 w-5" />
+                            </button>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </div>
+              {canUploadToSelectedKb && (
+                <div className="shrink-0 border-t border-gray-100 p-3">
+                  <button type="button" onClick={() => setUploadModalOpen(true)}
+                    className="flex w-full items-center justify-center gap-2 rounded-lg py-2.5 text-base font-medium text-white hover:opacity-90"
+                    style={{ backgroundColor: HEADER_COLOR }}>
+                    <Upload className="h-4 w-4" />上傳文件
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* ── 查詢統計內容 ── */}
+          {centerTab === 'stats' && (
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              {/* 篩選列 */}
+              <div className="flex shrink-0 items-center gap-2 border-b border-gray-100 bg-gray-100 px-4 py-2">
+                <span className="text-base text-gray-400">近</span>
+                {([7, 30, 90] as const).map((d) => (
+                  <button
+                    key={d}
+                    type="button"
+                    onClick={() => {
+                      setStatsDays(d)
+                      if (selectedKbId) loadStats(selectedKbId, d, statsView, 0)
+                    }}
+                    className={`rounded-full px-2.5 py-0.5 text-base font-medium transition-colors ${
+                      statsDays === d
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                    }`}
+                  >
+                    {d}天
+                  </button>
+                ))}
+              </div>
+
+              {/* 摘要卡片 */}
+              {statsData && (
+                <div className="grid shrink-0 grid-cols-3 divide-x divide-gray-100 border-b border-gray-100">
+                  <div className="flex flex-col items-center bg-slate-50 py-3">
+                    <span className="text-lg font-bold text-slate-700">{statsData.summary.total_queries}</span>
+                    <span className="text-base text-slate-500">總查詢</span>
+                  </div>
+                  <div className="flex flex-col items-center bg-emerald-50 py-3">
+                    <span className="text-lg font-bold text-emerald-600">
+                      {statsData.summary.total_queries > 0
+                        ? `${Math.round(statsData.summary.hit_rate * 100)}%`
+                        : '—'}
+                    </span>
+                    <span className="text-base text-emerald-600">命中率</span>
+                  </div>
+                  <div className={`flex flex-col items-center py-3 ${statsData.summary.zero_hit_count > 0 ? 'bg-amber-50' : 'bg-gray-50'}`}>
+                    <span className={`text-lg font-bold ${statsData.summary.zero_hit_count > 0 ? 'text-amber-600' : 'text-gray-500'}`}>
+                      {statsData.summary.zero_hit_count}
+                    </span>
+                    <span className={`text-base ${statsData.summary.zero_hit_count > 0 ? 'text-amber-600' : 'text-gray-500'}`}>零命中</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Sub-tab */}
+              <div className="flex shrink-0 border-b border-gray-100">
+                {(['top_queries', 'zero_hit'] as const).map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => {
+                      setStatsView(v)
+                      if (selectedKbId) loadStats(selectedKbId, statsDays, v, 0)
+                    }}
+                    className={`flex-1 py-2 text-base font-medium transition-colors ${
+                      statsView === v
+                        ? 'border-b-2 border-sky-500 text-sky-600'
+                        : 'text-gray-400 hover:text-gray-600'
+                    }`}
+                  >
+                    {v === 'top_queries' ? '最多人問' : '零命中'}
+                  </button>
+                ))}
+              </div>
+
+              {/* 清單 */}
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                {statsLoading && !statsData ? (
+                  <div className="flex h-full items-center justify-center">
+                    <Loader2 className="h-5 w-5 animate-spin text-gray-300" />
+                  </div>
+                ) : !statsData || statsData.queries.length === 0 ? (
+                  <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
+                    <BarChart2 className="h-8 w-8 text-gray-200" />
+                    <p className="text-base text-gray-400">
+                      {statsView === 'zero_hit' ? '近期無零命中查詢' : '尚無查詢記錄'}
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <ol className="divide-y divide-gray-50">
+                      {statsData.queries.map((item, idx) => (
+                        <li key={idx} className="flex items-start gap-3 px-4 py-2.5">
+                          <span className="mt-0.5 w-5 shrink-0 text-center text-base font-medium text-gray-300">
+                            {statsOffset + idx + 1}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <p className="line-clamp-2 break-all text-base text-gray-700">{item.query}</p>
+                          </div>
+                          <span className={`mt-0.5 shrink-0 rounded-full px-2 py-0.5 text-base font-medium ${
+                            item.hit ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
+                          }`}>
+                            {item.count} 次
+                          </span>
+                        </li>
+                      ))}
+                    </ol>
+                    {statsData.has_more && (
+                      <div className="flex justify-center py-3">
+                        <button
+                          type="button"
+                          disabled={statsLoading}
+                          onClick={() => {
+                            if (selectedKbId) {
+                              const nextOffset = statsOffset + STATS_LIMIT
+                              loadStats(selectedKbId, statsDays, statsView, nextOffset)
+                            }
+                          }}
+                          className="text-base text-sky-500 hover:underline disabled:opacity-40"
+                        >
+                          {statsLoading ? '載入中…' : '載入更多'}
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
             </div>
           )}
         </div>

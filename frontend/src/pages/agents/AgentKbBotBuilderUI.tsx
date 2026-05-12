@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Bot,
+  BarChart2,
   Check,
   ChevronRight,
   Loader2,
@@ -19,11 +20,14 @@ import {
   createBot,
   deleteBot,
   generateBotToken,
+  getBotQueryStats,
   listBots,
   revokeBotToken,
   updateBot,
   type Bot as BotType,
   type BotKbItem,
+  type BotQueryStatsResponse,
+  type BotQueryStatsView,
 } from '@/api/bots'
 import { listKnowledgeBases, type KmKnowledgeBase } from '@/api/km'
 import { getMe } from '@/api/users'
@@ -49,7 +53,7 @@ const BOT_COLOR = '#0d3d35'
 
 const threadStorageKey = (botId: number) => `kb-bot-thread-${botId}`
 
-type RightTab = 'chat' | 'history' | 'api' | 'settings' | 'deploy'
+type RightTab = 'chat' | 'history' | 'api' | 'settings' | 'deploy' | 'stats'
 
 export default function AgentKbBotBuilderUI({ agent }: Props) {
   const [userRole, setUserRole] = useState<UserRole>('member')
@@ -100,6 +104,13 @@ export default function AgentKbBotBuilderUI({ agent }: Props) {
   const [wSessionsLoading, setWSessionsLoading] = useState(false)
   const [wDetail, setWDetail] = useState<WidgetSessionDetail | null>(null)
   const [wDetailLoading, setWDetailLoading] = useState(false)
+
+  // ── 查詢統計 ──────────────────────────────────────────────────────────────
+  const [statsDays, setStatsDays] = useState<7 | 30 | 90>(30)
+  const [statsView, setStatsView] = useState<BotQueryStatsView>('top_queries')
+  const [statsData, setStatsData] = useState<BotQueryStatsResponse | null>(null)
+  const [statsLoading, setStatsLoading] = useState(false)
+  const [statsOffset, setStatsOffset] = useState(0)
 
   // ── Chat ──────────────────────────────────────────────────────────────────
   const [messages, setMessages] = useState<Message[]>([])
@@ -159,6 +170,8 @@ export default function AgentKbBotBuilderUI({ agent }: Props) {
     setMessages([])
     setWDetail(null)
     setWSessions([])
+    setStatsData(null)
+    setStatsOffset(0)
 
     // 嘗試從 localStorage 復原舊 thread，沒有或失效時建新的
     const savedThreadId = localStorage.getItem(threadStorageKey(selectedBot.id))
@@ -368,6 +381,24 @@ export default function AgentKbBotBuilderUI({ agent }: Props) {
     [agent.agent_id, isLoading, messages, bots, threadId]
   )
 
+  const loadStats = useCallback(async (
+    botId: number,
+    days: 7 | 30 | 90,
+    view: BotQueryStatsView,
+    offset: number,
+  ) => {
+    setStatsLoading(true)
+    try {
+      const data = await getBotQueryStats(botId, { days, view, limit: 20, offset })
+      setStatsData(data)
+      setStatsOffset(offset)
+    } catch {
+      // 靜默失敗
+    } finally {
+      setStatsLoading(false)
+    }
+  }, [])
+
   function toggleKb(kbId: number) {
     setSettingsKbIds((prev) => {
       const exists = prev.find((item) => item.knowledge_base_id === kbId)
@@ -519,6 +550,7 @@ export default function AgentKbBotBuilderUI({ agent }: Props) {
                 { key: 'api',      label: 'API 整合' },
                 { key: 'settings', label: 'Bot 設定' },
                 { key: 'deploy',   label: '部署' },
+                { key: 'stats',    label: '查詢統計' },
               ] as const
             ).map(({ key, label }) => (
               <button
@@ -916,6 +948,147 @@ export default function AgentKbBotBuilderUI({ agent }: Props) {
                           {settingsSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}儲存
                         </button>
                       </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* ── 查詢統計 ─────────────────────────────────────────────────── */}
+          {rightTab === 'stats' && (
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              {!selectedBot ? (
+                <div className="flex flex-1 items-center justify-center text-base text-gray-400">請先在左側選擇 Bot</div>
+              ) : (
+                <>
+                  {/* 篩選列 */}
+                  <div className="flex shrink-0 items-center gap-2 border-b border-gray-100 bg-gray-100 px-4 py-2">
+                    <span className="text-base text-gray-500">近</span>
+                    {([7, 30, 90] as const).map((d) => (
+                      <button
+                        key={d}
+                        type="button"
+                        onClick={() => {
+                          setStatsDays(d)
+                          if (selectedBotId) loadStats(selectedBotId, d, statsView, 0)
+                        }}
+                        className={`rounded-full px-2.5 py-0.5 text-base font-medium transition-colors ${
+                          statsDays === d
+                            ? 'bg-indigo-600 text-white shadow-sm'
+                            : 'bg-gray-200 text-gray-500 hover:bg-gray-300'
+                        }`}
+                      >
+                        {d}天
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => selectedBotId && loadStats(selectedBotId, statsDays, statsView, 0)}
+                      className="ml-auto rounded-lg p-1.5 text-gray-400 hover:bg-gray-200 hover:text-gray-600"
+                    >
+                      <RefreshCw className={`h-3.5 w-3.5 ${statsLoading ? 'animate-spin' : ''}`} />
+                    </button>
+                  </div>
+
+                  {/* 摘要卡片 */}
+                  {statsData && (
+                    <div className="grid shrink-0 grid-cols-3 divide-x divide-gray-100 border-b border-gray-100">
+                      <div className="flex flex-col items-center bg-slate-50 py-3">
+                        <span className="text-lg font-bold text-slate-700">{statsData.summary.total_queries}</span>
+                        <span className="text-base text-slate-500">總查詢</span>
+                      </div>
+                      <div className="flex flex-col items-center bg-emerald-50 py-3">
+                        <span className="text-lg font-bold text-emerald-600">
+                          {statsData.summary.total_queries > 0
+                            ? `${Math.round(statsData.summary.hit_rate * 100)}%`
+                            : '—'}
+                        </span>
+                        <span className="text-base text-emerald-600">命中率</span>
+                      </div>
+                      <div className={`flex flex-col items-center py-3 ${statsData.summary.zero_hit_count > 0 ? 'bg-amber-50' : 'bg-gray-50'}`}>
+                        <span className={`text-lg font-bold ${statsData.summary.zero_hit_count > 0 ? 'text-amber-600' : 'text-gray-500'}`}>
+                          {statsData.summary.zero_hit_count}
+                        </span>
+                        <span className={`text-base ${statsData.summary.zero_hit_count > 0 ? 'text-amber-600' : 'text-gray-500'}`}>零命中</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Sub-tab */}
+                  <div className="flex shrink-0 border-b border-gray-100">
+                    {(['top_queries', 'zero_hit'] as const).map((v) => (
+                      <button
+                        key={v}
+                        type="button"
+                        onClick={() => {
+                          setStatsView(v)
+                          if (selectedBotId) loadStats(selectedBotId, statsDays, v, 0)
+                        }}
+                        className={`flex flex-1 items-center justify-center gap-1.5 py-2 text-base font-medium transition-colors ${
+                          statsView === v
+                            ? 'border-b-2 border-sky-500 text-sky-600'
+                            : 'text-gray-400 hover:text-gray-600'
+                        }`}
+                      >
+                        <BarChart2 className="h-3.5 w-3.5" />
+                        {v === 'top_queries' ? '最多人問' : '零命中'}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* 查詢列表 */}
+                  <div className="min-h-0 flex-1 overflow-y-auto">
+                    {!statsData ? (
+                      <div className="flex h-full items-center justify-center">
+                        <button
+                          type="button"
+                          onClick={() => selectedBotId && loadStats(selectedBotId, statsDays, statsView, 0)}
+                          className="rounded-lg bg-sky-50 px-4 py-2 text-base text-sky-600 hover:bg-sky-100"
+                        >
+                          載入統計資料
+                        </button>
+                      </div>
+                    ) : statsLoading ? (
+                      <div className="flex h-full items-center justify-center">
+                        <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
+                      </div>
+                    ) : statsData.queries.length === 0 ? (
+                      <div className="flex h-full items-center justify-center text-base text-gray-400">
+                        {statsView === 'zero_hit' ? '近期無零命中查詢' : '尚無查詢記錄'}
+                      </div>
+                    ) : (
+                      <>
+                        {statsData.queries.map((item, i) => (
+                          <div key={i} className="flex items-start gap-3 border-b border-gray-50 px-4 py-2.5">
+                            <span className="mt-0.5 shrink-0 text-base font-bold text-gray-300">
+                              {String(statsOffset + i + 1).padStart(2, '0')}
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-base text-gray-700">{item.query}</p>
+                              <p className="text-base text-gray-400">
+                                {item.count} 次・{new Date(item.last_asked_at).toLocaleDateString('zh-TW')}
+                              </p>
+                            </div>
+                          </div>
+                        ))}
+                        {/* 分頁 */}
+                        <div className="flex shrink-0 items-center justify-between border-t border-gray-100 px-4 py-2">
+                          <button
+                            type="button"
+                            disabled={statsOffset === 0}
+                            onClick={() => selectedBotId && loadStats(selectedBotId, statsDays, statsView, Math.max(0, statsOffset - 20))}
+                            className="rounded px-2 py-1 text-base text-gray-500 hover:bg-gray-100 disabled:opacity-30"
+                          >← 上一頁</button>
+                          <span className="text-base text-gray-400">{statsOffset + 1}–{Math.min(statsOffset + 20, statsData.total)} / {statsData.total}</span>
+                          <button
+                            type="button"
+                            disabled={statsOffset + 20 >= statsData.total}
+                            onClick={() => selectedBotId && loadStats(selectedBotId, statsDays, statsView, statsOffset + 20)}
+                            className="rounded px-2 py-1 text-base text-gray-500 hover:bg-gray-100 disabled:opacity-30"
+                          >下一頁 →</button>
+                        </div>
+                      </>
                     )}
                   </div>
                 </>

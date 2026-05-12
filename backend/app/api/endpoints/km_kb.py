@@ -1,6 +1,5 @@
 """KM 知識庫 API：建立、列表、更新、刪除知識庫（kb）"""
 import logging
-import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -13,7 +12,6 @@ from app.models.bot import BotKnowledgeBase
 from app.models.km_document import KmDocument
 from app.models.km_knowledge_base import KmKnowledgeBase
 from app.models.user import User
-from app.models.widget_session import WidgetSession
 from app.models.km_chunk import KmChunk
 
 router = APIRouter()
@@ -44,12 +42,6 @@ class KbUpdate(BaseModel):
     system_prompt: str | None = None
     scope: str | None = None
     answer_mode: str | None = None  # 'rag' | 'direct'
-    widget_title: str | None = None
-    widget_logo_url: str | None = None
-    widget_color: str | None = None
-    widget_lang: str | None = None
-    widget_voice_enabled: bool | None = None
-    widget_voice_prompt: str | None = None
 
 
 class KbResponse(BaseModel):
@@ -65,13 +57,6 @@ class KbResponse(BaseModel):
     ready_count: int
     bot_count: int
     created_at: str
-    public_token: str | None
-    widget_title: str | None
-    widget_logo_url: str | None
-    widget_color: str | None
-    widget_lang: str | None
-    widget_voice_enabled: bool
-    widget_voice_prompt: str | None
 
     model_config = {"from_attributes": True}
 
@@ -92,13 +77,6 @@ def _to_response(kb: KmKnowledgeBase, db: Session) -> KbResponse:
         ready_count=sum(1 for d in all_docs if d.status == "ready"),
         bot_count=bot_count,
         created_at=kb.created_at.isoformat() if kb.created_at else "",
-        public_token=kb.public_token,
-        widget_title=kb.widget_title,
-        widget_logo_url=kb.widget_logo_url,
-        widget_color=kb.widget_color,
-        widget_lang=kb.widget_lang,
-        widget_voice_enabled=kb.widget_voice_enabled or False,
-        widget_voice_prompt=kb.widget_voice_prompt,
     )
 
 
@@ -216,18 +194,6 @@ def update_knowledge_base(
         if body.answer_mode not in ("rag", "direct"):
             raise HTTPException(status_code=400, detail="answer_mode 必須是 'rag' 或 'direct'")
         kb.answer_mode = body.answer_mode
-    if body.widget_title is not None:
-        kb.widget_title = body.widget_title or None
-    if body.widget_logo_url is not None:
-        kb.widget_logo_url = body.widget_logo_url or None
-    if body.widget_color is not None:
-        kb.widget_color = body.widget_color or None
-    if body.widget_lang is not None:
-        kb.widget_lang = body.widget_lang or None
-    if body.widget_voice_enabled is not None:
-        kb.widget_voice_enabled = body.widget_voice_enabled
-    if body.widget_voice_prompt is not None:
-        kb.widget_voice_prompt = body.widget_voice_prompt or None
     db.commit()
     db.refresh(kb)
     return _to_response(kb, db)
@@ -255,62 +221,12 @@ def delete_knowledge_base(
         if not _can_manage(current.role) and kb.scope != "personal":
             raise HTTPException(status_code=403, detail="只能刪除自己的個人知識庫")
 
-    # 先刪 widget_sessions（含 messages，由 ORM cascade 處理）
-    for s in db.query(WidgetSession).filter(WidgetSession.kb_id == kb_id).all():
-        db.delete(s)
-
-    # 再刪文件（chunks 由 DB ondelete=CASCADE 自動清除）
+    # 刪文件（chunks 由 DB ondelete=CASCADE 自動清除）
     for doc in db.query(KmDocument).filter(KmDocument.knowledge_base_id == kb_id).all():
         db.delete(doc)
 
     db.delete(kb)
     db.commit()
-
-
-@router.post("/knowledge-bases/{kb_id}/generate-token", response_model=KbResponse)
-def generate_widget_token(
-    kb_id: int,
-    db: Session = Depends(get_db),
-    current: Annotated[User, Depends(get_current_user)] = ...,
-):
-    """產生（或重設）Widget public_token，僅限 admin / super_admin"""
-    if not _is_admin(current.role):
-        raise HTTPException(status_code=403, detail="只有系統管理員可以開通 Widget Token")
-
-    kb = db.query(KmKnowledgeBase).filter(
-        KmKnowledgeBase.id == kb_id,
-        KmKnowledgeBase.tenant_id == current.tenant_id,
-    ).first()
-    if not kb:
-        raise HTTPException(status_code=404, detail="知識庫不存在")
-
-    kb.public_token = uuid.uuid4().hex
-    db.commit()
-    db.refresh(kb)
-    return _to_response(kb, db)
-
-
-@router.delete("/knowledge-bases/{kb_id}/token", response_model=KbResponse)
-def revoke_widget_token(
-    kb_id: int,
-    db: Session = Depends(get_db),
-    current: Annotated[User, Depends(get_current_user)] = ...,
-):
-    """停用 Widget：清空 public_token，連結立即失效，外觀設定保留，僅限 admin / super_admin"""
-    if not _is_admin(current.role):
-        raise HTTPException(status_code=403, detail="只有系統管理員可以停用 Widget")
-
-    kb = db.query(KmKnowledgeBase).filter(
-        KmKnowledgeBase.id == kb_id,
-        KmKnowledgeBase.tenant_id == current.tenant_id,
-    ).first()
-    if not kb:
-        raise HTTPException(status_code=404, detail="知識庫不存在")
-
-    kb.public_token = None
-    db.commit()
-    db.refresh(kb)
-    return _to_response(kb, db)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -351,3 +267,116 @@ def admin_list_knowledge_bases(
             created_by_name=user_map.get(kb.created_by) if kb.created_by else None,
         ))
     return results
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 查詢統計
+# ──────────────────────────────────────────────────────────────────────────────
+
+class QueryStatsSummary(BaseModel):
+    total_queries: int
+    hit_count: int
+    zero_hit_count: int
+    hit_rate: float  # 0.0 ~ 1.0
+
+
+class QueryItem(BaseModel):
+    query: str
+    count: int
+    hit: bool
+    last_asked_at: str  # ISO 8601
+
+
+class QueryStatsResponse(BaseModel):
+    summary: QueryStatsSummary
+    queries: list[QueryItem]
+    total: int       # 篩選後去重問題總筆數（分頁用）
+    has_more: bool
+
+
+@router.get("/knowledge-bases/{kb_id}/query-stats", response_model=QueryStatsResponse)
+def get_knowledge_base_query_stats(
+    kb_id: int,
+    days: int = 30,
+    view: str = "top_queries",   # top_queries | zero_hit
+    limit: int = 20,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    current: Annotated[User, Depends(get_current_user)] = ...,
+):
+    """KB 查詢統計：摘要 + 問題清單。view=top_queries 最多人問；view=zero_hit 零命中清單。"""
+    from datetime import datetime, timedelta, timezone
+
+    import sqlalchemy as sa
+
+    from app.models.km_query_log import KmQueryLog
+
+    # 確認 KB 存在且屬於此 tenant
+    kb = db.query(KmKnowledgeBase).filter(
+        KmKnowledgeBase.id == kb_id,
+        KmKnowledgeBase.tenant_id == current.tenant_id,
+    ).first()
+    if not kb:
+        raise HTTPException(status_code=404, detail="知識庫不存在")
+
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+
+    base_q = db.query(KmQueryLog).filter(
+        KmQueryLog.knowledge_base_id == kb_id,
+        KmQueryLog.created_at >= since,
+    )
+
+    # ── 摘要統計 ──
+    total_queries = base_q.count()
+    hit_count = base_q.filter(KmQueryLog.hit == True).count()  # noqa: E712
+    zero_hit_count = total_queries - hit_count
+    hit_rate = round(hit_count / total_queries, 4) if total_queries > 0 else 0.0
+
+    summary = QueryStatsSummary(
+        total_queries=total_queries,
+        hit_count=hit_count,
+        zero_hit_count=zero_hit_count,
+        hit_rate=hit_rate,
+    )
+
+    # ── 問題清單（GROUP BY query，計次數） ──
+    hit_filter = None
+    if view == "zero_hit":
+        hit_filter = KmQueryLog.hit == False   # noqa: E712
+
+    agg_q = (
+        db.query(
+            KmQueryLog.query,
+            sa.func.count(KmQueryLog.id).label("cnt"),
+            sa.func.bool_or(KmQueryLog.hit).label("any_hit"),
+            sa.func.max(KmQueryLog.created_at).label("last_at"),
+        )
+        .filter(
+            KmQueryLog.knowledge_base_id == kb_id,
+            KmQueryLog.created_at >= since,
+        )
+    )
+    if hit_filter is not None:
+        agg_q = agg_q.filter(hit_filter)
+
+    agg_q = agg_q.group_by(KmQueryLog.query).order_by(sa.desc("cnt"))
+
+    total_distinct = agg_q.count()
+    rows = agg_q.offset(offset).limit(limit).all()
+
+    queries = [
+        QueryItem(
+            query=r.query,
+            count=r.cnt,
+            hit=bool(r.any_hit),
+            last_asked_at=r.last_at.isoformat() if r.last_at else "",
+        )
+        for r in rows
+    ]
+
+    return QueryStatsResponse(
+        summary=summary,
+        queries=queries,
+        total=total_distinct,
+        has_more=(offset + limit) < total_distinct,
+    )

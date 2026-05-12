@@ -90,7 +90,7 @@ export async function botWidgetChatStream(
   body: { session_id: string; messages: { role: string; content: string }[]; content: string },
   callbacks: {
     onDelta: (chunk: string) => void
-    onDone: () => void
+    onDone: (content?: string) => void
     onError: (msg: string) => void
   }
 ) {
@@ -127,7 +127,7 @@ export async function botWidgetChatStream(
           callbacks.onDelta(ev.text)
           await Promise.resolve()
         } else if (ev.event === 'done') {
-          callbacks.onDone()
+          callbacks.onDone(ev.content)
           return
         } else if (ev.event === 'error') {
           callbacks.onError(ev.message ?? '未知錯誤')
@@ -139,5 +139,5 @@ export async function botWidgetChatStream(
     }
     if (done) break
   }
-  callbacks.onDone()
+  callbacks.onDone(undefined)
 }

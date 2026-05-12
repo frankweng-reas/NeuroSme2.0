@@ -1,4 +1,4 @@
-/** Widget 管理 API（需登入） */
+/** Bot Widget 管理 API（需登入） */
 import { apiFetch } from './client'
 
 export interface WidgetSessionItem {
@@ -21,16 +21,6 @@ export interface WidgetMessageItem {
 export interface WidgetSessionDetail extends WidgetSessionItem {
   messages: WidgetMessageItem[]
 }
-
-export function listWidgetSessions(kbId: number): Promise<WidgetSessionItem[]> {
-  return apiFetch<WidgetSessionItem[]>(`/widget-admin/kb/${kbId}/sessions`)
-}
-
-export function getWidgetSessionMessages(sessionId: string): Promise<WidgetSessionDetail> {
-  return apiFetch<WidgetSessionDetail>(`/widget-admin/sessions/${sessionId}/messages`)
-}
-
-// ── Bot Widget Admin ────────────────────────────────────────────────────────
 
 export function listBotWidgetSessions(botId: number): Promise<WidgetSessionItem[]> {
   return apiFetch<WidgetSessionItem[]>(`/widget-admin/bot/${botId}/sessions`)

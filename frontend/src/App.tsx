@@ -28,7 +28,6 @@ import ProfilePage from './pages/ProfilePage'
 import TestLLMChat from './pages/TestLLMChat'
 import TestComputeEngine from './pages/TestComputeEngine'
 import DevPipelineInspector from './pages/DevPipelineInspector'
-import WidgetPage from './pages/WidgetPage'
 import WidgetBotPage from './pages/WidgetBotPage'
 
 function App() {
@@ -39,7 +38,6 @@ function App() {
           <Routes>
             {/* Widget：公開頁面，不需登入，在 Layout 外 */}
             <Route path="/widget/bot/:token" element={<WidgetBotPage />} />
-            <Route path="/widget/:token" element={<WidgetPage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
             <Route path="/change-password-expired" element={<ChangePasswordExpiredPage />} />

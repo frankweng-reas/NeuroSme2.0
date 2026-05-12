@@ -171,6 +171,7 @@ async def bot_widget_chat(
 
     # RAG 多 KB 聯合檢索
     context_text = ""
+    _bot_chunk_ids: list[str] = []
     try:
         chunks = km_retrieve_sync(
             query=body.content,
@@ -181,6 +182,7 @@ async def bot_widget_chat(
             agent_id="knowledge-bot",
         )
         if chunks:
+            _bot_chunk_ids = [str(c.id) for c in chunks]
             context_text = format_km_context(chunks, show_source=False)
     except Exception as e:
         logger.warning("Bot Widget RAG 失敗，略過參考資料: %s", e)
@@ -261,11 +263,13 @@ async def bot_widget_chat(
                     except (TypeError, ValueError):
                         pass
 
-            yield f"data: {json.dumps({'event': 'done', 'content': full_text}, ensure_ascii=False)}\n\n"
+            from app.api.endpoints.chat import _clean_rag_response
+            clean_text = _clean_rag_response(full_text, "cs")
+            yield f"data: {json.dumps({'event': 'done', 'content': clean_text}, ensure_ascii=False)}\n\n"
 
             if full_text:
                 try:
-                    db.add(BotWidgetMessage(session_id=session_id, role="assistant", content=full_text))
+                    db.add(BotWidgetMessage(session_id=session_id, role="assistant", content=clean_text))
                     db.commit()
                 except Exception as save_err:
                     logger.warning("儲存 assistant 訊息失敗: %s", save_err)
@@ -290,6 +294,23 @@ async def bot_widget_chat(
                 s.commit()
             except Exception as log_err:
                 logger.warning("Bot Widget LLM usage log 失敗: %s", log_err)
+
+            # Layer 2：記錄 Bot 查詢結果
+            try:
+                from app.api.endpoints.chat import _rag_hit_from_response
+                from app.services.km_service import log_bot_query
+                _hit = _rag_hit_from_response(full_text, _bot_chunk_ids)
+                log_bot_query(
+                    s,
+                    tenant_id=tenant_id_for_log,
+                    bot_id=bot_id,
+                    session_id=session_id,
+                    query=body.content or "",
+                    hit=_hit,
+                )
+                s.commit()
+            except Exception as log_err:
+                logger.warning("Bot Widget bot_query_log 寫入失敗: %s", log_err)
             finally:
                 s.close()
 
