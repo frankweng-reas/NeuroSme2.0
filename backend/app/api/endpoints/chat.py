@@ -197,6 +197,8 @@ class ChatCompletionPrepared:
     faq_candidates: list | None = None    # direct 模式：候選 [(KmChunk, float), ...]
     knowledge_base_id: int | None = None  # 用於 km_query_logs
     context_chunk_ids: list[str] = field(default_factory=list)  # RAG 命中的 chunk UUID 字串
+    bot_fallback_message: str | None = None
+    bot_fallback_message_enabled: bool = False
 
 
 def _prepare_chat_completion(req: ChatRequest, db: Session, current: User) -> ChatCompletionPrepared:
@@ -218,11 +220,12 @@ def _prepare_chat_completion(req: ChatRequest, db: Session, current: User) -> Ch
     # Knowledge Bot Agent：多 KB RAG，bot_id 優先於其他 KM/CS 分支
     kb_model_name: str | None = None
     kb_system_prompt: str | None = None
+    kb_fallback_message: str | None = None
+    kb_fallback_message_enabled: bool = False
     km_sources: list[dict] = []
     if req.bot_id is not None:
         from app.models.bot import Bot
-        from app.models.bot import BotKnowledgeBase
-        from app.services.km_service import format_km_context, km_retrieve_sync
+        from app.services.bot_rag_service import prepare_bot_rag_messages
 
         bot = db.query(Bot).filter(
             Bot.id == req.bot_id,
@@ -233,29 +236,25 @@ def _prepare_chat_completion(req: ChatRequest, db: Session, current: User) -> Ch
         if not bot.is_active:
             raise HTTPException(status_code=403, detail="此 Bot 已停用")
 
-        kb_ids = [
-            row.knowledge_base_id
-            for row in db.query(BotKnowledgeBase)
-            .filter(BotKnowledgeBase.bot_id == bot.id)
-            .order_by(BotKnowledgeBase.sort_order)
-            .all()
-        ]
-        chunks = km_retrieve_sync(
-            req.content, db, tenant_id, current.id,
-            knowledge_base_ids=kb_ids if kb_ids else None,
+        history = [{"role": m.role, "content": m.content} for m in req.messages]
+        bot_ctx = prepare_bot_rag_messages(
+            bot,
+            req.content,
+            history,
+            db,
+            tenant_id,
+            user_id=current.id,
+            skip_scope_check=False,  # 內部用戶走正常 scope 檢查
             agent_id="knowledge-bot",
         )
-        data = format_km_context(chunks)
-        if chunks:
-            seen: set[str] = set()
-            for chunk in chunks:
-                fname = chunk.document.filename if chunk.document else "未知文件"
-                if fname not in seen:
-                    seen.add(fname)
-                    km_sources.append({"filename": fname})
-
-        kb_model_name = (bot.model_name or "").strip() or None
-        kb_system_prompt = (bot.system_prompt or "").strip() or None
+        # 將 bot_rag_service 的結果轉換成 _prepare_chat_completion 需要的變數
+        data = bot_ctx.rag_context_text
+        km_sources = bot_ctx.sources
+        _km_chunk_ids = bot_ctx.context_chunk_ids
+        kb_model_name = bot_ctx.model or None
+        kb_system_prompt = bot_ctx.system_prompt_used
+        kb_fallback_message = (bot.fallback_message or "").strip() or None
+        kb_fallback_message_enabled = bot.fallback_message_enabled or False
 
     # KM Agent & Chat Service Agent & KB Manager：RAG 向量檢索，不使用 source_files
     elif aid in ("knowledge", "cs", "kb-manager"):
@@ -405,6 +404,8 @@ def _prepare_chat_completion(req: ChatRequest, db: Session, current: User) -> Ch
         sources=km_sources,
         knowledge_base_id=_km_kb_id,
         context_chunk_ids=_km_chunk_ids,
+        bot_fallback_message=kb_fallback_message if req.bot_id is not None else None,
+        bot_fallback_message_enabled=kb_fallback_message_enabled if req.bot_id is not None else False,
     )
 
 
@@ -448,9 +449,18 @@ def _rag_hit_from_response(content: str | None, context_chunk_ids: list[str]) ->
     return True
 
 
-def _clean_rag_response(content: str | None, agent_type: str | None = None) -> str:
-    """若 LLM 回傳 [NOT_FOUND] marker，替換成用戶友善的訊息。"""
+def _clean_rag_response(
+    content: str | None,
+    agent_type: str | None = None,
+    fallback_message: str | None = None,
+    fallback_message_enabled: bool = False,
+) -> str:
+    """若 LLM 回傳 [NOT_FOUND] marker，替換成用戶友善的訊息。
+    若 Bot 設定了啟用的 fallback_message，優先使用它。
+    """
     if content and _NOT_FOUND_MARKER in content:
+        if fallback_message_enabled and fallback_message and fallback_message.strip():
+            return fallback_message.strip()
         if agent_type == "cs":
             return _NOT_FOUND_CS_MSG
         return _NOT_FOUND_KM_MSG
@@ -711,7 +721,12 @@ async def chat_completions(
             )
             db.commit()
 
-        clean_content = _clean_rag_response(parsed.content, prepared.agent_id)
+        clean_content = _clean_rag_response(
+            parsed.content,
+            prepared.agent_id,
+            fallback_message=prepared.bot_fallback_message,
+            fallback_message_enabled=prepared.bot_fallback_message_enabled,
+        )
         return ChatResponse(
             content=clean_content,
             model=parsed.model,
@@ -1047,7 +1062,12 @@ async def chat_completions_stream(
             finally:
                 s.close()
 
-        clean_full = _clean_rag_response(full, prepared.agent_id)
+        clean_full = _clean_rag_response(
+            full,
+            prepared.agent_id,
+            fallback_message=prepared.bot_fallback_message,
+            fallback_message_enabled=prepared.bot_fallback_message_enabled,
+        )
         done_payload = {
             "event": "done",
             "content": clean_full,

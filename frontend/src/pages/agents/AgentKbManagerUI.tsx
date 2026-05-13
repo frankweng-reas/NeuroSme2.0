@@ -8,12 +8,14 @@ import {
   BarChart2,
   Check,
   ChevronRight,
+  Download,
   FileText,
   Headphones,
   Loader2,
   Maximize2,
   Minimize2,
   MoreHorizontal,
+  Pencil,
   Plus,
   RefreshCw,
   Settings,
@@ -24,15 +26,20 @@ import {
 import { chatCompletionsStream } from '@/api/chat'
 import { ApiError } from '@/api/client'
 import {
+  addChunk,
   createKnowledgeBase,
+  deleteChunk,
   deleteKnowledgeBase,
   deleteKmDocument,
   getKbQueryStats,
+  listDocChunks,
   listKbDocuments,
   listKnowledgeBases,
+  updateChunk,
   updateKnowledgeBase,
   uploadKmDocument,
   type KbScope,
+  type KmChunk,
   type KmDocument,
   type KmKnowledgeBase,
   type QueryStatsResponse,
@@ -201,6 +208,91 @@ export default function AgentKbManagerUI({ agent }: Props) {
       setSettingsSaving(false)
     }
   }
+
+  // ── Chunk 編輯 Drawer ──────────────────────────────────────────────────────
+  const [drawerDoc, setDrawerDoc] = useState<KmDocument | null>(null)
+  const [chunks, setChunks] = useState<KmChunk[]>([])
+  const [chunksLoading, setChunksLoading] = useState(false)
+  const [editingChunkId, setEditingChunkId] = useState<number | null>(null)
+  const [editingContent, setEditingContent] = useState('')
+  const [savingChunkId, setSavingChunkId] = useState<number | null>(null)
+  const [deletingChunkId, setDeletingChunkId] = useState<number | null>(null)
+  const [addingChunk, setAddingChunk] = useState(false)
+  const [newChunkContent, setNewChunkContent] = useState('')
+  const [addingChunkLoading, setAddingChunkLoading] = useState(false)
+
+  const openDrawer = useCallback((doc: KmDocument) => {
+    setDrawerDoc(doc)
+    setChunks([])
+    setEditingChunkId(null)
+    setNewChunkContent('')
+    setAddingChunk(false)
+    setChunksLoading(true)
+    listDocChunks(doc.id)
+      .then(setChunks)
+      .catch(() => setChunks([]))
+      .finally(() => setChunksLoading(false))
+  }, [])
+
+  const closeDrawer = useCallback(() => {
+    setDrawerDoc(null)
+    setChunks([])
+    setEditingChunkId(null)
+    setAddingChunk(false)
+  }, [])
+
+  const handleSaveChunk = useCallback(async (chunkId: number) => {
+    const content = editingContent.trim()
+    if (!content) return
+    setSavingChunkId(chunkId)
+    try {
+      const updated = await updateChunk(chunkId, content)
+      setChunks((prev) => prev.map((c) => c.id === chunkId ? updated : c))
+      setEditingChunkId(null)
+      showToast('段落已儲存並重新 Embedding')
+    } catch (err) {
+      setErrorModal({ title: '儲存失敗', message: err instanceof Error ? err.message : '儲存失敗' })
+    } finally {
+      setSavingChunkId(null)
+    }
+  }, [editingContent]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleDeleteChunkItem = useCallback(async (chunkId: number) => {
+    setDeletingChunkId(chunkId)
+    try {
+      await deleteChunk(chunkId)
+      setChunks((prev) => prev.filter((c) => c.id !== chunkId))
+      if (drawerDoc) {
+        setDocs((prev) => prev.map((d) =>
+          d.id === drawerDoc.id ? { ...d, chunk_count: Math.max(0, (d.chunk_count ?? 1) - 1) } : d
+        ))
+      }
+      showToast('段落已刪除')
+    } catch (err) {
+      setErrorModal({ title: '刪除失敗', message: err instanceof Error ? err.message : '刪除失敗' })
+    } finally {
+      setDeletingChunkId(null)
+    }
+  }, [drawerDoc]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleAddChunk = useCallback(async () => {
+    if (!drawerDoc || !newChunkContent.trim()) return
+    setAddingChunkLoading(true)
+    try {
+      const added = await addChunk(drawerDoc.id, newChunkContent.trim())
+      setChunks((prev) => [...prev, added])
+      setDocs((prev) => prev.map((d) =>
+        d.id === drawerDoc.id ? { ...d, chunk_count: (d.chunk_count ?? 0) + 1 } : d
+      ))
+      setNewChunkContent('')
+      setAddingChunk(false)
+      showToast('段落已新增並完成 Embedding')
+    } catch (err) {
+      setErrorModal({ title: '新增失敗', message: err instanceof Error ? err.message : '新增失敗' })
+    } finally {
+      setAddingChunkLoading(false)
+    }
+  }, [drawerDoc, newChunkContent]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── 中欄：文件管理 ─────────────────────────────────────────────────────────
   const [docs, setDocs] = useState<KmDocument[]>([])
@@ -493,6 +585,169 @@ export default function AgentKbManagerUI({ agent }: Props) {
       {toast && (
         <div className={`fixed bottom-8 left-1/2 z-50 -translate-x-1/2 max-w-[90vw] rounded-lg px-4 py-2 text-base text-white shadow-lg ${toast.type === 'error' ? 'bg-red-600' : 'bg-gray-800'}`}
           role={toast.type === 'error' ? 'alert' : 'status'}>{toast.msg}</div>
+      )}
+
+      {/* ── Chunk 編輯 Drawer ──────────────────────────────────────────────── */}
+      {drawerDoc && (
+        <div className="fixed inset-0 z-40 flex justify-end">
+          {/* 半透明背景 */}
+          <div className="absolute inset-0 bg-black/30" onClick={closeDrawer} />
+          {/* Drawer 本體 */}
+          <div className="relative flex h-full w-full max-w-xl flex-col bg-white shadow-2xl">
+            {/* 標題列 */}
+            <div className="flex shrink-0 items-center gap-3 border-b border-gray-100 px-5 py-4">
+              <Pencil className="h-4 w-4 shrink-0 text-sky-500" />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-base font-semibold text-gray-800">{drawerDoc.filename}</p>
+                <p className="text-base text-gray-400">
+                  {chunksLoading ? '載入中…' : `${chunks.length} 個段落`}
+                </p>
+              </div>
+              {!chunksLoading && chunks.length > 0 && (
+                <button
+                  type="button"
+                  title="匯出所有段落為 txt"
+                  onClick={() => {
+                    const content = chunks
+                      .map((c) => c.content.trim())
+                      .join('\n\n')
+                    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
+                    const url = URL.createObjectURL(blob)
+                    const a = document.createElement('a')
+                    const baseName = drawerDoc?.filename.replace(/\.[^.]+$/, '') ?? 'chunks'
+                    a.href = url
+                    a.download = `${baseName}.txt`
+                    a.click()
+                    URL.revokeObjectURL(url)
+                  }}
+                  className="shrink-0 rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                >
+                  <Download className="h-4 w-4" />
+                </button>
+              )}
+              <button type="button" onClick={closeDrawer}
+                className="shrink-0 rounded-lg p-1.5 text-gray-400 hover:bg-gray-100">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* 段落列表 */}
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 space-y-3">
+              {chunksLoading ? (
+                <div className="flex h-40 items-center justify-center">
+                  <Loader2 className="h-6 w-6 animate-spin text-gray-300" />
+                </div>
+              ) : chunks.length === 0 ? (
+                <p className="py-12 text-center text-base text-gray-300">尚無段落</p>
+              ) : (
+                chunks.map((chunk) => {
+                  const isEditing = editingChunkId === chunk.id
+                  const isSaving = savingChunkId === chunk.id
+                  const isDeleting = deletingChunkId === chunk.id
+                  return (
+                    <div key={chunk.id}
+                      className={`rounded-xl border p-3 transition-colors ${isEditing ? 'border-sky-300 bg-sky-50/40' : 'border-gray-200 bg-white hover:border-gray-300'}`}>
+                      {/* 段落標頭 */}
+                      <div className="mb-2 flex items-center gap-2">
+                        <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500">
+                          #{chunk.chunk_index + 1}
+                        </span>
+                        <span className="text-xs text-gray-300">{chunk.content.length} 字</span>
+                        <div className="ml-auto flex items-center gap-1">
+                          {!isEditing && (
+                            <button type="button"
+                              onClick={() => { setEditingChunkId(chunk.id); setEditingContent(chunk.content) }}
+                              className="rounded p-1 text-gray-300 hover:bg-sky-50 hover:text-sky-500">
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                          <button type="button"
+                            disabled={isDeleting || isEditing}
+                            onClick={() => handleDeleteChunkItem(chunk.id)}
+                            className="rounded p-1 text-gray-300 hover:bg-red-50 hover:text-red-400 disabled:opacity-40">
+                            {isDeleting
+                              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              : <Trash2 className="h-3.5 w-3.5" />}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* 內容 / 編輯區 */}
+                      {isEditing ? (
+                        <>
+                          <textarea
+                            autoFocus
+                            value={editingContent}
+                            onChange={(e) => setEditingContent(e.target.value)}
+                            rows={6}
+                            className="w-full rounded-lg border border-sky-300 bg-white px-3 py-2 text-base text-gray-700 focus:outline-none focus:ring-1 focus:ring-sky-400"
+                          />
+                          <div className="mt-2 flex justify-end gap-2">
+                            <button type="button"
+                              onClick={() => setEditingChunkId(null)}
+                              disabled={isSaving}
+                              className="rounded-lg border border-gray-300 px-3 py-1.5 text-base text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+                              取消
+                            </button>
+                            <button type="button"
+                              onClick={() => void handleSaveChunk(chunk.id)}
+                              disabled={isSaving || !editingContent.trim()}
+                              className="flex items-center gap-1.5 rounded-lg bg-sky-600 px-3 py-1.5 text-base font-medium text-white hover:bg-sky-700 disabled:opacity-50">
+                              {isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                              {isSaving ? '儲存中…' : '儲存'}
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <p className="whitespace-pre-wrap break-words text-base text-gray-600 leading-relaxed">
+                          {chunk.content}
+                        </p>
+                      )}
+                    </div>
+                  )
+                })
+              )}
+
+              {/* 新增段落區 */}
+              {addingChunk ? (
+                <div className="rounded-xl border border-dashed border-sky-300 bg-sky-50/40 p-3">
+                  <p className="mb-2 text-base font-medium text-sky-700">新增段落</p>
+                  <textarea
+                    autoFocus
+                    value={newChunkContent}
+                    onChange={(e) => setNewChunkContent(e.target.value)}
+                    rows={5}
+                    placeholder="輸入新段落內容…"
+                    className="w-full rounded-lg border border-sky-300 bg-white px-3 py-2 text-base text-gray-700 placeholder-gray-300 focus:outline-none focus:ring-1 focus:ring-sky-400"
+                  />
+                  <div className="mt-2 flex justify-end gap-2">
+                    <button type="button"
+                      onClick={() => { setAddingChunk(false); setNewChunkContent('') }}
+                      disabled={addingChunkLoading}
+                      className="rounded-lg border border-gray-300 px-3 py-1.5 text-base text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+                      取消
+                    </button>
+                    <button type="button"
+                      onClick={() => void handleAddChunk()}
+                      disabled={addingChunkLoading || !newChunkContent.trim()}
+                      className="flex items-center gap-1.5 rounded-lg bg-sky-600 px-3 py-1.5 text-base font-medium text-white hover:bg-sky-700 disabled:opacity-50">
+                      {addingChunkLoading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                      {addingChunkLoading ? '新增中…' : '新增'}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                !chunksLoading && (
+                  <button type="button"
+                    onClick={() => setAddingChunk(true)}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-gray-300 py-3 text-base text-gray-400 hover:border-sky-300 hover:text-sky-500">
+                    <Plus className="h-4 w-4" />新增段落
+                  </button>
+                )
+              )}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* 上傳 Modal */}
@@ -949,6 +1204,13 @@ export default function AgentKbManagerUI({ agent }: Props) {
                               <p className="mt-0.5 truncate text-base text-red-400">{doc.error_message}</p>
                             )}
                           </div>
+                          {canUploadToSelectedKb && doc.status === 'ready' && (
+                            <button type="button" onClick={() => openDrawer(doc)}
+                              title="編輯段落內容"
+                              className="mt-0.5 shrink-0 rounded p-1.5 text-gray-300 opacity-0 transition-all group-hover:opacity-100 hover:bg-sky-50 hover:text-sky-500">
+                              <Pencil className="h-4 w-4" />
+                            </button>
+                          )}
                           {canUploadToSelectedKb && (
                             <button type="button" onClick={() => setDeleteDocTarget(doc)}
                               className="mt-0.5 shrink-0 rounded p-1.5 text-gray-300 opacity-0 transition-all group-hover:opacity-100 hover:bg-red-50 hover:text-red-400">

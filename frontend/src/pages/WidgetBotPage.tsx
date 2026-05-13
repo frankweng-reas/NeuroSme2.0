@@ -114,6 +114,15 @@ function WidgetBotInner({ token, isEmbed, langOverride }: { token: string; isEmb
     widgetI18n.changeLanguage(lang)
   }, [langOverride, info?.lang])
 
+  // ── embed 模式：讓 html/body/root 填滿 iframe ─────────────────────────────
+  useEffect(() => {
+    if (!isEmbed) return
+    const style = document.createElement('style')
+    style.textContent = 'html,body,#root{height:100%;margin:0;padding:0;overflow:hidden}'
+    document.head.appendChild(style)
+    return () => { style.remove() }
+  }, [isEmbed])
+
   // ── 提交訪客資訊 ─────────────────────────────────────────────────────────────
   async function handleStartChat(e: React.FormEvent) {
     e.preventDefault()
@@ -232,8 +241,12 @@ function WidgetBotInner({ token, isEmbed, langOverride }: { token: string; isEmb
 
   return (
     <div
-      className={`flex h-dvh flex-col bg-gray-50 ${isEmbed ? '' : 'mx-auto max-w-lg shadow-xl'}`}
-      style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+      className={`flex flex-col bg-gray-50 ${isEmbed ? '' : 'mx-auto max-w-lg shadow-xl'}`}
+      style={{
+        height: '100dvh',
+        minHeight: isEmbed ? '100%' : '100vh',
+        paddingBottom: 'env(safe-area-inset-bottom)',
+      }}
     >
       {/* Header */}
       <div className="flex shrink-0 items-center gap-3 px-4 py-3" style={{ backgroundColor: color }}>

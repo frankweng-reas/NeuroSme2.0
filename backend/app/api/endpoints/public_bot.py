@@ -17,8 +17,7 @@ from app.core.limiter import limiter
 from app.models.api_key import ApiKey, ApiKeyUsage
 from app.models.bot import Bot, BotKnowledgeBase
 from app.services.agent_usage import log_agent_usage
-from app.services.chat_service import _load_system_prompt_from_file
-from app.services.km_service import format_km_context, km_retrieve_sync
+from app.services.bot_rag_service import apply_bot_fallback, prepare_bot_rag_messages, rag_hit
 from app.services.llm_caller import LLMCallError, LLMProviderNotConfigured, call_llm
 from app.services.llm_service import UsageMeta
 
@@ -155,62 +154,33 @@ async def bot_query(
     if not kb_ids:
         raise HTTPException(status_code=400, detail="此 Bot 尚未設定知識庫")
 
-    # RAG 檢索（多 KB 合併）
-    all_chunks = []
-    for kb_id in kb_ids:
-        chunks = km_retrieve_sync(
-            body.question,
-            db,
-            tenant_id,
-            user_id=0,
-            knowledge_base_id=kb_id,
-            skip_scope_check=True,
-            agent_id="kb-bot-builder",
-        )
-        all_chunks.extend(chunks)
-
-    # 依分數排序，取 top 結果避免 context 過長
-    all_chunks.sort(key=lambda c: getattr(c, "score", 0), reverse=True)
-    all_chunks = all_chunks[:12]
-
-    rag_context = format_km_context(all_chunks)
-    logger.info("public bot_query: %d chunks retrieved (bot_id=%s)", len(all_chunks), body.bot_id)
-
-    # 組裝 sources
-    sources: list[BotSource] = []
-    seen_files: set[str] = set()
-    for chunk in all_chunks:
-        fname = chunk.document.filename if chunk.document else "未知文件"
-        if fname not in seen_files:
-            seen_files.add(fname)
-            sources.append(BotSource(filename=fname, excerpt=chunk.content.strip()[:200]))
+    # 共用 RAG 邏輯：多 KB 檢索 + system prompt + messages 組裝
+    history = [{"role": m.role, "content": m.content} for m in body.messages]
+    bot_ctx = prepare_bot_rag_messages(
+        bot,
+        body.question,
+        history,
+        db,
+        tenant_id,
+        skip_scope_check=True,
+        agent_id="kb-bot-builder",
+        max_history_turns=MAX_HISTORY_TURNS,
+    )
+    messages = bot_ctx.messages
+    sources = [
+        BotSource(filename=s["filename"], excerpt=s.get("excerpt", ""))
+        for s in bot_ctx.sources
+    ]
 
     # 決定模型（Bot 設定 > request body > 報錯）
-    model = (bot.model_name or "").strip() or (body.model or "").strip()
+    model = bot_ctx.model or (body.model or "").strip()
     if not model:
         raise HTTPException(
             status_code=400,
             detail="未指定模型，請在 Bot 設定選擇模型，或在請求中帶入 model 欄位",
         )
 
-    # 組裝訊息
-    system_parts: list[str] = []
-    bot_system = (bot.system_prompt or "").strip()
-    if bot_system:
-        system_parts.append(bot_system)
-    else:
-        file_prompt = _load_system_prompt_from_file("cs")
-        if file_prompt:
-            system_parts.append(file_prompt)
-    if rag_context.strip():
-        system_parts.append(f"以下為參考資料：\n\n{rag_context.strip()}")
-
-    messages: list[dict] = []
-    if system_parts:
-        messages.append({"role": "system", "content": "\n\n".join(system_parts)})
-    for m in body.messages[-(MAX_HISTORY_TURNS * 2):]:
-        messages.append({"role": m.role, "content": m.content})
-    messages.append({"role": "user", "content": body.question})
+    # 組裝訊息（已由 bot_ctx.messages 完成）
 
     # 呼叫 LLM（統一走 llm_caller 共用層）
     llm_status = "success"
@@ -251,8 +221,15 @@ async def bot_query(
     )
     db.commit()
 
+    _hit = rag_hit(answer, bot_ctx.context_chunk_ids)
+    logger.info(
+        "public bot_query: hit=%s, chunks=%d (bot_id=%s)",
+        _hit, len(bot_ctx.context_chunk_ids), bot.id,
+    )
+    clean_answer = apply_bot_fallback(answer, bot)
+
     return BotQueryResponse(
-        answer=answer,
+        answer=clean_answer,
         sources=sources,
         usage=usage,
         model=model,

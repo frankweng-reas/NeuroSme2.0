@@ -9,6 +9,16 @@ import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 
 const CHAT_MARKDOWN_COMPONENTS = {
+  a: ({ children, ...props }: React.HTMLAttributes<HTMLAnchorElement> & { href?: string }) => (
+    <a
+      className="text-blue-600 underline hover:text-blue-800"
+      target="_blank"
+      rel="noopener noreferrer"
+      {...props}
+    >
+      {children}
+    </a>
+  ),
   p: ({ children, ...props }: React.HTMLAttributes<HTMLParagraphElement>) => (
     <p className="mb-2 last:mb-0 leading-relaxed text-[18px] text-gray-900" {...props}>
       {children}
@@ -208,7 +218,7 @@ export default function AgentChat({
   const [chartModalIndex, setChartModalIndex] = useState<number | null>(null)
   const [pdfPreviewTarget, setPdfPreviewTarget] = useState<{ content: string; chartData?: ChartData } | null>(null)
   const chatScrollRef = useRef<HTMLDivElement>(null)
-  const chatInputRef = useRef<HTMLInputElement>(null)
+  const chatInputRef = useRef<HTMLTextAreaElement>(null)
   const [exampleDraft, setExampleDraft] = useState('')
   const [examplePanelOpen, setExamplePanelOpen] = useState(true)
   const prevMessageCountRef = useRef(messages.length)
@@ -285,6 +295,7 @@ export default function AgentChat({
     const text = input.trim()
     if (!text || isLoading || submitDisabled) return
     setInput('')
+    if (chatInputRef.current) chatInputRef.current.style.height = 'auto'
     onSubmit(text)
   }
 
@@ -559,16 +570,26 @@ export default function AgentChat({
         )}
         <form onSubmit={handleSubmit} className={`flex gap-1.5 sm:gap-2 ${compact ? 'px-3 pb-2 sm:px-4' : ''}`}>
           {composerLeading}
-          <input
+          <textarea
             ref={chatInputRef}
-            type="text"
+            rows={1}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && e.nativeEvent.isComposing) e.preventDefault()
+            onChange={(e) => {
+              setInput(e.target.value)
+              e.target.style.height = 'auto'
+              e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`
             }}
-            placeholder="輸入訊息..."
-            className="min-h-[44px] min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 text-[16px] focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400 sm:px-4 sm:text-[18px]"
+            onKeyDown={(e) => {
+              if (e.nativeEvent.isComposing) return
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                if (!isLoading && input.trim() && !submitDisabled) {
+                  handleSubmit(e as unknown as React.FormEvent)
+                }
+              }
+            }}
+            placeholder="輸入訊息… (Shift+Enter 換行)"
+            className="min-h-[44px] max-h-[160px] min-w-0 flex-1 resize-none overflow-y-auto rounded-lg border border-gray-300 px-3 py-2.5 text-[16px] leading-snug focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400 sm:px-4 sm:text-[18px]"
             disabled={isLoading}
           />
           <button

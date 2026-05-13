@@ -1,4 +1,4 @@
-"""KM API：文件上傳、列表、刪除、狀態查詢"""
+"""KM API：文件上傳、列表、刪除、狀態查詢、Chunk 編輯"""
 import logging
 from typing import Annotated
 
@@ -8,9 +8,11 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import get_current_user
+from app.models.km_chunk import KmChunk
 from app.models.km_document import KmDocument
+from app.models.km_knowledge_base import KmKnowledgeBase
 from app.models.user import User
-from app.services.km_service import process_document
+from app.services.km_service import detect_faq_format, process_document
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -158,6 +160,21 @@ async def upload_km_document(
             detail=f"檔案超過 20MB 上限（目前 {len(file_bytes) // 1024 // 1024}MB）",
         )
 
+    # FAQ 格式預先驗證（在建立 DB 記錄前，避免留下無效的 pending 記錄）
+    if doc_type == "faq":
+        from app.services.km_service import extract_text as _extract_text
+        preview_text = _extract_text(file_bytes, content_type, filename)
+        if preview_text and not detect_faq_format(preview_text):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "此檔案未包含可辨識的 FAQ 格式（需有「Q:/問:/問題:」前綴或「●/○」問答符號，"
+                    "且至少 2 組問答對）。"
+                    "建議先使用「Doc Refiner」將文件整理成標準 Q&A 格式後再上傳，"
+                    "或改選「一般文章」類型。"
+                ),
+            )
+
     # 建立文件記錄
     owner_id = current.id if scope == "private" else None
     doc = KmDocument(
@@ -202,6 +219,8 @@ def list_km_documents(
     current: Annotated[User, Depends(get_current_user)] = ...,
 ):
     """列出可存取的知識庫文件（公共 + 自己的私有）。"""
+    # [LEGACY 相容] owner_user_id 過濾只用於早期無 KB 的舊文件。
+    # 有 KB 的文件應走 KB.created_by + KB.scope 判斷（見 km_service.py RAG 篩選）。
     query = db.query(KmDocument).filter(
         KmDocument.tenant_id == current.tenant_id,
         (
@@ -266,3 +285,225 @@ def delete_km_document(
     db.delete(doc)
     db.commit()
     return None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Chunk 編輯 API
+# 權限走 KB 層級（見 .cursor/rules/km-architecture.mdc）：
+#   personal KB → kb.created_by == current.id
+#   company  KB → current.role in ("admin", "super_admin", "manager")
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class KmChunkResponse(BaseModel):
+    id: int
+    chunk_index: int
+    content: str
+
+    model_config = {"from_attributes": True}
+
+
+class KmChunkUpdateBody(BaseModel):
+    content: str
+
+
+class KmChunkCreateBody(BaseModel):
+    content: str
+
+
+def _get_doc_and_check_kb_permission(
+    doc_id: int,
+    current: User,
+    db: Session,
+) -> KmDocument:
+    """取得文件並依 KB scope 驗證編輯權限。"""
+    doc = db.query(KmDocument).filter(
+        KmDocument.id == doc_id,
+        KmDocument.tenant_id == current.tenant_id,
+    ).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="文件不存在")
+    if not doc.knowledge_base_id:
+        raise HTTPException(status_code=400, detail="此文件未歸屬知識庫，不支援 Chunk 編輯")
+
+    kb = db.get(KmKnowledgeBase, doc.knowledge_base_id)
+    if not kb:
+        raise HTTPException(status_code=404, detail="所屬知識庫不存在")
+
+    if kb.scope == "personal":
+        if kb.created_by != current.id:
+            raise HTTPException(status_code=403, detail="只有知識庫建立者可以編輯內容")
+    else:  # company
+        if current.role not in ("admin", "super_admin", "manager"):
+            raise HTTPException(status_code=403, detail="公司共用知識庫需要管理員權限才能編輯內容")
+
+    return doc
+
+
+def _get_chunk_and_check_kb_permission(
+    chunk_id: int,
+    current: User,
+    db: Session,
+) -> KmChunk:
+    """取得 Chunk 並透過其父文件驗證 KB 編輯權限。"""
+    chunk = db.get(KmChunk, chunk_id)
+    if not chunk:
+        raise HTTPException(status_code=404, detail="Chunk 不存在")
+
+    _get_doc_and_check_kb_permission(chunk.document_id, current, db)
+    return chunk
+
+
+@router.get("/documents/{doc_id}/chunks", response_model=list[KmChunkResponse])
+def list_doc_chunks(
+    doc_id: int,
+    db: Session = Depends(get_db),
+    current: Annotated[User, Depends(get_current_user)] = ...,
+):
+    """列出文件的所有 Chunks，依 chunk_index 排序。"""
+    _get_doc_and_check_kb_permission(doc_id, current, db)
+    chunks = (
+        db.query(KmChunk)
+        .filter(KmChunk.document_id == doc_id)
+        .order_by(KmChunk.chunk_index)
+        .all()
+    )
+    return chunks
+
+
+def _build_content_tsv(content: str, doc_type: str, db: Session):
+    """依文件類型建立 BM25 tsvector，僅 faq/spec 才建，其餘回傳 None。
+    faq/spec 一律索引全文（Q+A），確保 tag 與答案術語也能被關鍵字搜到。
+    """
+    import sqlalchemy as sa
+    BM25_DOC_TYPES = {"faq", "spec"}
+    if doc_type not in BM25_DOC_TYPES:
+        return None
+    return db.execute(
+        sa.text("SELECT to_tsvector('public.cjk', :t)"),
+        {"t": content},
+    ).scalar()
+
+
+@router.patch("/chunks/{chunk_id}", response_model=KmChunkResponse)
+def update_chunk(
+    chunk_id: int,
+    body: KmChunkUpdateBody,
+    db: Session = Depends(get_db),
+    current: Annotated[User, Depends(get_current_user)] = ...,
+):
+    """更新單一 Chunk 的內容，並重新產生 Embedding 與 BM25 tsvector。"""
+    from app.services.km_service import _get_embed_params, embed_texts_sync
+
+    content = body.content.strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="內容不可為空")
+
+    chunk = _get_chunk_and_check_kb_permission(chunk_id, current, db)
+    doc = db.get(KmDocument, chunk.document_id)
+    doc_type = doc.doc_type if doc else "article"
+
+    embed_params = _get_embed_params(db, current.tenant_id)
+    if not embed_params:
+        raise HTTPException(
+            status_code=400,
+            detail="未設定 Embedding Provider，無法重新產生 Embedding。",
+        )
+    embed_provider, embed_model, embed_key, embed_base = embed_params
+
+    try:
+        vectors, _ = embed_texts_sync(
+            [content],
+            model=embed_model,
+            api_key=embed_key,
+            provider=embed_provider,
+            api_base=embed_base,
+        )
+    except Exception as e:
+        logger.error("Chunk re-embed 失敗 chunk_id=%d: %s", chunk_id, e)
+        raise HTTPException(status_code=500, detail=f"Embedding 失敗：{e}")
+
+    chunk.content = content
+    chunk.embedding = vectors[0]
+    chunk.content_tsv = _build_content_tsv(content, doc_type, db)
+    db.commit()
+    db.refresh(chunk)
+    return chunk
+
+
+@router.delete("/chunks/{chunk_id}", status_code=204)
+def delete_chunk(
+    chunk_id: int,
+    db: Session = Depends(get_db),
+    current: Annotated[User, Depends(get_current_user)] = ...,
+):
+    """刪除單一 Chunk，並更新父文件的 chunk_count。"""
+    chunk = _get_chunk_and_check_kb_permission(chunk_id, current, db)
+    doc = db.get(KmDocument, chunk.document_id)
+
+    db.delete(chunk)
+    if doc and doc.chunk_count is not None and doc.chunk_count > 0:
+        doc.chunk_count -= 1
+    db.commit()
+    return None
+
+
+@router.post("/documents/{doc_id}/chunks", response_model=KmChunkResponse, status_code=201)
+def add_chunk(
+    doc_id: int,
+    body: KmChunkCreateBody,
+    db: Session = Depends(get_db),
+    current: Annotated[User, Depends(get_current_user)] = ...,
+):
+    """在文件末尾新增一個 Chunk，並產生 Embedding 與 BM25 tsvector。"""
+    from app.services.km_service import _get_embed_params, embed_texts_sync
+
+    content = body.content.strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="內容不可為空")
+
+    doc = _get_doc_and_check_kb_permission(doc_id, current, db)
+    doc_type = doc.doc_type
+
+    embed_params = _get_embed_params(db, current.tenant_id)
+    if not embed_params:
+        raise HTTPException(
+            status_code=400,
+            detail="未設定 Embedding Provider，無法產生 Embedding。",
+        )
+    embed_provider, embed_model, embed_key, embed_base = embed_params
+
+    try:
+        vectors, _ = embed_texts_sync(
+            [content],
+            model=embed_model,
+            api_key=embed_key,
+            provider=embed_provider,
+            api_base=embed_base,
+        )
+    except Exception as e:
+        logger.error("新增 Chunk embed 失敗 doc_id=%d: %s", doc_id, e)
+        raise HTTPException(status_code=500, detail=f"Embedding 失敗：{e}")
+
+    max_index_row = (
+        db.query(KmChunk.chunk_index)
+        .filter(KmChunk.document_id == doc_id)
+        .order_by(KmChunk.chunk_index.desc())
+        .first()
+    )
+    next_index = (max_index_row[0] + 1) if max_index_row else 0
+
+    new_chunk = KmChunk(
+        document_id=doc_id,
+        chunk_index=next_index,
+        content=content,
+        embedding=vectors[0],
+        content_tsv=_build_content_tsv(content, doc_type, db),
+    )
+    db.add(new_chunk)
+
+    doc.chunk_count = (doc.chunk_count or 0) + 1
+
+    db.commit()
+    db.refresh(new_chunk)
+    return new_chunk

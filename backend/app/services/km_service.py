@@ -233,6 +233,29 @@ def _chunk_sliding(text: str, chunk_size: int, overlap: int) -> list[str]:
     return chunks
 
 
+def detect_faq_format(text: str) -> bool:
+    """判斷文字是否包含可辨識的 FAQ 結構（Layer 1 或 Layer 2）。
+    僅 Q 前綴或 ●/○ bullet 格式視為合格 FAQ；
+    純段落或無結構文字不算（那是任何文章都能通過的 fallback）。
+
+    至少需有 2 組 Q/A 對才算有效。
+    """
+    # Layer 1：Q 語意前綴（Q: / 問: / 問題: 等）
+    q_prefix = _re.compile(
+        r'(?m)^[ \t]*(?:Q[：:]|Question\s*[：:]|問[：:]|問題[：:])',
+    )
+    if len(q_prefix.findall(text)) >= 2:
+        return True
+
+    # Layer 2：●/○ bullet 格式
+    bullet_pattern = _re.compile(r'(?:^|\n)(?=\s*[●•]\s)', _re.MULTILINE)
+    bullet_parts = [p.strip() for p in bullet_pattern.split(text) if p.strip()]
+    if len(bullet_parts) >= 2:
+        return True
+
+    return False
+
+
 def _chunk_faq(text: str) -> list[str]:
     """FAQ 專用切割：每個 Q&A 對成一個完整 chunk。
 
@@ -475,7 +498,8 @@ def process_document(
         logger.info("KM embed 使用 provider=%s model=%s (doc_id=%d)", embed_provider, embed_model, doc_id)
 
         # 4. 批次 Embedding（每批 100 筆）
-        # 全文 embed（Q+A），提高召回率；精準選取交給 LLM（km_faq_llm_select）
+        # FAQ/其他類型一律對完整 chunk 內容（Q+A 全文）做 embedding，提高語意召回率。
+        # BM25（content_tsv）才是 FAQ Q-only；兩者設計不同，RRF 時互補。
         embed_texts = chunks
         all_embeddings: list[list[float]] = []
         batch_size = 100
@@ -507,14 +531,13 @@ def process_document(
 
         # 5. 寫入 km_chunks，並鎖定 embedding config
         # BM25 tsvector 只對短、語意集中的類型有意義（faq/spec），其餘不建 index
-        # FAQ type：content_tsv 也只索引 Q 部分，與 embedding 一致
+        # FAQ type：content_tsv 索引 Q+A 全文（與 embedding 一致），
+        # 確保 tag、答案術語等關鍵字都能被 BM25 搜到；
+        # 語意精準度由 embedding（ALPHA=0.7）主導，BM25 負責關鍵字覆蓋。
         BM25_DOC_TYPES = {"faq", "spec"}
         build_tsv = doc_type in BM25_DOC_TYPES
         for idx, (chunk_content, embedding) in enumerate(zip(chunks, all_embeddings)):
-            if doc_type == "faq":
-                tsv_text = extract_faq_question(chunk_content) or chunk_content
-            else:
-                tsv_text = chunk_content
+            tsv_text = chunk_content
             km_chunk = KmChunk(
                 document_id=doc_id,
                 chunk_index=idx,
@@ -777,7 +800,6 @@ def format_km_context(chunks: list[KmChunk], show_source: bool = True) -> str:
 # FAQ 精確比對模式
 # ──────────────────────────────────────────────────────────────────────────────
 
-FAQ_SIMILARITY_THRESHOLD = 0.45  # 低於此視為「找不到」；RRF 已排序，threshold 只作最後把關
 FAQ_TOP_K = 2                    # 最多回傳幾筆 FAQ 結果
 
 
@@ -812,11 +834,13 @@ def km_faq_retrieve_sync(
     knowledge_base_id: int,
     top_k: int = 3,
 ) -> "list[tuple[KmChunk, float]]":
-    """FAQ 精確比對：RRF（vector + BM25），兩者都只針對 Q 文字建立索引。
+    """FAQ 精確比對：RRF（vector + BM25）。
 
-    FAQ chunk 的 embedding 和 content_tsv 在上傳時已僅包含 Q 部分，
-    因此 user query ↔ Q 的相似度直接、準確，無需複雜 heuristics。
+    索引策略：
+      - embedding：Q+A 全文（語意召回）
+      - content_tsv（BM25）：Q+A 全文（關鍵字覆蓋，含 tag 與答案術語）
 
+    兩者皆索引全文，RRF 合併分數；語意精準度由 vector（ALPHA=0.7）主導。
     回傳 [(chunk, cosine_similarity), ...] 依 RRF 分數降序，空 list 表示失敗或無結果。
     """
     import sqlalchemy as _sa
@@ -926,13 +950,10 @@ def km_faq_retrieve_sync(
 
     sorted_ids = sorted(scores, key=lambda cid: scores[cid], reverse=True)
 
-    # ── 4. threshold + top-k ──
-    # Q-only BM25 讓 RRF 排名更準確，不設 gate，讓 RRF 分數自然篩選
+    # ── 4. top-k（不設 similarity gate，讓 RRF 分數自然篩選）──
     results: list[tuple[KmChunk, float]] = []
     for cid in sorted_ids:
-        sim = sim_map.get(cid)
-        if sim is None or sim < FAQ_SIMILARITY_THRESHOLD:
-            continue
+        sim = sim_map.get(cid, 0.0)
         results.append((chunk_map[cid], sim))
         if len(results) >= top_k:
             break

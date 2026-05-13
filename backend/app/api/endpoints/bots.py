@@ -31,6 +31,8 @@ class BotCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     description: str | None = None
     system_prompt: str | None = None
+    fallback_message: str | None = None
+    fallback_message_enabled: bool = False
     model_name: str | None = None
     knowledge_base_ids: list[BotKbItem] = []
 
@@ -40,6 +42,8 @@ class BotUpdate(BaseModel):
     description: str | None = None
     is_active: bool | None = None
     system_prompt: str | None = None
+    fallback_message: str | None = None
+    fallback_message_enabled: bool | None = None
     model_name: str | None = None
     knowledge_base_ids: list[BotKbItem] | None = None
     widget_title: str | None = None
@@ -64,6 +68,8 @@ class BotResponse(BaseModel):
     description: str | None
     is_active: bool
     system_prompt: str | None
+    fallback_message: str | None
+    fallback_message_enabled: bool
     model_name: str | None
     public_token: str | None
     widget_title: str | None
@@ -100,6 +106,8 @@ def _to_response(bot: Bot, db: Session) -> BotResponse:
         description=bot.description,
         is_active=bot.is_active,
         system_prompt=bot.system_prompt,
+        fallback_message=bot.fallback_message,
+        fallback_message_enabled=bot.fallback_message_enabled or False,
         model_name=bot.model_name,
         public_token=bot.public_token,
         widget_title=bot.widget_title,
@@ -142,8 +150,6 @@ def create_bot(
     db: Session = Depends(get_db),
     current: Annotated[User, Depends(get_current_user)] = ...,
 ):
-    if not _can_manage(current.role):
-        raise HTTPException(status_code=403, detail="只有管理員可以建立 Bot")
 
     existing = db.query(Bot).filter(
         Bot.tenant_id == current.tenant_id,
@@ -157,6 +163,8 @@ def create_bot(
         name=body.name.strip(),
         description=body.description,
         system_prompt=body.system_prompt or None,
+        fallback_message=body.fallback_message or None,
+        fallback_message_enabled=body.fallback_message_enabled,
         model_name=body.model_name or None,
         created_by=current.id,
     )
@@ -201,9 +209,6 @@ def update_bot(
     db: Session = Depends(get_db),
     current: Annotated[User, Depends(get_current_user)] = ...,
 ):
-    if not _can_manage(current.role):
-        raise HTTPException(status_code=403, detail="只有管理員可以修改 Bot")
-
     bot = db.query(Bot).filter(Bot.id == bot_id, Bot.tenant_id == current.tenant_id).first()
     if not bot:
         raise HTTPException(status_code=404, detail="Bot 不存在")
@@ -216,6 +221,10 @@ def update_bot(
         bot.is_active = body.is_active
     if body.system_prompt is not None:
         bot.system_prompt = body.system_prompt or None
+    if body.fallback_message is not None:
+        bot.fallback_message = body.fallback_message or None
+    if body.fallback_message_enabled is not None:
+        bot.fallback_message_enabled = body.fallback_message_enabled
     if body.model_name is not None:
         bot.model_name = body.model_name or None
     if body.widget_title is not None:
@@ -244,9 +253,6 @@ def delete_bot(
     db: Session = Depends(get_db),
     current: Annotated[User, Depends(get_current_user)] = ...,
 ):
-    if not _can_manage(current.role):
-        raise HTTPException(status_code=403, detail="只有管理員可以刪除 Bot")
-
     bot = db.query(Bot).filter(Bot.id == bot_id, Bot.tenant_id == current.tenant_id).first()
     if not bot:
         raise HTTPException(status_code=404, detail="Bot 不存在")

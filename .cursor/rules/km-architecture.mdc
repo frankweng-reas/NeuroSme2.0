@@ -1,0 +1,45 @@
+---
+description: KM 知識庫架構設計決策與 ownership 規則
+globs: backend/app/models/km_*.py,backend/app/api/endpoints/km*.py,backend/app/services/km_service.py,frontend/src/api/km.ts,frontend/src/pages/agents/AgentKbManager*.tsx
+alwaysApply: false
+---
+
+# KM 知識庫架構設計
+
+## Ownership 模型
+
+文件（KmDocument）一定歸屬某個知識庫（KmKnowledgeBase）。  
+權限與可見性判斷**必須走 KB 層級**，不可使用 `KmDocument.owner_user_id`。
+
+```
+KmKnowledgeBase
+  ├── created_by  → 建立 KB 的 user id
+  ├── scope       → "personal" | "company"
+  └── KmDocument（多個）
+        └── KmChunk（多個）
+```
+
+## 權限規則
+
+| KB scope | 可管理的使用者 |
+|----------|--------------|
+| `personal` | `kb.created_by == current.id` |
+| `company`  | `current.role in ("admin", "super_admin", "manager")` |
+
+## KmDocument.owner_user_id 是 LEGACY 欄位
+
+- 這是早期文件系統沒有 KB 概念時遺留的欄位
+- `knowledge_base_id = NULL` 的極少數舊文件才用到它
+- **新功能不得使用此欄位判斷權限**
+- `km_service.py` 的 RAG 篩選邏輯有保留 legacy 相容路徑，但新 endpoint 不應仿效
+
+## KB Scope vs Document Scope 對應
+
+上傳時文件 scope 自動繼承 KB scope：
+
+| KB scope | Document scope |
+|----------|---------------|
+| `company` | `public` |
+| `personal` | `private` |
+
+`KmDocument.scope` 欄位本身也是 legacy 概念的殘留，現行邏輯以 KB scope 為主。

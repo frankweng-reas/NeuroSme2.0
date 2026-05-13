@@ -7,6 +7,16 @@ import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 
 const CHAT_MARKDOWN_COMPONENTS = {
+  a: ({ children, ...props }: HTMLAttributes<HTMLAnchorElement> & { href?: string }) => (
+    <a
+      className="text-blue-600 underline hover:text-blue-800"
+      target="_blank"
+      rel="noopener noreferrer"
+      {...props}
+    >
+      {children}
+    </a>
+  ),
   p: ({ children, ...props }: HTMLAttributes<HTMLParagraphElement>) => (
     <p className="mb-2 last:mb-0 leading-relaxed text-[18px] text-gray-900" {...props}>
       {children}
@@ -214,7 +224,7 @@ export default function NsChat({
   const [input, setInput] = useState('')
   const [isAtBottom, setIsAtBottom] = useState(true)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
 
   // 語音辨識等外部文字注入：appendInputText 變化時 append 到輸入框並聚焦
   useEffect(() => {
@@ -264,6 +274,7 @@ export default function NsChat({
     if ((!t && !allowSubmitEmptyInput) || isLoading || submitDisabled) return
     onSubmit(t)
     setInput('')
+    if (inputRef.current) inputRef.current.style.height = 'auto'
   }
 
   const rootClass = embedded
@@ -425,18 +436,28 @@ export default function NsChat({
           {composerLeading != null ? (
             <div className="flex shrink-0 items-center">{composerLeading}</div>
           ) : null}
-          <input
+          <textarea
             ref={inputRef}
-            type="text"
+            rows={1}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              setInput(e.target.value)
+              e.target.style.height = 'auto'
+              e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`
+            }}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && e.nativeEvent.isComposing) e.preventDefault()
+              if (e.nativeEvent.isComposing) return
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                if (!isLoading && !submitDisabled && (input.trim() || allowSubmitEmptyInput)) {
+                  handleSubmit(e as unknown as FormEvent)
+                }
+              }
             }}
             placeholder={inputPlaceholder ?? emptyPlaceholder}
             disabled={isLoading || submitDisabled}
             title={submitDisabled ? submitDisabledTitle : undefined}
-            className="min-w-0 flex-1 rounded-lg border border-gray-300 px-4 py-2 text-[18px] focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400 disabled:bg-gray-50"
+            className="min-h-[44px] max-h-[160px] min-w-0 flex-1 resize-none overflow-y-auto rounded-lg border border-gray-300 px-4 py-2.5 text-[18px] leading-snug focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400 disabled:bg-gray-50"
             aria-label="訊息輸入"
           />
           <button

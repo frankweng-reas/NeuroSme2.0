@@ -13,6 +13,8 @@ class Bot(Base):
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
     system_prompt = Column(Text, nullable=True)
+    fallback_message = Column(Text, nullable=True)
+    fallback_message_enabled = Column(Boolean, nullable=False, default=False)
     model_name = Column(String(100), nullable=True)
 
     # Widget / Public API 存取憑證

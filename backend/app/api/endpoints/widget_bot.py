@@ -16,8 +16,7 @@ from app.core.database import SessionLocal, get_db
 from app.models.bot import Bot, BotKnowledgeBase
 from app.models.bot_widget_session import BotWidgetMessage, BotWidgetSession
 from app.services.agent_usage import log_agent_usage
-from app.services.chat_service import _load_system_prompt_from_file
-from app.services.km_service import format_km_context, km_retrieve_sync
+from app.services.bot_rag_service import apply_bot_fallback, prepare_bot_rag_messages, rag_hit
 from app.services.llm_caller import LLMProviderNotConfigured, build_llm_kwargs, resolve_llm_params
 
 router = APIRouter()
@@ -150,7 +149,9 @@ async def bot_widget_chat(
     bot_id: int = bot.id
     bot_tenant_id: str = bot.tenant_id
     bot_model_name: str = (bot.model_name or "").strip()
-    bot_system_prompt: str | None = (bot.system_prompt or "").strip() or None
+    # 在 session 關閉前先抽出 bot 屬性，避免 generate() 中 DetachedInstanceError
+    bot_fallback_message: str | None = (bot.fallback_message or "").strip() or None
+    bot_fallback_message_enabled: bool = bot.fallback_message_enabled or False
 
     if not bot_model_name:
         raise HTTPException(status_code=400, detail="此 Bot 尚未設定模型，請聯繫管理員")
@@ -160,56 +161,21 @@ async def bot_widget_chat(
     except LLMProviderNotConfigured as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    # 取得 Bot 關聯的 KB ids
-    kb_ids = [
-        row.knowledge_base_id
-        for row in db.query(BotKnowledgeBase)
-        .filter(BotKnowledgeBase.bot_id == bot_id)
-        .order_by(BotKnowledgeBase.sort_order)
-        .all()
-    ]
-
-    # RAG 多 KB 聯合檢索
-    context_text = ""
-    _bot_chunk_ids: list[str] = []
-    try:
-        chunks = km_retrieve_sync(
-            query=body.content,
-            tenant_id=bot_tenant_id,
-            db=db,
-            knowledge_base_ids=kb_ids if kb_ids else None,
-            skip_scope_check=True,
-            agent_id="knowledge-bot",
-        )
-        if chunks:
-            _bot_chunk_ids = [str(c.id) for c in chunks]
-            context_text = format_km_context(chunks, show_source=False)
-    except Exception as e:
-        logger.warning("Bot Widget RAG 失敗，略過參考資料: %s", e)
-
-    # 組 messages
-    msgs: list[dict] = []
-    system_parts: list[str] = []
-
-    if bot_system_prompt:
-        system_parts.append(bot_system_prompt)
-    else:
-        file_prompt = _load_system_prompt_from_file("cs")
-        if file_prompt:
-            system_parts.append(file_prompt)
-
-    if context_text:
-        system_parts.append(f"以下為參考資料：\n\n{context_text}")
-
-    if system_parts:
-        msgs.append({"role": "system", "content": "\n\n".join(system_parts)})
-
-    MAX_HISTORY = 6
-    history = body.messages[-MAX_HISTORY:] if len(body.messages) > MAX_HISTORY else body.messages
-    for m in history:
-        msgs.append({"role": m["role"], "content": m["content"]})
-
-    msgs.append({"role": "user", "content": body.content})
+    # 共用 RAG 邏輯：多 KB 檢索 + system prompt + messages 組裝
+    history = [{"role": m["role"], "content": m["content"]} for m in body.messages]
+    bot_ctx = prepare_bot_rag_messages(
+        bot,
+        body.content,
+        history,
+        db,
+        bot_tenant_id,
+        skip_scope_check=True,
+        agent_id="knowledge-bot",
+        max_history_turns=6,
+        show_source_in_context=False,  # Widget 不在 LLM context 顯示來源標注
+    )
+    msgs = bot_ctx.messages
+    _bot_chunk_ids = bot_ctx.context_chunk_ids
 
     session = db.query(BotWidgetSession).filter(BotWidgetSession.id == body.session_id).first()
     if session:
@@ -264,7 +230,12 @@ async def bot_widget_chat(
                         pass
 
             from app.api.endpoints.chat import _clean_rag_response
-            clean_text = _clean_rag_response(full_text, "cs")
+            clean_text = _clean_rag_response(
+                full_text,
+                "cs",
+                fallback_message=bot_fallback_message,
+                fallback_message_enabled=bot_fallback_message_enabled,
+            )
             yield f"data: {json.dumps({'event': 'done', 'content': clean_text}, ensure_ascii=False)}\n\n"
 
             if full_text:
@@ -297,9 +268,9 @@ async def bot_widget_chat(
 
             # Layer 2：記錄 Bot 查詢結果
             try:
-                from app.api.endpoints.chat import _rag_hit_from_response
+                from app.services.bot_rag_service import rag_hit as _rag_hit_fn
                 from app.services.km_service import log_bot_query
-                _hit = _rag_hit_from_response(full_text, _bot_chunk_ids)
+                _hit = _rag_hit_fn(full_text, _bot_chunk_ids)
                 log_bot_query(
                     s,
                     tenant_id=tenant_id_for_log,

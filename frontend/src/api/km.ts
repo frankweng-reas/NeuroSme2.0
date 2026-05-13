@@ -157,6 +157,38 @@ export async function uploadKmDocument(
   })
 }
 
+// ── Chunk 編輯 ────────────────────────────────────────────────────────────────
+
+export interface KmChunk {
+  id: number
+  chunk_index: number
+  content: string
+}
+
+export async function listDocChunks(docId: number): Promise<KmChunk[]> {
+  return apiFetch<KmChunk[]>(`/km/documents/${docId}/chunks`)
+}
+
+export async function updateChunk(chunkId: number, content: string): Promise<KmChunk> {
+  return apiFetch<KmChunk>(`/km/chunks/${chunkId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  })
+}
+
+export async function deleteChunk(chunkId: number): Promise<void> {
+  return apiFetch<void>(`/km/chunks/${chunkId}`, { method: 'DELETE' })
+}
+
+export async function addChunk(docId: number, content: string): Promise<KmChunk> {
+  return apiFetch<KmChunk>(`/km/documents/${docId}/chunks`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  })
+}
+
 // ── 查詢統計 ──────────────────────────────────────────────────────────────────
 
 export interface QueryStatsSummary {

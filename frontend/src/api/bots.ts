@@ -17,6 +17,8 @@ export interface Bot {
   description: string | null
   is_active: boolean
   system_prompt: string | null
+  fallback_message: string | null
+  fallback_message_enabled: boolean
   model_name: string | null
   public_token: string | null
   widget_title: string | null
@@ -41,6 +43,8 @@ export async function createBot(data: {
   name: string
   description?: string
   system_prompt?: string
+  fallback_message?: string
+  fallback_message_enabled?: boolean
   model_name?: string
   knowledge_base_ids?: BotKbItem[]
 }): Promise<Bot> {
@@ -58,6 +62,8 @@ export async function updateBot(
     description?: string
     is_active?: boolean
     system_prompt?: string
+    fallback_message?: string
+    fallback_message_enabled?: boolean
     model_name?: string
     knowledge_base_ids?: BotKbItem[]
     widget_title?: string

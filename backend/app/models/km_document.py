@@ -15,6 +15,11 @@ class KmDocument(Base):
         nullable=False,
         index=True,
     )
+    # [LEGACY] 早期文件沒有 KB 時用來記錄上傳者的欄位。
+    # 現行架構：文件必須歸屬 KB（knowledge_base_id），
+    # 可見性與編輯權限應走 KB 的 created_by + scope 判斷，不應再使用此欄位。
+    # 只有 knowledge_base_id = NULL 的極少數舊文件才沿用此欄位，
+    # km_service.py 的 RAG 篩選邏輯保留了相容路徑。
     owner_user_id = Column(
         Integer,
         ForeignKey("users.id", ondelete="SET NULL"),
