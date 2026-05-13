@@ -12,6 +12,31 @@ export const TOKEN_KEY = 'neurosme_access_token'
 export const REFRESH_TOKEN_KEY = 'neurosme_refresh_token'
 const USER_KEY = 'neurosme_user'
 
+function lsGet(key: string): string | null {
+  try {
+    return localStorage.getItem(key)
+  } catch {
+    /* 無痕 / iframe / 禁用儲存時可能拋錯，勿讓 bootstrap 崩潰 */
+    return null
+  }
+}
+
+function lsSet(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    /* quota / denied */
+  }
+}
+
+function lsRemove(key: string): void {
+  try {
+    localStorage.removeItem(key)
+  } catch {
+    /* ignore */
+  }
+}
+
 /** LocalAuth API 位址。開發時用 /auth（Vite proxy）；正式環境可設 VITE_AUTH_API_URL */
 const AUTH_BASE = import.meta.env.VITE_AUTH_API_URL?.replace(/\/$/, '') || ''
 
@@ -48,17 +73,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   })
 
   const logout = useCallback(() => {
-    localStorage.removeItem(TOKEN_KEY)
-    localStorage.removeItem(REFRESH_TOKEN_KEY)
-    localStorage.removeItem(USER_KEY)
+    lsRemove(TOKEN_KEY)
+    lsRemove(REFRESH_TOKEN_KEY)
+    lsRemove(USER_KEY)
     setState({ user: null, token: null, loading: false })
   }, [])
 
   const loadStored = useCallback(async () => {
-    const token = localStorage.getItem(TOKEN_KEY)
-    const userStr = localStorage.getItem(USER_KEY)
+    const token = lsGet(TOKEN_KEY)
+    const userStr = lsGet(USER_KEY)
     if (!token || !userStr) {
-      localStorage.removeItem(REFRESH_TOKEN_KEY)
+      lsRemove(REFRESH_TOKEN_KEY)
       setState({ user: null, token: null, loading: false })
       return
     }
@@ -100,9 +125,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const user: AuthUser = data.user
       ? { id: data.user.id, email: data.user.email, name: data.user.name }
       : { id: '', email, name: '' }
-    localStorage.setItem(TOKEN_KEY, token)
-    if (refreshToken) localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken)
-    localStorage.setItem(USER_KEY, JSON.stringify(user))
+    lsSet(TOKEN_KEY, token)
+    if (refreshToken) lsSet(REFRESH_TOKEN_KEY, refreshToken)
+    lsSet(USER_KEY, JSON.stringify(user))
     setState({ user, token, loading: false })
   }, [])
 
@@ -132,7 +157,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const changePassword = useCallback(async (old_password: string, new_password: string) => {
-    const token = localStorage.getItem(TOKEN_KEY)
+    const token = lsGet(TOKEN_KEY)
     if (!token) throw new Error('請先登入')
     const url = `${AUTH_BASE}/auth/password`
     const res = await fetch(url, {
@@ -217,5 +242,5 @@ export function useAuth() {
 }
 
 export function getStoredToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY)
+  return lsGet(TOKEN_KEY)
 }

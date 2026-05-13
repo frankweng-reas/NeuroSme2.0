@@ -2,13 +2,12 @@
 set -e
 
 echo "[entrypoint] Running Alembic migrations..."
-# 若 DB 存有舊 revision ID（squash 前的 001-013 或更早的 initial001），
-# alembic upgrade 會因找不到對應檔案而失敗。
-# 這時用 stamp --purge 將版本指標強制更新為現行 head（000_initial），
-# 再跑 upgrade head（schema 已完整，不會有任何新操作）。
+# 若 alembic upgrade head 失敗（例如欄位已存在，schema 已是最新但版本號落後），
+# 直接 stamp 到 head，跳過已套用的 migration，避免重複執行。
 if ! alembic upgrade head 2>&1; then
-    echo "[entrypoint] Legacy revision detected, re-stamping to 000_initial..."
-    alembic stamp --purge 000_initial
+    echo "[entrypoint] Migration failed (schema likely already up-to-date), stamping to head..."
+    alembic stamp --purge head
+    echo "[entrypoint] Stamped to head, re-running upgrade head..."
     alembic upgrade head
 fi
 

@@ -26,8 +26,23 @@ export default defineConfig(({ mode }) => {
     },
     plugins: [
       react(),
+      /** 建置輸出的 index.html 會帶 script/link crossorigin；
+       * 在 Chrome 無痕 + 同源 iframe 內偶發 ES module 不執行（#root 永遠無子節點）。
+       * 同源腳本不需要 crossorigin（非 credentials CORS）。
+       */
+      {
+        name: 'strip-crossorigin-html-embed-compat',
+        apply: 'build',
+        enforce: 'post',
+        transformIndexHtml(html) {
+          return html.replace(/\s+crossorigin(?:="anonymous"|="")?/gi, '')
+        },
+      },
       VitePWA({
         registerType: 'autoUpdate',
+        // 不自動注入 registerSW.js：無痕視窗若在 iframe 內載入會觸發 SW register，
+        // 易造成僅嵌入式失敗（頂層分頁仍可由 index.html 手動註冊）。
+        injectRegister: null,
         // 只對 /widget/* 啟用 Service Worker
         scope: '/widget/',
         includeAssets: ['favicon.ico', 'icons/*.png'],

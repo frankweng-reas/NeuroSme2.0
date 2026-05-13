@@ -12,5 +12,12 @@
 neurosme.company.com {
     reverse_proxy /api/*  backend:8000
     reverse_proxy /auth/* localauth:4000
+
+    # Widget 路徑：允許任何父頁嵌入 iframe
+    handle /widget/* {
+        header Content-Security-Policy "frame-ancestors *;"
+        reverse_proxy frontend:80
+    }
+
     reverse_proxy *       frontend:80
 }

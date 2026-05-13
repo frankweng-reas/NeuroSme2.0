@@ -44,11 +44,19 @@ function loadSession(token: string): StoredSession | null {
 }
 
 function saveSession(token: string, data: StoredSession) {
-  localStorage.setItem(SESSION_KEY(token), JSON.stringify(data))
+  try {
+    localStorage.setItem(SESSION_KEY(token), JSON.stringify(data))
+  } catch {
+    /* iframe / 無痕儲存被拒 */
+  }
 }
 
 function clearSession(token: string) {
-  localStorage.removeItem(SESSION_KEY(token))
+  try {
+    localStorage.removeItem(SESSION_KEY(token))
+  } catch {
+    /* ignore */
+  }
 }
 
 function genSessionId() {

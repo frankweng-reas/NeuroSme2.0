@@ -15,5 +15,15 @@
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    <!-- 僅頂層頁註冊 SW：iframe/embed（含 Chrome 無痕）不註冊，避免嵌入式白屏／未掛載 -->
+    <script>
+      ;(function () {
+        if (!('serviceWorker' in navigator)) return
+        if (window.self !== window.top) return
+        window.addEventListener('load', function () {
+          navigator.serviceWorker.register('/sw.js', { scope: '/widget/' }).catch(function () {})
+        })
+      })()
+    </script>
   </body>
 </html>
