@@ -8,6 +8,7 @@ import {
   Building2,
   ChevronsLeft,
   ChevronsRight,
+  HelpCircle,
   KeyRound,
   KeySquare,
   Lock,
@@ -17,6 +18,7 @@ import {
 import { getMe } from '@/api/users'
 import type { User } from '@/types'
 import ActivationDialog from '@/components/ActivationDialog'
+import HelpModal from '@/components/HelpModal'
 import { AvatarCircle } from '@/components/AvatarCircle'
 import ProfileModal from '@/components/ProfileModal'
 import { useAuth } from '@/contexts/AuthContext'
@@ -61,6 +63,7 @@ function writeSidebarCollapsed(v: boolean) {
 export default function AdminPage() {
   const [user, setUser] = useState<User | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed)
+  const [showHelp, setShowHelp] = useState(false)
   const [showActivation, setShowActivation] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
@@ -107,6 +110,12 @@ export default function AdminPage() {
         />
       )}
       <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
+      <HelpModal
+        open={showHelp}
+        onClose={() => setShowHelp(false)}
+        url="/help-admin-settings.md"
+        title="平台管理說明"
+      />
       {/* Header 容器 */}
       <header
         className="flex-shrink-0 rounded-2xl border-b border-gray-300/50 px-6 py-4 shadow-md"
@@ -122,6 +131,15 @@ export default function AdminPage() {
               <ArrowLeft className="h-5 w-5" />
             </Link>
             <h1 className="text-2xl font-bold text-white">管理工具</h1>
+            <button
+              type="button"
+              onClick={() => setShowHelp(true)}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/30 bg-white/10 text-white transition-colors hover:bg-white/20"
+              aria-label="說明"
+              title="平台管理說明"
+            >
+              <HelpCircle className="h-5 w-5" />
+            </button>
           </div>
 
           {/* 頭像 dropdown */}
