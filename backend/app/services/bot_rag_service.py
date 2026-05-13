@@ -16,6 +16,22 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
+
+class _DetachedChunk:
+    """KmChunk 的純 Python 快照，脫離 SQLAlchemy session，可安全跨 async 邊界使用。
+    介面與 KmChunk 相容（.id / .content / .document.filename），
+    確保 km_faq_llm_select、extract_faq_question/answer 等不需修改即可使用。
+    """
+    class _Doc:
+        def __init__(self, filename: str):
+            self.filename = filename
+
+    def __init__(self, chunk) -> None:
+        self.id = chunk.id
+        self.content = chunk.content
+        fname = chunk.document.filename if chunk.document else "未知文件"
+        self.document = self._Doc(fname)
+
 # 每輪對話 = user + assistant，保留 N 輪
 _DEFAULT_MAX_HISTORY_TURNS = 10
 
@@ -30,6 +46,8 @@ class BotRagContext:
     # 以下備用，供呼叫端需要時取用
     rag_context_text: str = ""
     system_prompt_used: str | None = None   # 實際帶進 LLM 的 system prompt（除 RAG context 外）
+    is_faq_direct: bool = False             # Bot 含 direct KB，走精準問答流程
+    faq_candidates: list | None = None      # direct 模式候選 [(KmChunk, float), ...]，由呼叫端 await km_faq_llm_select
 
 
 def prepare_bot_rag_messages(
@@ -41,7 +59,7 @@ def prepare_bot_rag_messages(
     *,
     user_id: int = 0,
     skip_scope_check: bool = True,
-    agent_id: str = "knowledge-bot",
+    agent_id: str = "kb-bot-builder",
     max_history_turns: int = _DEFAULT_MAX_HISTORY_TURNS,
     show_source_in_context: bool = True,  # False → widget 不顯示來源標注
 ) -> BotRagContext:
@@ -52,78 +70,115 @@ def prepare_bot_rag_messages(
     """
     from app.models.bot import BotKnowledgeBase
     from app.services.chat_service import _load_system_prompt_from_file
-    from app.services.km_service import format_km_context, km_retrieve_sync
+    from app.services.km_service import (
+        format_km_context,
+        km_faq_retrieve_sync,
+        km_retrieve_sync,
+    )
 
-    # ── 1. 取得 Bot 關聯的 KB IDs ─────────────────────────────────────────────
-    kb_ids: list[int] = [
-        row.knowledge_base_id
-        for row in db.query(BotKnowledgeBase)
+    # ── 1. 取得 Bot 關聯的所有 KB id ─────────────────────────────────────────
+    kb_rows = (
+        db.query(BotKnowledgeBase)
         .filter(BotKnowledgeBase.bot_id == bot.id)
         .order_by(BotKnowledgeBase.sort_order)
         .all()
-    ]
+    )
+    all_kb_ids: list[int] = [row.knowledge_base_id for row in kb_rows]
 
-    # ── 2. RAG 多 KB 聯合檢索 ─────────────────────────────────────────────────
+    # Bot 層級的 answer_mode 決定整體流程
+    bot_mode = (bot.answer_mode or "rag").strip()
+    is_direct = bot_mode == "direct"
+
+    # ── 2a. 精準 FAQ 檢索（bot.answer_mode == "direct"）──────────────────────
+    faq_candidates: list = []   # list[tuple[_DetachedChunk, float]]
+    if is_direct and all_kb_ids:
+        for kb_id in all_kb_ids:
+            try:
+                results = km_faq_retrieve_sync(
+                    question, db, tenant_id, user_id, knowledge_base_id=kb_id, top_k=3,
+                )
+                faq_candidates.extend(results)
+            except Exception as exc:
+                logger.warning("Bot FAQ 檢索失敗 (kb_id=%s): %s", kb_id, exc)
+        # 依 RRF 分數降序，取 top 3
+        faq_candidates.sort(key=lambda t: t[1], reverse=True)
+        faq_candidates = faq_candidates[:3]
+        # 轉成純 Python 快照，脫離 session，可安全跨 async 邊界
+        faq_candidates = [(_DetachedChunk(c), score) for c, score in faq_candidates]
+
+    # ── 2b. 一般 RAG 檢索（bot.answer_mode == "rag"）──────────────────────────
     all_chunks: list = []
-    if kb_ids:
+    if not is_direct and all_kb_ids:
         try:
             chunks = km_retrieve_sync(
                 question,
                 db,
                 tenant_id,
                 user_id=user_id,
-                knowledge_base_ids=kb_ids,
+                knowledge_base_ids=all_kb_ids,
                 skip_scope_check=skip_scope_check,
                 agent_id=agent_id,
             )
             all_chunks = chunks or []
         except Exception as exc:
             logger.warning("Bot RAG 檢索失敗，略過參考資料 (bot_id=%s): %s", bot.id, exc)
-
-    # 依分數排序，取 top 12 避免 context 過長
     all_chunks.sort(key=lambda c: getattr(c, "score", 0), reverse=True)
     all_chunks = all_chunks[:12]
 
-    context_chunk_ids = [str(c.id) for c in all_chunks]
+    # ── 3. chunk IDs ──────────────────────────────────────────────────────────
+    if is_direct:
+        context_chunk_ids = [str(t[0].id) for t in faq_candidates]
+    else:
+        context_chunk_ids = [str(c.id) for c in all_chunks]
+
     rag_context = format_km_context(all_chunks, show_source=show_source_in_context)
     logger.debug(
-        "bot_rag: %d chunks (bot_id=%s, agent_id=%s)", len(all_chunks), bot.id, agent_id
+        "bot_rag: mode=%s, %d chunks, %d faq_candidates (bot_id=%s, agent_id=%s)",
+        bot_mode, len(all_chunks), len(faq_candidates), bot.id, agent_id,
     )
 
-    # ── 3. 組裝 sources ────────────────────────────────────────────────────────
+    # ── 4. 組裝 sources ────────────────────────────────────────────────────────
     sources: list[dict] = []
     seen_files: set[str] = set()
+    for chunk, _ in (faq_candidates or []):
+        fname = chunk.document.filename if chunk.document else "未知文件"
+        if fname not in seen_files:
+            seen_files.add(fname)
+            sources.append({"filename": fname, "excerpt": chunk.content.strip()[:200]})
     for chunk in all_chunks:
         fname = chunk.document.filename if chunk.document else "未知文件"
         if fname not in seen_files:
             seen_files.add(fname)
             sources.append({"filename": fname, "excerpt": chunk.content.strip()[:200]})
 
-    # ── 4. 組裝 system prompt ──────────────────────────────────────────────────
+    # ── 5. 組裝 system prompt ──────────────────────────────────────────────────
     system_parts: list[str] = []
+
+    # 5a. 固定層：行為約束（永遠生效）
+    base_prompt = _load_system_prompt_from_file("bot_base")
+    if base_prompt:
+        system_parts.append(base_prompt)
+
+    # 5b. 用戶自訂層：角色定義、語氣、業務規則（選填）
     bot_system = (bot.system_prompt or "").strip()
     if bot_system:
         system_parts.append(bot_system)
-    else:
-        file_prompt = _load_system_prompt_from_file("cs")
-        if file_prompt:
-            system_parts.append(file_prompt)
+
     if rag_context.strip():
         system_parts.append(f"以下為參考資料：\n\n{rag_context.strip()}")
 
     system_content = "\n\n".join(system_parts) if system_parts else None
 
-    # ── 5. 組裝 messages ───────────────────────────────────────────────────────
+    # ── 6. 組裝 messages ───────────────────────────────────────────────────────
     messages: list[dict] = []
     if system_content:
         messages.append({"role": "system", "content": system_content})
 
-    # history 限制（每輪 = user + assistant，故 * 2）
     trimmed = history[-(max_history_turns * 2):]
     messages.extend(trimmed)
     messages.append({"role": "user", "content": question})
 
-    # ── 6. 解析模型 ────────────────────────────────────────────────────────────
+    # ── 7. 解析模型 ────────────────────────────────────────────────────────────
     model = (bot.model_name or "").strip()
 
     return BotRagContext(
@@ -133,6 +188,8 @@ def prepare_bot_rag_messages(
         model=model,
         rag_context_text=rag_context,
         system_prompt_used=bot_system or None,
+        is_faq_direct=is_direct,
+        faq_candidates=faq_candidates if is_direct else None,
     )
 
 

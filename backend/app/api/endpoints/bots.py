@@ -33,6 +33,7 @@ class BotCreate(BaseModel):
     system_prompt: str | None = None
     fallback_message: str | None = None
     fallback_message_enabled: bool = False
+    answer_mode: str = "rag"
     model_name: str | None = None
     knowledge_base_ids: list[BotKbItem] = []
 
@@ -44,6 +45,7 @@ class BotUpdate(BaseModel):
     system_prompt: str | None = None
     fallback_message: str | None = None
     fallback_message_enabled: bool | None = None
+    answer_mode: str | None = None
     model_name: str | None = None
     knowledge_base_ids: list[BotKbItem] | None = None
     widget_title: str | None = None
@@ -58,6 +60,7 @@ class BotKbResponse(BaseModel):
     knowledge_base_id: int
     name: str
     sort_order: int
+    answer_mode: str = "rag"
 
     model_config = {"from_attributes": True}
 
@@ -70,6 +73,7 @@ class BotResponse(BaseModel):
     system_prompt: str | None
     fallback_message: str | None
     fallback_message_enabled: bool
+    answer_mode: str
     model_name: str | None
     public_token: str | None
     widget_title: str | None
@@ -86,7 +90,7 @@ class BotResponse(BaseModel):
 
 def _to_response(bot: Bot, db: Session) -> BotResponse:
     kb_rows = (
-        db.query(BotKnowledgeBase, KmKnowledgeBase.name)
+        db.query(BotKnowledgeBase, KmKnowledgeBase.name, KmKnowledgeBase.answer_mode)
         .join(KmKnowledgeBase, BotKnowledgeBase.knowledge_base_id == KmKnowledgeBase.id)
         .filter(BotKnowledgeBase.bot_id == bot.id)
         .order_by(BotKnowledgeBase.sort_order)
@@ -97,6 +101,7 @@ def _to_response(bot: Bot, db: Session) -> BotResponse:
             knowledge_base_id=row.BotKnowledgeBase.knowledge_base_id,
             name=row.name,
             sort_order=row.BotKnowledgeBase.sort_order,
+            answer_mode=row.answer_mode or "rag",
         )
         for row in kb_rows
     ]
@@ -108,6 +113,7 @@ def _to_response(bot: Bot, db: Session) -> BotResponse:
         system_prompt=bot.system_prompt,
         fallback_message=bot.fallback_message,
         fallback_message_enabled=bot.fallback_message_enabled or False,
+        answer_mode=bot.answer_mode or "rag",
         model_name=bot.model_name,
         public_token=bot.public_token,
         widget_title=bot.widget_title,
@@ -165,6 +171,7 @@ def create_bot(
         system_prompt=body.system_prompt or None,
         fallback_message=body.fallback_message or None,
         fallback_message_enabled=body.fallback_message_enabled,
+        answer_mode=body.answer_mode or "rag",
         model_name=body.model_name or None,
         created_by=current.id,
     )
@@ -225,6 +232,8 @@ def update_bot(
         bot.fallback_message = body.fallback_message or None
     if body.fallback_message_enabled is not None:
         bot.fallback_message_enabled = body.fallback_message_enabled
+    if body.answer_mode is not None:
+        bot.answer_mode = body.answer_mode or "rag"
     if body.model_name is not None:
         bot.model_name = body.model_name or None
     if body.widget_title is not None:

@@ -891,9 +891,12 @@ export default function AgentKbManagerUI({ agent }: Props) {
                 </div>
               </div>
               <div>
-                <label className="mb-1.5 block text-base font-medium text-gray-700">
+                <label className="mb-1 block text-base font-medium text-gray-700">
                   自訂系統提示詞<span className="ml-1 font-normal text-gray-400">（選填）</span>
                 </label>
+                <p className="mb-1.5 text-sm text-gray-400">
+                  直接查詢此知識庫時套用（例如作為獨立 HR / IT 支援使用）。透過 Bot 引用此知識庫時，Bot 本身的提示詞優先，此設定不生效。
+                </p>
                 <textarea value={settingsPrompt} onChange={(e) => setSettingsPrompt(e.target.value)} rows={8}
                   placeholder="你是 XX 公司的客服助手…"
                   className="w-full rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 font-mono text-base text-gray-800 placeholder-amber-300 focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400" />

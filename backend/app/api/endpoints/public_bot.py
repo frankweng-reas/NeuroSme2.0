@@ -172,6 +172,30 @@ async def bot_query(
         for s in bot_ctx.sources
     ]
 
+    # FAQ direct 模式：LLM 選題 → 回傳原文，不重新生成答案
+    if bot_ctx.is_faq_direct and bot_ctx.faq_candidates:
+        from app.services.km_service import km_faq_llm_select, extract_faq_question, extract_faq_answer
+        candidates = bot_ctx.faq_candidates
+        faq_model = bot_ctx.model or (body.model or "").strip()
+        if candidates and faq_model:
+            selected, _usage, _lat = await km_faq_llm_select(
+                body.question, candidates, faq_model, db, tenant_id,
+            )
+        else:
+            selected = candidates
+        if not selected:
+            faq_answer = apply_bot_fallback("[NOT_FOUND]", bot)
+        else:
+            parts = []
+            for chunk, _ in selected:
+                q = extract_faq_question(chunk.content)
+                a = extract_faq_answer(chunk.content)
+                parts.append(f"**Q: {q}**\n\n{a}" if q else a)
+            faq_answer = apply_bot_fallback("\n\n---\n\n".join(parts), bot)
+        _hit = bool(selected)
+        logger.info("public bot_query (faq-direct): hit=%s (bot_id=%s)", _hit, bot.id)
+        return BotQueryResponse(answer=faq_answer, sources=sources, usage=None, hit=_hit)
+
     # 決定模型（Bot 設定 > request body > 報錯）
     model = bot_ctx.model or (body.model or "").strip()
     if not model:

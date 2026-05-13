@@ -849,6 +849,15 @@ def km_faq_retrieve_sync(
     RRF_K = 60
     ALPHA = 0.7  # 向量權重（Q-only embedding 已夠精準，維持一般設定）
 
+    # 驗證 KB 存在且屬於當前 tenant，防止跨租戶存取
+    kb_exists = db.query(KmKnowledgeBase.id).filter(
+        KmKnowledgeBase.id == knowledge_base_id,
+        KmKnowledgeBase.tenant_id == tenant_id,
+    ).first()
+    if not kb_exists:
+        logger.warning("FAQ 檢索拒絕：knowledge_base_id=%s 不屬於 tenant_id=%s", knowledge_base_id, tenant_id)
+        return []
+
     embed_params = _get_embed_params(db, tenant_id)
     if not embed_params:
         logger.warning("FAQ 檢索失敗：tenant_id=%s 無 Embedding provider", tenant_id)

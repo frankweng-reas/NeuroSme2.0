@@ -222,6 +222,7 @@ def _prepare_chat_completion(req: ChatRequest, db: Session, current: User) -> Ch
     kb_system_prompt: str | None = None
     kb_fallback_message: str | None = None
     kb_fallback_message_enabled: bool = False
+    kb_faq_candidates: list | None = None
     km_sources: list[dict] = []
     if req.bot_id is not None:
         from app.models.bot import Bot
@@ -245,7 +246,7 @@ def _prepare_chat_completion(req: ChatRequest, db: Session, current: User) -> Ch
             tenant_id,
             user_id=current.id,
             skip_scope_check=False,  # 內部用戶走正常 scope 檢查
-            agent_id="knowledge-bot",
+            agent_id="kb-bot-builder",
         )
         # 將 bot_rag_service 的結果轉換成 _prepare_chat_completion 需要的變數
         data = bot_ctx.rag_context_text
@@ -255,6 +256,11 @@ def _prepare_chat_completion(req: ChatRequest, db: Session, current: User) -> Ch
         kb_system_prompt = bot_ctx.system_prompt_used
         kb_fallback_message = (bot.fallback_message or "").strip() or None
         kb_fallback_message_enabled = bot.fallback_message_enabled or False
+        # FAQ direct 模式：轉入 faq_candidates，chat_completions 的現有邏輯會負責 LLM 選題
+        if bot_ctx.is_faq_direct and bot_ctx.faq_candidates:
+            kb_faq_candidates = bot_ctx.faq_candidates
+        else:
+            kb_faq_candidates = None
 
     # KM Agent & Chat Service Agent & KB Manager：RAG 向量檢索，不使用 source_files
     elif aid in ("knowledge", "cs", "kb-manager"):
@@ -406,6 +412,7 @@ def _prepare_chat_completion(req: ChatRequest, db: Session, current: User) -> Ch
         context_chunk_ids=_km_chunk_ids,
         bot_fallback_message=kb_fallback_message if req.bot_id is not None else None,
         bot_fallback_message_enabled=kb_fallback_message_enabled if req.bot_id is not None else False,
+        faq_candidates=kb_faq_candidates if req.bot_id is not None else None,
     )
 
 

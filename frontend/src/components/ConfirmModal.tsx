@@ -46,7 +46,7 @@ export default function ConfirmModal({
         onClick={(e) => e.stopPropagation()}
       >
         <h2 className="mb-4 font-semibold text-gray-800">{title}</h2>
-        <p className="mb-6 text-gray-600">{message}</p>
+        <p className="mb-6 whitespace-pre-line text-gray-600">{message}</p>
         <div className="flex justify-end gap-2">
           {showCancel ? (
             <button

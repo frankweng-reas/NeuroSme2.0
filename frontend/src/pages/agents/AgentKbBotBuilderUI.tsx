@@ -78,6 +78,17 @@ interface Props { agent: Agent }
 
 const BOT_COLOR = '#343434'
 
+const DEFAULT_BOT_SYSTEM_PROMPT =
+`你是本公司的客服助手，根據知識庫內容回答問題。
+
+## 語言
+- 以使用者訊息語言回覆；若混用語言，以最後一則訊息語言為準。
+- 無明確語言時，預設使用繁體中文。
+
+## 輸出
+- 回答控制在 300 字以內；簡單問題 1–2 句即可，複雜問題可用條列但不超過 5 點。
+- 省略冗長前言與結尾寒暄，直接給出答案。`
+
 const threadStorageKey = (botId: number) => `kb-bot-thread-${botId}`
 
 type RightTab = 'chat' | 'history' | 'api' | 'settings' | 'deploy' | 'stats'
@@ -124,6 +135,7 @@ export default function AgentKbBotBuilderUI({ agent }: Props) {
   const [settingsWidgetLang, setSettingsWidgetLang] = useState('zh-TW')
   const [settingsWidgetVoiceEnabled, setSettingsWidgetVoiceEnabled] = useState(false)
   const [settingsWidgetVoicePrompt, setSettingsWidgetVoicePrompt] = useState('')
+  const [settingsAnswerMode, setSettingsAnswerMode] = useState<'rag' | 'direct'>('rag')
   const [settingsKbIds, setSettingsKbIds] = useState<BotKbItem[]>([])
   const [settingsSaving, setSettingsSaving] = useState(false)
 
@@ -196,9 +208,10 @@ export default function AgentKbBotBuilderUI({ agent }: Props) {
     if (!selectedBot) return
     setSettingsName(selectedBot.name)
     setSettingsModel(selectedBot.model_name ?? '')
-    setSettingsPrompt(selectedBot.system_prompt ?? '')
+    setSettingsPrompt(selectedBot.system_prompt ?? DEFAULT_BOT_SYSTEM_PROMPT)
     setSettingsFallbackEnabled(selectedBot.fallback_message_enabled ?? false)
     setSettingsFallbackMessage(selectedBot.fallback_message ?? '')
+    setSettingsAnswerMode((selectedBot.answer_mode ?? 'rag') as 'rag' | 'direct')
     setSettingsWidgetTitle(selectedBot.widget_title ?? '')
     setSettingsWidgetLogoUrl(selectedBot.widget_logo_url ?? '')
     setSettingsWidgetColor(selectedBot.widget_color ?? '#1A3A52')
@@ -310,6 +323,7 @@ export default function AgentKbBotBuilderUI({ agent }: Props) {
         system_prompt: settingsPrompt,
         fallback_message: settingsFallbackMessage,
         fallback_message_enabled: settingsFallbackEnabled,
+        answer_mode: settingsAnswerMode,
         widget_title: settingsWidgetTitle,
         widget_logo_url: settingsWidgetLogoUrl || undefined,
         widget_color: settingsWidgetColor,
@@ -437,6 +451,7 @@ export default function AgentKbBotBuilderUI({ agent }: Props) {
       )}
 
       <ErrorModal open={errorModal !== null} title={errorModal?.title} message={errorModal?.message ?? ''} onClose={() => setErrorModal(null)} />
+
       <ConfirmModal open={deleteBotTarget !== null} title="刪除 Bot"
         message={`確定要刪除「${deleteBotTarget?.name}」嗎？此操作無法復原。`}
         confirmText="刪除" variant="danger" onConfirm={() => void handleDeleteBot()} onCancel={() => setDeleteBotTarget(null)} />
@@ -780,35 +795,86 @@ export default function AgentKbBotBuilderUI({ agent }: Props) {
                       selectClassName="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-base focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500" />
                   </div>
 
+                  {/* 回答模式 */}
+                  <div>
+                    <label className="mb-1.5 block text-base font-medium text-gray-700">回答模式</label>
+                    <p className="mb-2 text-base text-gray-400">決定 Bot 如何回覆問題；切換後已選知識庫將清空</p>
+                    <div className="flex gap-3">
+                      {([
+                        { value: 'rag',    label: 'AI生成回答',  desc: 'AI 依知識庫內容生成回覆' },
+                        { value: 'direct', label: '精準回答',    desc: '直接回傳 FAQ 原文（Q&A）' },
+                      ] as const).map(({ value, label, desc }) => (
+                        <label key={value}
+                          className={`flex flex-1 cursor-pointer flex-col gap-0.5 rounded-xl border-2 px-4 py-3 transition-colors ${
+                            settingsAnswerMode === value
+                              ? value === 'direct'
+                                ? 'border-amber-400 bg-amber-50'
+                                : 'border-emerald-500 bg-emerald-50'
+                              : 'border-gray-200 bg-white hover:border-gray-300'
+                          }`}>
+                          <div className="flex items-center gap-2">
+                            <input type="radio" name="bot-answer-mode" value={value}
+                              checked={settingsAnswerMode === value}
+                              onChange={() => {
+                                if (settingsAnswerMode !== value) {
+                                  setSettingsAnswerMode(value)
+                                  setSettingsKbIds([])
+                                }
+                              }}
+                              className="accent-emerald-600" />
+                            <span className="text-base font-semibold text-gray-800">{label}</span>
+                          </div>
+                          <span className="pl-5 text-sm text-gray-400">{desc}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
                   {/* 知識來源 */}
                   <div>
                     <label className="mb-1 block text-base font-medium text-gray-700">知識來源（KB）</label>
-                    <p className="mb-2 text-base text-gray-400">在「KB 管理」建立知識庫後，可在此勾選引用</p>
+                    <p className="mb-2 text-base text-gray-400">
+                      僅顯示「{settingsAnswerMode === 'direct' ? '精準回答型' : 'AI生成回答型'}」知識庫
+                    </p>
                     <div className="space-y-1.5 rounded-xl border border-gray-200 p-3">
-                      {kbs.filter((kb) => kb.scope === 'company').length === 0 ? (
-                        <p className="text-base text-gray-400">尚無公司知識庫，請先至「KB 管理」建立 Company 知識庫</p>
-                      ) : kbs.filter((kb) => kb.scope === 'company').map((kb) => {
-                        const checked = settingsKbIds.some((item) => item.knowledge_base_id === kb.id)
-                        return (
-                          <label key={kb.id} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-gray-50">
-                            <input type="checkbox" checked={checked} onChange={() => toggleKb(kb.id)} 
-                              className="h-4 w-4 shrink-0 cursor-pointer accent-emerald-600" />
-                            <span className="flex-1 text-base text-gray-700">{kb.name}</span>
-                            <span className="text-base text-gray-400">{kb.ready_count} 份</span>
-                          </label>
+                      {(() => {
+                        const filtered = kbs.filter(
+                          (kb) => kb.scope === 'company' && (kb.answer_mode ?? 'rag') === settingsAnswerMode
                         )
-                      })}
+                        if (filtered.length === 0) {
+                          return (
+                            <p className="text-base text-gray-400">
+                              尚無符合條件的知識庫，請先至「KB 管理」建立
+                              {settingsAnswerMode === 'direct' ? '「精準回答型（FAQ）」' : '「AI生成回答型」'}
+                              知識庫
+                            </p>
+                          )
+                        }
+                        return filtered.map((kb) => {
+                          const checked = settingsKbIds.some((item) => item.knowledge_base_id === kb.id)
+                          return (
+                            <label key={kb.id} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-gray-50">
+                              <input type="checkbox" checked={checked} onChange={() => toggleKb(kb.id)}
+                                className="h-4 w-4 shrink-0 cursor-pointer accent-emerald-600" />
+                              <span className="flex-1 text-base text-gray-700">{kb.name}</span>
+                              <span className="text-base text-gray-400">{kb.ready_count} 份</span>
+                            </label>
+                          )
+                        })
+                      })()}
                     </div>
                   </div>
 
                   {/* System Prompt */}
                   <div>
-                    <label className="mb-1.5 block text-base font-medium text-gray-700">
-                      自訂系統提示詞<span className="ml-1 font-normal text-gray-400">（選填）</span>
+                    <label className="mb-1 block text-base font-medium text-gray-700">
+                      Bot 角色與語氣設定
                     </label>
+                    <p className="mb-1.5 text-sm text-gray-400">
+                      設定 Bot 的角色、語氣與業務規則。「只根據知識庫回答、找不到回覆 NOT_FOUND」等核心行為約束由系統自動套用，無需填寫。
+                    </p>
                     <textarea value={settingsPrompt} onChange={(e) => setSettingsPrompt(e.target.value)} rows={8}
-                      placeholder="你是 XX 公司的客服助手，請根據知識庫文件回答問題…"
-                      className="w-full rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 font-mono text-base text-gray-800 placeholder-amber-300 focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400 disabled:opacity-60" />
+                      className="w-full rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 font-mono text-base text-gray-800 focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400 disabled:opacity-60" />
                   </div>
 
                   {/* 找不到答案時的回覆 */}

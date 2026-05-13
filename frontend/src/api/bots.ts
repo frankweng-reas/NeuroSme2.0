@@ -9,6 +9,7 @@ export interface BotKbResponse {
   knowledge_base_id: number
   name: string
   sort_order: number
+  answer_mode: 'rag' | 'direct'
 }
 
 export interface Bot {
@@ -19,6 +20,7 @@ export interface Bot {
   system_prompt: string | null
   fallback_message: string | null
   fallback_message_enabled: boolean
+  answer_mode: 'rag' | 'direct'
   model_name: string | null
   public_token: string | null
   widget_title: string | null
@@ -64,6 +66,7 @@ export async function updateBot(
     system_prompt?: string
     fallback_message?: string
     fallback_message_enabled?: boolean
+    answer_mode?: 'rag' | 'direct'
     model_name?: string
     knowledge_base_ids?: BotKbItem[]
     widget_title?: string

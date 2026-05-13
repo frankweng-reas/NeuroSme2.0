@@ -170,12 +170,14 @@ async def bot_widget_chat(
         db,
         bot_tenant_id,
         skip_scope_check=True,
-        agent_id="knowledge-bot",
+        agent_id="kb-bot-builder",
         max_history_turns=6,
         show_source_in_context=False,  # Widget 不在 LLM context 顯示來源標注
     )
     msgs = bot_ctx.messages
     _bot_chunk_ids = bot_ctx.context_chunk_ids
+    _faq_direct = bot_ctx.is_faq_direct and bool(bot_ctx.faq_candidates)
+    _faq_candidates = bot_ctx.faq_candidates or []
 
     session = db.query(BotWidgetSession).filter(BotWidgetSession.id == body.session_id).first()
     if session:
@@ -190,6 +192,39 @@ async def bot_widget_chat(
         t0 = time.perf_counter()
         llm_status = "success"
         usage_out: tuple[int, int, int] | None = None
+
+        # FAQ direct 模式：LLM 選題 → 回傳原文，不重新生成答案
+        if _faq_direct:
+            from app.api.endpoints.chat import _clean_rag_response
+            from app.services.km_service import km_faq_llm_select, extract_faq_question, extract_faq_answer
+            if _faq_candidates and bot_model_name:
+                selected, _, _ = await km_faq_llm_select(
+                    body.content, _faq_candidates, bot_model_name, db, bot_tenant_id,
+                )
+            else:
+                selected = _faq_candidates
+            if not selected:
+                raw_text = "[NOT_FOUND]"
+            else:
+                parts = []
+                for chunk, _ in selected:
+                    q = extract_faq_question(chunk.content)
+                    a = extract_faq_answer(chunk.content)
+                    parts.append(f"**Q: {q}**\n\n{a}" if q else a)
+                raw_text = "\n\n---\n\n".join(parts)
+            clean_text = _clean_rag_response(
+                raw_text, "cs",
+                fallback_message=bot_fallback_message,
+                fallback_message_enabled=bot_fallback_message_enabled,
+            )
+            yield f"data: {json.dumps({'event': 'done', 'content': clean_text}, ensure_ascii=False)}\n\n"
+            try:
+                db.add(BotWidgetMessage(session_id=session_id, role="assistant", content=clean_text))
+                db.commit()
+            except Exception as save_err:
+                logger.warning("儲存 FAQ direct 訊息失敗: %s", save_err)
+            return
+
         try:
             kwargs = build_llm_kwargs(
                 model=bot_model_name,
@@ -253,7 +288,7 @@ async def bot_widget_chat(
             try:
                 log_agent_usage(
                     db=s,
-                    agent_type="knowledge-bot",
+                    agent_type="kb-bot-builder",
                     tenant_id=tenant_id_for_log,
                     model=bot_model_name,
                     prompt_tokens=usage_out[0] if usage_out else None,
