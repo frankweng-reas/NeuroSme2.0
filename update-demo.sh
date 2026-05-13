@@ -7,7 +7,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-echo "=== NeuroSme Demo 環境更新 ==="
+export VITE_APP_VERSION="$(cat VERSION | tr -d '[:space:]')"
+
+echo "=== NeuroSme Demo 環境更新 （版本：${VITE_APP_VERSION}）==="
 
 echo "[1/2] 重新建置 demo images（frontend 靜態檔在 Docker build 時打包）..."
 docker compose -f docker-compose.demo.yml build --no-cache

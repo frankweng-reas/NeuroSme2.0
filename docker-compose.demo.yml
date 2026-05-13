@@ -26,6 +26,7 @@ services:
       # 靜態檔在 build 時 COPY 進 image，與 host dist/ 完全隔離
       args:
         VITE_APP_NAME: NeuroSme
+        VITE_APP_VERSION: ${VITE_APP_VERSION:-dev}
         VITE_AUTH_ALLOW_REGISTER: "true"
         VITE_AUTH_ALLOW_FORGOT_PASSWORD: "true"
     restart: unless-stopped
