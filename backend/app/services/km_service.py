@@ -37,6 +37,7 @@ CHUNK_OVERLAP = 200
 CHUNK_STRATEGIES: dict[str, dict] = {
     "faq":       {"chunk_size": 300,  "overlap": 50,  "top_k": 12},
     "spec":      {"chunk_size": 400,  "overlap": 80,  "top_k": 12},
+    "chat":      {"chunk_size": 500,  "overlap": 50,  "top_k": 10},
     "policy":    {"chunk_size": 800,  "overlap": 150, "top_k": 6},
     "article":   {"chunk_size": 1500, "overlap": 200, "top_k": 4},
     "reference": {"chunk_size": 60000, "overlap": 0,   "top_k": 10},
@@ -55,12 +56,20 @@ def _strategy(doc_type: str) -> dict:
 
 
 def extract_text(file_bytes: bytes, content_type: str | None, filename: str) -> str:
-    """從 PDF 或文字檔擷取純文字。"""
+    """從 PDF、Word 或文字檔擷取純文字。"""
     ct = (content_type or "").lower()
     name = (filename or "").lower()
 
     if "pdf" in ct or name.endswith(".pdf"):
         return _extract_pdf(file_bytes)
+
+    if (
+        "wordprocessingml" in ct
+        or "msword" in ct
+        or name.endswith(".docx")
+        or name.endswith(".doc")
+    ):
+        return _extract_docx(file_bytes)
 
     # 圖片：暫不支援 OCR，回傳空字串讓上層處理
     if ct.startswith("image/") or any(name.endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".gif", ".webp")):
@@ -71,6 +80,32 @@ def extract_text(file_bytes: bytes, content_type: str | None, filename: str) -> 
         return file_bytes.decode("utf-8").strip()
     except UnicodeDecodeError:
         return file_bytes.decode("latin-1", errors="replace").strip()
+
+
+def _extract_docx(file_bytes: bytes) -> str:
+    """從 Word .docx 擷取純文字（段落 + 表格）。"""
+    import io
+    try:
+        import docx as python_docx
+    except ImportError:
+        logger.warning("python-docx 未安裝，無法擷取 Word 文件內容")
+        return ""
+    try:
+        doc = python_docx.Document(io.BytesIO(file_bytes))
+        parts: list[str] = []
+        for para in doc.paragraphs:
+            text = para.text.strip()
+            if text:
+                parts.append(text)
+        for table in doc.tables:
+            for row in table.rows:
+                row_text = "\t".join(cell.text.strip() for cell in row.cells if cell.text.strip())
+                if row_text:
+                    parts.append(row_text)
+        return "\n".join(parts)
+    except Exception as e:
+        logger.warning("Word 文件擷取失敗：%s", e)
+        return ""
 
 
 def _extract_pdf(file_bytes: bytes) -> str:

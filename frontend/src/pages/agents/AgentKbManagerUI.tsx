@@ -16,34 +16,45 @@ import {
   Minimize2,
   MoreHorizontal,
   Pencil,
+  Plug,
   Plus,
   RefreshCw,
   Settings,
   Trash2,
   Upload,
+  Wifi,
+  WifiOff,
   X,
 } from 'lucide-react'
 import { chatCompletionsStream } from '@/api/chat'
 import { ApiError } from '@/api/client'
 import {
   addChunk,
+  createConnector,
   createKnowledgeBase,
   deleteChunk,
+  deleteConnector,
   deleteKnowledgeBase,
   deleteKmDocument,
   getKbQueryStats,
+  listConnectors,
   listDocChunks,
   listKbDocuments,
   listKnowledgeBases,
+  triggerConnectorSync,
   updateChunk,
+  updateConnector,
   updateKnowledgeBase,
   uploadKmDocument,
+  validateSlackToken,
   type KbScope,
   type KmChunk,
+  type KmConnector,
   type KmDocument,
   type KmKnowledgeBase,
   type QueryStatsResponse,
   type QueryStatsView,
+  type SlackChannel,
 } from '@/api/km'
 import { getMe } from '@/api/users'
 import { appendChatMessage, createChatThread, listChatMessages } from '@/api/chatThreads'
@@ -307,8 +318,222 @@ export default function AgentKbManagerUI({ agent }: Props) {
   const [deleteDocTarget, setDeleteDocTarget] = useState<KmDocument | null>(null)
   const [deleteDocLoading, setDeleteDocLoading] = useState(false)
 
-  // ── 中欄：Tab 切換（文件管理 / 查詢統計） ─────────────────────────────────
-  const [centerTab, setCenterTab] = useState<'docs' | 'stats'>('docs')
+  // ── 中欄：Tab 切換（文件管理 / 查詢統計 / 資料來源） ────────────────────────
+  const [centerTab, setCenterTab] = useState<'docs' | 'stats' | 'sources'>('docs')
+
+  // ── 中欄：資料來源（Connectors） ────────────────────────────────────────────
+  const [connectors, setConnectors] = useState<KmConnector[]>([])
+  const [connectorsLoading, setConnectorsLoading] = useState(false)
+  const [syncingConnectorId, setSyncingConnectorId] = useState<number | null>(null)
+  const [deleteConnectorTarget, setDeleteConnectorTarget] = useState<KmConnector | null>(null)
+  // 新增／編輯 Modal
+  const [connectorModalOpen, setConnectorModalOpen] = useState(false)
+  const [connectorModalStep, setConnectorModalStep] = useState<'token' | 'channels' | 'edit'>('token')
+  const [connectorToken, setConnectorToken] = useState('')
+  const [connectorName, setConnectorName] = useState('')
+  const [connectorInterval, setConnectorInterval] = useState(1440)
+  const [connectorDaysLookback, setConnectorDaysLookback] = useState(30)
+  const [connectorValidating, setConnectorValidating] = useState(false)
+  const [connectorWorkspace, setConnectorWorkspace] = useState('')
+  const [availableChannels, setAvailableChannels] = useState<SlackChannel[]>([])
+  const [selectedChannelIds, setSelectedChannelIds] = useState<string[]>([])
+  const [connectorSaving, setConnectorSaving] = useState(false)
+  const [connectorError, setConnectorError] = useState('')
+
+  const loadConnectors = useCallback((kbId: number) => {
+    setConnectorsLoading(true)
+    listConnectors(kbId)
+      .then(setConnectors)
+      .catch(() => setConnectors([]))
+      .finally(() => setConnectorsLoading(false))
+  }, [])
+
+  const [editingConnector, setEditingConnector] = useState<KmConnector | null>(null)
+
+  const openConnectorModal = () => {
+    setEditingConnector(null)
+    setConnectorModalStep('token')
+    setConnectorToken('')
+    setConnectorName('')
+    setConnectorInterval(1440)
+    setConnectorDaysLookback(30)
+    setConnectorWorkspace('')
+    setAvailableChannels([])
+    setSelectedChannelIds([])
+    setConnectorError('')
+    setConnectorModalOpen(true)
+  }
+
+  const openEditConnectorModal = async (c: KmConnector) => {
+    setEditingConnector(c)
+    setConnectorName(c.display_name)
+    setConnectorInterval(c.sync_interval_minutes)
+    setConnectorDaysLookback((c.config?.days_lookback as number) ?? 30)
+    setConnectorToken('')
+    setConnectorError('')
+    setAvailableChannels([])
+    setSelectedChannelIds((c.config?.channel_ids as string[]) ?? [])
+    // 直接進到頻道選擇步驟，需要先驗證取得可選頻道
+    // 顯示 modal 讓使用者看到目前選擇，並可重新驗證 token 取得最新頻道清單
+    setConnectorModalStep('edit')
+    setConnectorModalOpen(true)
+  }
+
+  const handleValidateToken = async () => {
+    if (!connectorToken.trim()) return
+    setConnectorValidating(true)
+    setConnectorError('')
+    try {
+      const result = await validateSlackToken(connectorToken.trim())
+      setConnectorWorkspace(result.workspace)
+      setAvailableChannels(result.channels)
+      setSelectedChannelIds([])
+      if (!connectorName) setConnectorName(`Slack - ${result.workspace}`)
+      setConnectorModalStep('channels')
+    } catch (e: unknown) {
+      setConnectorError(e instanceof Error ? e.message : 'Token 驗證失敗')
+    } finally {
+      setConnectorValidating(false)
+    }
+  }
+
+  const handleValidateTokenForEdit = async () => {
+    if (!connectorToken.trim() || connectorValidating) return
+    setConnectorValidating(true)
+    setConnectorError('')
+    try {
+      const result = await validateSlackToken(connectorToken.trim())
+      setAvailableChannels(result.channels)
+      if (result.channels.length === 0) {
+        setConnectorError('找不到可用頻道，請確認 Token 權限是否包含 channels:read')
+      }
+    } catch (e: unknown) {
+      setConnectorError(e instanceof Error ? e.message : '驗證失敗')
+    } finally {
+      setConnectorValidating(false)
+    }
+  }
+
+  const handleSaveEditConnector = async () => {
+    if (!editingConnector || !selectedKbId) return
+    setConnectorSaving(true)
+    setConnectorError('')
+    try {
+      // 合併舊的 channel_names，再用最新載入的頻道清單覆蓋有名稱的部分
+      const oldNames = (editingConnector.config?.channel_names as Record<string, string>) ?? {}
+      const channelNameMap: Record<string, string> = { ...oldNames }
+      availableChannels.forEach((ch) => {
+        if (selectedChannelIds.includes(ch.id)) channelNameMap[ch.id] = ch.name
+      })
+      // 移除已取消勾選的 ID
+      Object.keys(channelNameMap).forEach((id) => {
+        if (!selectedChannelIds.includes(id)) delete channelNameMap[id]
+      })
+      const newConfig = {
+        ...editingConnector.config,
+        channel_ids: selectedChannelIds,
+        channel_names: channelNameMap,
+        days_lookback: connectorDaysLookback,
+      }
+      const updateData: Parameters<typeof updateConnector>[1] = {
+        display_name: connectorName,
+        config: newConfig,
+        sync_interval_minutes: connectorInterval,
+      }
+      if (connectorToken.trim()) {
+        updateData.credentials = { token: connectorToken.trim() }
+      }
+      await updateConnector(editingConnector.id, updateData)
+      setConnectorModalOpen(false)
+      loadConnectors(selectedKbId)
+    } catch (e: unknown) {
+      setConnectorError(e instanceof Error ? e.message : '儲存失敗')
+    } finally {
+      setConnectorSaving(false)
+    }
+  }
+
+  const handleCreateConnector = async () => {
+    if (!selectedKbId || selectedChannelIds.length === 0) return
+    setConnectorSaving(true)
+    setConnectorError('')
+    try {
+      const channelNameMap: Record<string, string> = {}
+      availableChannels.forEach((ch) => {
+        if (selectedChannelIds.includes(ch.id)) channelNameMap[ch.id] = ch.name
+      })
+      await createConnector({
+        knowledge_base_id: selectedKbId,
+        source_type: 'slack',
+        display_name: connectorName || 'Slack',
+        config: {
+          channel_ids: selectedChannelIds,
+          channel_names: channelNameMap,
+          days_lookback: connectorDaysLookback,
+          doc_type: 'chat',
+          include_threads: true,
+        },
+        credentials: { token: connectorToken.trim() },
+        sync_interval_minutes: connectorInterval,
+      })
+      setConnectorModalOpen(false)
+      const updated = await listConnectors(selectedKbId)
+      setConnectors(updated)
+      // 立刻觸發首次同步（帶輪詢）
+      const newest = updated[updated.length - 1]
+      if (newest) {
+        handleTriggerSync(newest.id)
+      }
+    } catch (e: unknown) {
+      setConnectorError(e instanceof Error ? e.message : '建立失敗')
+    } finally {
+      setConnectorSaving(false)
+    }
+  }
+
+  const handleTriggerSync = async (connectorId: number) => {
+    if (!selectedKbId) return
+    setSyncingConnectorId(connectorId)
+    try {
+      await triggerConnectorSync(connectorId)
+      // 輪詢直到 last_synced_at 更新（最多等 30 秒）
+      const kbId = selectedKbId
+      let attempts = 0
+      const poll = setInterval(async () => {
+        attempts++
+        const updated = await listConnectors(kbId)
+        setConnectors(updated)
+        const target = updated.find((c) => c.id === connectorId)
+        const isDone = target?.last_synced_at && (
+          attempts === 1 || new Date(target.last_synced_at).getTime() > Date.now() - 35000
+        )
+        if (isDone || attempts >= 15) {
+          clearInterval(poll)
+          setSyncingConnectorId(null)
+          if (isDone) loadDocs(kbId)
+        }
+      }, 2000)
+    } catch {
+      setSyncingConnectorId(null)
+    }
+  }
+
+  const handleTogglePause = async (c: KmConnector) => {
+    if (!selectedKbId) return
+    await updateConnector(c.id, { status: c.status === 'active' ? 'paused' : 'active' })
+    loadConnectors(selectedKbId)
+  }
+
+  const handleDeleteConnector = async () => {
+    if (!deleteConnectorTarget || !selectedKbId) return
+    try {
+      await deleteConnector(deleteConnectorTarget.id)
+      setDeleteConnectorTarget(null)
+      loadConnectors(selectedKbId)
+    } catch {
+      /* ignore */
+    }
+  }
 
   // ── 中欄：查詢統計 ─────────────────────────────────────────────────────────
   const [statsDays, setStatsDays] = useState<7 | 30 | 90>(30)
@@ -365,6 +590,7 @@ export default function AgentKbManagerUI({ agent }: Props) {
   useEffect(() => {
     if (selectedKbId != null) {
       loadDocs(selectedKbId)
+      loadConnectors(selectedKbId)
       // 切換 KB 時重置統計狀態
       setCenterTab('docs')
       setStatsData(null)
@@ -777,6 +1003,7 @@ export default function AgentKbManagerUI({ agent }: Props) {
                   {([
                     { value: 'article',   emoji: '📄', label: '一般文章',   sub: '說明文件、公告' },
                     { value: 'faq',       emoji: '💬', label: 'FAQ 問答集', sub: '常見問題、Q&A' },
+                    { value: 'chat',      emoji: '💭', label: '對話紀錄',   sub: 'Slack、訊息、會議記錄' },
                     { value: 'spec',      emoji: '🔧', label: '技術規格',   sub: '參數表、Datasheet' },
                     { value: 'policy',    emoji: '📋', label: '政策 / 條款', sub: '合約、規章' },
                     { value: 'reference', emoji: '📑', label: '參考資料',   sub: '菜單、價目表、術語表' },
@@ -1139,6 +1366,25 @@ export default function AgentKbManagerUI({ agent }: Props) {
               >
                 <BarChart2 className="h-3.5 w-3.5" />查詢統計
               </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setCenterTab('sources')
+                  if (selectedKbId) loadConnectors(selectedKbId)
+                }}
+                className={`relative flex flex-1 items-center justify-center gap-1.5 py-2 text-base font-medium transition-colors ${
+                  centerTab === 'sources'
+                    ? 'border-b-2 border-sky-500 text-sky-600'
+                    : 'text-gray-400 hover:text-gray-600'
+                }`}
+              >
+                <Plug className="h-3.5 w-3.5" />整合
+                {connectors.length > 0 && (
+                  <span className="absolute right-2 top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-sky-500 text-[10px] font-bold text-white">
+                    {connectors.length}
+                  </span>
+                )}
+              </button>
             </div>
           )}
 
@@ -1210,13 +1456,13 @@ export default function AgentKbManagerUI({ agent }: Props) {
                           {canUploadToSelectedKb && doc.status === 'ready' && (
                             <button type="button" onClick={() => openDrawer(doc)}
                               title="編輯段落內容"
-                              className="mt-0.5 shrink-0 rounded p-1.5 text-gray-300 opacity-0 transition-all group-hover:opacity-100 hover:bg-sky-50 hover:text-sky-500">
-                              <Pencil className="h-4 w-4" />
+                              className="mt-0.5 shrink-0 rounded p-2 text-gray-400 hover:bg-sky-50 hover:text-sky-500">
+                              <Pencil className="h-5 w-5" />
                             </button>
                           )}
                           {canUploadToSelectedKb && (
                             <button type="button" onClick={() => setDeleteDocTarget(doc)}
-                              className="mt-0.5 shrink-0 rounded p-1.5 text-gray-300 opacity-0 transition-all group-hover:opacity-100 hover:bg-red-50 hover:text-red-400">
+                              className="mt-0.5 shrink-0 rounded p-2 text-gray-400 hover:bg-red-50 hover:text-red-400">
                               <Trash2 className="h-5 w-5" />
                             </button>
                           )}
@@ -1362,6 +1608,167 @@ export default function AgentKbManagerUI({ agent }: Props) {
               </div>
             </div>
           )}
+
+          {/* ── 資料來源內容 ── */}
+          {centerTab === 'sources' && (
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              {/* 工具列 */}
+              <div className="flex shrink-0 items-center justify-between border-b border-gray-100 px-4 py-2">
+                <span className="text-base text-gray-500">
+                  {connectors.length > 0 ? `${connectors.length} 個連接器` : '自動從外部來源同步資料'}
+                </span>
+                {selectedKbId && canUploadToSelectedKb && (
+                  <button
+                    type="button"
+                    onClick={openConnectorModal}
+                    className="flex items-center gap-1 rounded-lg bg-sky-500 px-2.5 py-1 text-base font-medium text-white hover:bg-sky-600"
+                  >
+                    <Plus className="h-3.5 w-3.5" />新增來源
+                  </button>
+                )}
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                {!selectedKbId ? (
+                  <div className="flex h-full items-center justify-center">
+                    <p className="text-base text-gray-300">← 選擇知識庫</p>
+                  </div>
+                ) : connectorsLoading ? (
+                  <div className="flex h-full items-center justify-center">
+                    <Loader2 className="h-5 w-5 animate-spin text-gray-300" />
+                  </div>
+                ) : connectors.length === 0 ? (
+                  <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+                    <Plug className="h-10 w-10 text-gray-200" />
+                    <p className="text-sm font-medium text-gray-400">尚未設定任何整合</p>
+                    <p className="text-base text-gray-300">連接 Slack、Notion 等外部平台，自動同步內容到知識庫</p>
+                    {canUploadToSelectedKb && (
+                      <button
+                        type="button"
+                        onClick={openConnectorModal}
+                        className="mt-1 flex items-center gap-1.5 rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-base font-medium text-sky-600 hover:bg-sky-100"
+                      >
+                        <Plus className="h-3.5 w-3.5" />新增連接器
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="p-3 flex flex-col gap-3">
+                    {connectors.map((c) => {
+                      const isSyncing = syncingConnectorId === c.id
+                      const channelIds: string[] = (c.config?.channel_ids as string[]) ?? []
+                      const syncIntervalLabel =
+                        c.sync_interval_minutes === 0 ? '僅手動同步'
+                        : c.sync_interval_minutes < 60 ? `每 ${c.sync_interval_minutes} 分鐘`
+                        : c.sync_interval_minutes < 1440 ? `每 ${c.sync_interval_minutes / 60} 小時`
+                        : `每天`
+                      return (
+                        <div key={c.id} className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+                          {/* ── 卡片頂部：來源色條 ── */}
+                          <div className="h-1 w-full bg-[#4A154B]" />
+
+                          {/* ── 卡片主體 ── */}
+                          <div className="p-4">
+                            {/* 標題列 */}
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#4A154B] text-white shadow-sm">
+                                  <span className="text-sm font-bold">#</span>
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="truncate text-sm font-semibold text-gray-800">{c.display_name}</p>
+                                  <p className="text-base text-gray-400">Slack · {channelIds.length} 個頻道</p>
+                                </div>
+                              </div>
+                              {/* 狀態 badge */}
+                              {isSyncing ? (
+                                <span className="flex shrink-0 items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 text-base font-medium text-amber-700">
+                                  <Loader2 className="h-3 w-3 animate-spin" />同步中
+                                </span>
+                              ) : c.status === 'active' ? (
+                                <span className="flex shrink-0 items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-base font-medium text-emerald-700">
+                                  <Wifi className="h-3 w-3" />已啟用
+                                </span>
+                              ) : c.status === 'paused' ? (
+                                <span className="flex shrink-0 items-center gap-1 rounded-full bg-gray-100 px-2.5 py-1 text-base font-medium text-gray-500">
+                                  <WifiOff className="h-3 w-3" />已暫停
+                                </span>
+                              ) : (
+                                <span className="flex shrink-0 items-center gap-1 rounded-full bg-red-100 px-2.5 py-1 text-base font-medium text-red-600">
+                                  <WifiOff className="h-3 w-3" />錯誤
+                                </span>
+                              )}
+                            </div>
+
+                            {/* 詳情 */}
+                            <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-base text-gray-400">
+                              <span>{syncIntervalLabel}</span>
+                              {c.last_synced_at ? (
+                                <span>上次同步：{new Date(c.last_synced_at).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                              ) : (
+                                <span className="text-amber-500">尚未同步</span>
+                              )}
+                            </div>
+
+                            {c.status === 'error' && c.last_error && (
+                              <p className="mt-2 rounded-lg bg-red-50 px-3 py-1.5 text-base text-red-500 break-all">{c.last_error}</p>
+                            )}
+                          </div>
+
+                          {/* ── 卡片底部：操作按鈕 ── */}
+                          {canUploadToSelectedKb && (
+                            <div className="flex items-center gap-2 border-t border-gray-100 bg-gray-50/60 px-4 py-2.5">
+                              <button
+                                type="button"
+                                onClick={() => handleTriggerSync(c.id)}
+                                disabled={isSyncing}
+                                className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-base text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                              >
+                                <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                                {isSyncing ? '同步中…' : '立即同步'}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={isSyncing}
+                                onClick={async () => {
+                                  await updateConnector(c.id, { force_full_sync: true })
+                                  handleTriggerSync(c.id)
+                                }}
+                                className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-base text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                              >
+                                <RefreshCw className="h-3.5 w-3.5" />重新同步
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleTogglePause(c)}
+                                className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-base text-gray-600 hover:bg-gray-50"
+                              >
+                                {c.status === 'paused' ? '啟用' : '暫停'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => openEditConnectorModal(c)}
+                                className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-base text-gray-600 hover:bg-gray-50"
+                              >
+                                <Pencil className="h-3.5 w-3.5" />編輯
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setDeleteConnectorTarget(c)}
+                                className="ml-auto flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-2.5 py-1 text-base text-red-500 hover:bg-red-50"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />刪除
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* ══ 右欄：測試查詢 Chat ═══════════════════════════════════════════ */}
@@ -1400,6 +1807,363 @@ export default function AgentKbManagerUI({ agent }: Props) {
         </div>
 
       </div>
+
+      {/* ══ 新增 Connector Modal ══════════════════════════════════════════ */}
+      {connectorModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="flex w-full max-w-md flex-col rounded-2xl bg-white shadow-2xl">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-800">
+                  {editingConnector ? '編輯連接器' : '新增整合'}
+                </h3>
+                <p className="text-base text-gray-400">
+                  {connectorModalStep === 'token' ? '步驟 1／2：驗證 Slack Token'
+                    : connectorModalStep === 'channels' ? `步驟 2／2：選擇頻道（${connectorWorkspace}）`
+                    : `編輯設定：${editingConnector?.display_name}`}
+                </p>
+              </div>
+              <button type="button" onClick={() => setConnectorModalOpen(false)} className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-4 overflow-y-auto px-5 py-4">
+              {connectorModalStep === 'token' ? (
+                <>
+                  {/* ── 步驟 1：Token 輸入 ── */}
+                  {/* 來源選擇（目前只有 Slack） */}
+                  <div>
+                    <label className="mb-1.5 block text-xs font-medium text-gray-600">來源類型</label>
+                    <div className="flex gap-2">
+                      <div className="flex flex-1 items-center gap-2 rounded-xl border-2 border-sky-400 bg-sky-50 px-3 py-2.5">
+                        <div className="flex h-6 w-6 items-center justify-center rounded-md bg-[#4A154B]">
+                          <span className="text-xs font-bold text-white">#</span>
+                        </div>
+                        <span className="text-sm font-medium text-gray-700">Slack</span>
+                        <Check className="ml-auto h-3.5 w-3.5 text-sky-500" />
+                      </div>
+                      <div className="flex flex-1 cursor-not-allowed items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 opacity-40">
+                        <span className="text-sm text-gray-400">Notion（即將推出）</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Token 輸入 */}
+                  <div>
+                    <label className="mb-1.5 block text-xs font-medium text-gray-600">
+                      Slack User Token
+                      <a href="https://api.slack.com/apps" target="_blank" rel="noreferrer" className="ml-1.5 text-sky-500 hover:underline">
+                        如何取得？↗
+                      </a>
+                    </label>
+                    <input
+                      type="password"
+                      value={connectorToken}
+                      onChange={(e) => { setConnectorToken(e.target.value); setConnectorError('') }}
+                      onKeyDown={(e) => e.key === 'Enter' && handleValidateToken()}
+                      placeholder="xoxp-..."
+                      className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono placeholder-gray-300 focus:border-sky-400 focus:outline-none focus:ring-1 focus:ring-sky-200"
+                    />
+                    <p className="mt-1 text-base text-gray-400">需要 channels:history、channels:read、users:read、files:read 權限</p>
+                  </div>
+
+                  {connectorError && (
+                    <p className="rounded-lg bg-red-50 px-3 py-2 text-base text-red-500">{connectorError}</p>
+                  )}
+                </>
+              ) : connectorModalStep === 'channels' ? (
+                <>
+                  {/* ── 步驟 2：頻道選擇（新建流程） ── */}
+                  {/* 連接器名稱 */}
+                  <div>
+                    <label className="mb-1.5 block text-xs font-medium text-gray-600">連接器名稱</label>
+                    <input
+                      type="text"
+                      value={connectorName}
+                      onChange={(e) => setConnectorName(e.target.value)}
+                      className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm focus:border-sky-400 focus:outline-none focus:ring-1 focus:ring-sky-200"
+                    />
+                  </div>
+
+                  {/* 頻道選擇 */}
+                  <div>
+                    <label className="mb-1.5 block text-xs font-medium text-gray-600">
+                      選擇頻道
+                      <span className="ml-1.5 text-gray-400">（已選 {selectedChannelIds.length} 個）</span>
+                    </label>
+                    <div className="max-h-52 overflow-y-auto rounded-xl border border-gray-200">
+                      {availableChannels.length === 0 ? (
+                        <p className="px-3 py-4 text-center text-base text-gray-400">找不到可用頻道</p>
+                      ) : (
+                        availableChannels.map((ch) => (
+                          <label key={ch.id} className="flex cursor-pointer items-center gap-3 border-b border-gray-50 px-3 py-2 hover:bg-gray-50 last:border-0">
+                            <input
+                              type="checkbox"
+                              checked={selectedChannelIds.includes(ch.id)}
+                              onChange={(e) => {
+                                setSelectedChannelIds((prev) =>
+                                  e.target.checked ? [...prev, ch.id] : prev.filter((id) => id !== ch.id)
+                                )
+                              }}
+                              className="h-4 w-4 rounded border-gray-300 text-sky-500 focus:ring-sky-300"
+                            />
+                            <span className="flex-1 text-sm text-gray-700">
+                              {ch.is_private ? '🔒' : '#'} {ch.name}
+                            </span>
+                            {ch.member_count != null && (
+                              <span className="text-base text-gray-300">{ch.member_count} 人</span>
+                            )}
+                          </label>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 設定列 */}
+                  <div className="flex gap-3">
+                    <div className="flex-1">
+                      <label className="mb-1.5 block text-xs font-medium text-gray-600">同步頻率</label>
+                      <select
+                        value={connectorInterval}
+                        onChange={(e) => setConnectorInterval(Number(e.target.value))}
+                        className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:border-sky-400 focus:outline-none"
+                      >
+                        <option value={30}>每 30 分鐘</option>
+                        <option value={60}>每 1 小時</option>
+                        <option value={360}>每 6 小時</option>
+                        <option value={720}>每 12 小時</option>
+                        <option value={1440}>每天</option>
+                        <option value={0}>只手動同步</option>
+                      </select>
+                    </div>
+                    <div className="flex-1">
+                      <label className="mb-1.5 block text-xs font-medium text-gray-600">首次同步範圍</label>
+                      <select
+                        value={connectorDaysLookback}
+                        onChange={(e) => setConnectorDaysLookback(Number(e.target.value))}
+                        className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:border-sky-400 focus:outline-none"
+                      >
+                        <option value={7}>最近 7 天</option>
+                        <option value={30}>最近 30 天</option>
+                        <option value={90}>最近 90 天</option>
+                        <option value={180}>最近 180 天</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {connectorError && (
+                    <p className="rounded-lg bg-red-50 px-3 py-2 text-base text-red-500">{connectorError}</p>
+                  )}
+                </>
+              ) : (
+                <>
+                  {/* ── 編輯模式 ── */}
+                  {/* 連接器名稱 */}
+                  <div>
+                    <label className="mb-1.5 block text-xs font-medium text-gray-600">連接器名稱</label>
+                    <input
+                      type="text"
+                      value={connectorName}
+                      onChange={(e) => setConnectorName(e.target.value)}
+                      className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm focus:border-sky-400 focus:outline-none focus:ring-1 focus:ring-sky-200"
+                    />
+                  </div>
+
+                  {/* 目前已選頻道（顯示 ID） */}
+                  <div>
+                    <label className="mb-1.5 block text-xs font-medium text-gray-600">
+                      已選頻道
+                      <span className="ml-1.5 text-gray-400">（已選 {selectedChannelIds.length} 個）</span>
+                    </label>
+                    {availableChannels.length > 0 ? (
+                      <div className="max-h-52 overflow-y-auto rounded-xl border border-gray-200">
+                        {availableChannels.map((ch) => (
+                          <label key={ch.id} className="flex cursor-pointer items-center gap-3 border-b border-gray-50 px-3 py-2 hover:bg-gray-50 last:border-0">
+                            <input
+                              type="checkbox"
+                              checked={selectedChannelIds.includes(ch.id)}
+                              onChange={(e) => {
+                                setSelectedChannelIds((prev) =>
+                                  e.target.checked ? [...prev, ch.id] : prev.filter((id) => id !== ch.id)
+                                )
+                              }}
+                              className="h-4 w-4 rounded border-gray-300 text-sky-500 focus:ring-sky-300"
+                            />
+                            <span className="flex-1 text-sm text-gray-700">
+                              {ch.is_private ? '🔒' : '#'} {ch.name}
+                            </span>
+                            {ch.member_count != null && (
+                              <span className="text-base text-gray-300">{ch.member_count} 人</span>
+                            )}
+                          </label>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                        <div className="mb-2 flex flex-wrap gap-1.5">
+                          {selectedChannelIds.length > 0 ? (() => {
+                            const storedNames = (editingConnector?.config?.channel_names as Record<string, string>) ?? {}
+                            return selectedChannelIds.map((id) => {
+                              const name = storedNames[id] ?? id
+                              return (
+                                <span key={id} className="flex items-center gap-1 rounded-lg bg-sky-50 px-2 py-0.5 text-xs text-sky-700">
+                                  # {name}
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedChannelIds((prev) => prev.filter((c) => c !== id))}
+                                    className="ml-0.5 text-sky-400 hover:text-red-500"
+                                  >
+                                    ×
+                                  </button>
+                                </span>
+                              )
+                            })
+                          })() : (
+                            <p className="text-base text-gray-400">尚未選擇頻道</p>
+                          )}
+                        </div>
+                        <p className="text-base text-gray-400">
+                          若要新增頻道，請輸入 Token 重新載入頻道清單↓
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 重新驗證 Token（可選，可新增頻道） */}
+                  <div>
+                    <label className="mb-1.5 block text-xs font-medium text-gray-600">
+                      重新載入頻道清單
+                      <span className="ml-1.5 font-normal text-gray-400">（選填，輸入 Token 後點擊驗證可重新選擇頻道）</span>
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        type="password"
+                        value={connectorToken}
+                        onChange={(e) => { setConnectorToken(e.target.value); setConnectorError('') }}
+                        onKeyDown={(e) => e.key === 'Enter' && connectorToken.trim() && handleValidateTokenForEdit()}
+                        placeholder="xoxp-... （不填則保留原 Token）"
+                        className="flex-1 rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono placeholder-gray-300 focus:border-sky-400 focus:outline-none focus:ring-1 focus:ring-sky-200"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleValidateTokenForEdit}
+                        disabled={!connectorToken.trim() || connectorValidating}
+                        className="flex items-center gap-1.5 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-medium text-sky-600 hover:bg-sky-100 disabled:opacity-50"
+                      >
+                        {connectorValidating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wifi className="h-3.5 w-3.5" />}
+                        {connectorValidating ? '載入中…' : '載入頻道'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 設定列 */}
+                  <div className="flex gap-3">
+                    <div className="flex-1">
+                      <label className="mb-1.5 block text-xs font-medium text-gray-600">同步頻率</label>
+                      <select
+                        value={connectorInterval}
+                        onChange={(e) => setConnectorInterval(Number(e.target.value))}
+                        className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:border-sky-400 focus:outline-none"
+                      >
+                        <option value={30}>每 30 分鐘</option>
+                        <option value={60}>每 1 小時</option>
+                        <option value={360}>每 6 小時</option>
+                        <option value={720}>每 12 小時</option>
+                        <option value={1440}>每天</option>
+                        <option value={0}>只手動同步</option>
+                      </select>
+                    </div>
+                    <div className="flex-1">
+                      <label className="mb-1.5 block text-xs font-medium text-gray-600">同步範圍</label>
+                      <select
+                        value={connectorDaysLookback}
+                        onChange={(e) => setConnectorDaysLookback(Number(e.target.value))}
+                        className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:border-sky-400 focus:outline-none"
+                      >
+                        <option value={7}>最近 7 天</option>
+                        <option value={30}>最近 30 天</option>
+                        <option value={90}>最近 90 天</option>
+                        <option value={180}>最近 180 天</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {connectorError && (
+                    <p className="rounded-lg bg-red-50 px-3 py-2 text-base text-red-500">{connectorError}</p>
+                  )}
+                </>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex justify-end gap-2 border-t border-gray-100 px-5 py-3">
+              {connectorModalStep === 'channels' && (
+                <button
+                  type="button"
+                  onClick={() => { setConnectorModalStep('token'); setConnectorError('') }}
+                  className="rounded-xl border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50"
+                >
+                  上一步
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setConnectorModalOpen(false)}
+                className="rounded-xl border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50"
+              >
+                取消
+              </button>
+              {connectorModalStep === 'token' && (
+                <button
+                  type="button"
+                  onClick={handleValidateToken}
+                  disabled={!connectorToken.trim() || connectorValidating}
+                  className="flex items-center gap-1.5 rounded-xl bg-sky-500 px-4 py-2 text-sm font-medium text-white hover:bg-sky-600 disabled:opacity-50"
+                >
+                  {connectorValidating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wifi className="h-3.5 w-3.5" />}
+                  {connectorValidating ? '驗證中…' : '驗證並載入頻道'}
+                </button>
+              )}
+              {connectorModalStep === 'channels' && (
+                <button
+                  type="button"
+                  onClick={handleCreateConnector}
+                  disabled={selectedChannelIds.length === 0 || connectorSaving}
+                  className="flex items-center gap-1.5 rounded-xl bg-sky-500 px-4 py-2 text-sm font-medium text-white hover:bg-sky-600 disabled:opacity-50"
+                >
+                  {connectorSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                  {connectorSaving ? '建立中…' : '建立並立即同步'}
+                </button>
+              )}
+              {connectorModalStep === 'edit' && (
+                <button
+                  type="button"
+                  onClick={handleSaveEditConnector}
+                  disabled={selectedChannelIds.length === 0 || connectorSaving}
+                  className="flex items-center gap-1.5 rounded-xl bg-sky-500 px-4 py-2 text-sm font-medium text-white hover:bg-sky-600 disabled:opacity-50"
+                >
+                  {connectorSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                  {connectorSaving ? '儲存中…' : '儲存變更'}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══ 刪除 Connector 確認 ══════════════════════════════════════════ */}
+      <ConfirmModal
+        open={deleteConnectorTarget != null}
+        title="刪除連接器"
+        message={`確定要刪除「${deleteConnectorTarget?.display_name ?? ''}」？\n連接器刪除後不會自動移除已同步的文件。`}
+        confirmText="刪除"
+        variant="danger"
+        onConfirm={handleDeleteConnector}
+        onCancel={() => setDeleteConnectorTarget(null)}
+      />
+
     </div>
   )
 }

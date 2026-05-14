@@ -46,16 +46,17 @@ PROVIDER_DEFAULT_MODELS: dict[str, list[str]] = {
     ],
     "gemini": [
         "gemini/gemini-2.5-flash",
-        "gemini/gemini-pro",
+        "gemini/gemini-2.5-pro",
+        "gemini/gemini-3.1-flash-lite",
     ],
     "anthropic": [
-        "claude-opus-4-5",
-        "claude-sonnet-4-5",
-        "claude-3-5-haiku-20241022",
+        "anthropic/claude-opus-4-5",
+        "anthropic/claude-sonnet-4-5",
+        "anthropic/claude-3-5-haiku-20241022",
     ],
     "twcc": ["twcc/Llama3.3-FFM-70B-32K"],
     "local": [
-        "local/gemma3:4b",
+        "local/gemma4:26b",
         "local/llama3.2:latest",
         "local/mistral:latest",
     ],
@@ -118,7 +119,9 @@ def _collect_tenant_model_options(db: Session, tenant_id: str) -> list[LLMModelO
                         entries.append((mid, note))
                 elif isinstance(item, str) and item.strip():
                     entries.append((item.strip(), None))
-        if not entries:
+        # available_models = null 表示尚未設定，fallback 到預設清單
+        # available_models = [] 表示 admin 明確清空，不 fallback
+        if not entries and not isinstance(raw, list):
             for mid in PROVIDER_DEFAULT_MODELS.get(cfg.provider, []):
                 entries.append((mid, None))
         dm = (cfg.default_model or "").strip()
@@ -165,6 +168,24 @@ def _get_config_for_tenant(db: Session, config_id: int, tenant_id: str) -> LLMPr
     if not cfg:
         raise HTTPException(status_code=404, detail="LLM config 不存在")
     return cfg
+
+
+def _cascade_remove_models(db: Session, tenant_id: str, removed: set[str]) -> None:
+    """從同租戶所有 users 的 allowed_models 中移除已被刪除的 model id。"""
+    if not removed:
+        return
+    users = (
+        db.query(User)
+        .filter(User.tenant_id == tenant_id, User.allowed_models.isnot(None))
+        .all()
+    )
+    for u in users:
+        raw = getattr(u, "allowed_models", None)
+        if not isinstance(raw, list):
+            continue
+        updated = [m for m in raw if m not in removed]
+        if len(updated) != len(raw):
+            u.allowed_models = updated or None  # type: ignore[assignment]
 
 
 def _parse_available_models(raw) -> list[LLMModelEntry] | None:
@@ -338,7 +359,15 @@ def update_llm_config(
     if body.api_base_url is not None:
         cfg.api_base_url = body.api_base_url
     if body.available_models is not None:
+        old_models: set[str] = {
+            str(item.get("model", "")) if isinstance(item, dict) else str(item)
+            for item in (cfg.available_models or [])
+            if item
+        }
+        new_models: set[str] = {e.model for e in body.available_models}
+        removed = old_models - new_models
         cfg.available_models = [e.model_dump() for e in body.available_models]
+        _cascade_remove_models(db, tenant_id, removed)
     if body.is_active is not None:
         cfg.is_active = body.is_active
 
@@ -356,6 +385,12 @@ def delete_llm_config(
     """刪除 LLM provider 設定（目前租戶）"""
     tenant_id = _require_tenant_admin(db, current)
     cfg = _get_config_for_tenant(db, config_id, tenant_id)
+    all_models: set[str] = {
+        str(item.get("model", "")) if isinstance(item, dict) else str(item)
+        for item in (cfg.available_models or [])
+        if item
+    }
+    _cascade_remove_models(db, tenant_id, all_models)
     db.delete(cfg)
     db.commit()
     return None
@@ -365,6 +400,7 @@ def delete_llm_config(
 _TEST_DEFAULT_MODELS: dict[str, str] = {
     "openai": "gpt-4o-mini",
     "gemini": "gemini/gemini-2.5-flash",
+    "anthropic": "anthropic/claude-3-5-haiku-20241022",
     "twcc": "twcc/Llama3.3-FFM-70B-32K",
 }
 

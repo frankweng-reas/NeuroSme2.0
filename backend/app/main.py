@@ -3,6 +3,7 @@ import logging
 from contextlib import asynccontextmanager
 
 import aiohttp
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
@@ -47,7 +48,16 @@ async def lifespan(app: FastAPI):
         seed_default_tenant(db)
         seed_default_admin(db)
 
+    # 啟動 KM Connector 排程器（每分鐘檢查到期的 connector）
+    from app.services.connector_service import run_due_connectors
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(run_due_connectors, "interval", minutes=1, id="km_connector_sync")
+    scheduler.start()
+    logger.info("KM Connector 排程器已啟動")
+
     yield
+
+    scheduler.shutdown(wait=False)
     await session.close()
 
 

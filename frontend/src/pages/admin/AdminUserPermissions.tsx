@@ -1,5 +1,5 @@
 /** Admin：使用者權限設定 — 選 user → 設定角色、Agent 權限、模型權限 → 一鍵儲存 */
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getAgents } from '@/api/agents'
 import { getAllLLMModelOptions, type LLMModelOption } from '@/api/llmConfigs'
 import {
@@ -50,6 +50,15 @@ export default function AdminUserPermissions() {
   const [allowedModels, setAllowedModels] = useState<Set<string> | null>(null)
   const [isLoadingModels, setIsLoadingModels] = useState(false)
 
+  // ── Dirty 追蹤（上次載入 / 儲存的快照） ──
+  const savedRole = useRef<UserRole>('member')
+  const savedAgentIds = useRef<Set<string>>(new Set())
+  const savedAllowedModels = useRef<Set<string> | null>(null)
+
+  // ── 未儲存確認 ──
+  const [pendingUserId, setPendingUserId] = useState<number | null>(null)
+  const [showUnsavedConfirm, setShowUnsavedConfirm] = useState(false)
+
   // ── 儲存 ──
   const [isSaving, setIsSaving] = useState(false)
   const { showToast } = useToast()
@@ -77,10 +86,15 @@ export default function AdminUserPermissions() {
       setUserRole('member')
       setAgents([])
       setAllowedModels(null)
+      savedRole.current = 'member'
+      savedAgentIds.current = new Set()
+      savedAllowedModels.current = null
       return
     }
     const u = users.find((x) => x.id === selectedUserId)
-    setUserRole(u?.role ?? 'member')
+    const role = u?.role ?? 'member'
+    setUserRole(role)
+    savedRole.current = role as UserRole
 
     setIsLoadingAgents(true)
     getAgents(true, u?.tenant_id)
@@ -90,14 +104,22 @@ export default function AdminUserPermissions() {
 
     setIsLoadingUserAgents(true)
     getUserAgentIds(selectedUserId)
-      .then((ids) => setUserAgentIds(new Set(ids)))
-      .catch(() => setUserAgentIds(new Set()))
+      .then((ids) => {
+        const s = new Set(ids)
+        setUserAgentIds(s)
+        savedAgentIds.current = s
+      })
+      .catch(() => { setUserAgentIds(new Set()); savedAgentIds.current = new Set() })
       .finally(() => setIsLoadingUserAgents(false))
 
     setIsLoadingModels(true)
     getUserModelPermissions(selectedUserId)
-      .then((perms) => setAllowedModels(perms === null ? null : new Set(perms)))
-      .catch(() => setAllowedModels(null))
+      .then((perms) => {
+        const s = perms === null ? null : new Set(perms)
+        setAllowedModels(s)
+        savedAllowedModels.current = s === null ? null : new Set(s)
+      })
+      .catch(() => { setAllowedModels(null); savedAllowedModels.current = null })
       .finally(() => setIsLoadingModels(false))
   }, [selectedUserId, users])
 
@@ -162,6 +184,9 @@ export default function AdminUserPermissions() {
       }
       await updateUserAgents(selectedUserId, Array.from(userAgentIds))
       await updateUserModelPermissions(selectedUserId, allowedModels === null ? null : Array.from(allowedModels))
+      savedRole.current = userRole
+      savedAgentIds.current = new Set(userAgentIds)
+      savedAllowedModels.current = allowedModels === null ? null : new Set(allowedModels)
       showToast('已儲存')
       setUsers((prev) =>
         prev.map((u) => (u.id === selectedUserId ? { ...u, role: userRole } : u))
@@ -173,6 +198,30 @@ export default function AdminUserPermissions() {
       setIsSaving(false)
     }
   }, [selectedUserId, userRole, userAgentIds, allowedModels, showToast])
+
+  const isDirty = useMemo(() => {
+    if (selectedUserId == null) return false
+    if (userRole !== savedRole.current) return true
+    const sa = savedAgentIds.current
+    if (userAgentIds.size !== sa.size || [...userAgentIds].some((id) => !sa.has(id))) return true
+    const sm = savedAllowedModels.current
+    if (allowedModels === null && sm !== null) return true
+    if (allowedModels !== null && sm === null) return true
+    if (allowedModels !== null && sm !== null) {
+      if (allowedModels.size !== sm.size || [...allowedModels].some((m) => !sm.has(m))) return true
+    }
+    return false
+  }, [selectedUserId, userRole, userAgentIds, allowedModels])
+
+  function handleSelectUser(userId: number) {
+    if (userId === selectedUserId) return
+    if (isDirty) {
+      setPendingUserId(userId)
+      setShowUnsavedConfirm(true)
+      return
+    }
+    setSelectedUserId(userId)
+  }
 
   const selectedUser = users.find((u) => u.id === selectedUserId)
   const isOnlyAdmin = selectedUser?.role === 'admin' && users.filter((u) => u.role === 'admin').length <= 1
@@ -213,7 +262,7 @@ export default function AdminUserPermissions() {
               <li key={u.id}>
                 <button
                   type="button"
-                  onClick={() => setSelectedUserId(u.id)}
+                  onClick={() => handleSelectUser(u.id)}
                   className={`w-full rounded-lg px-3 py-2 text-left text-sm transition-colors ${
                     selectedUserId === u.id
                       ? 'bg-gray-600 text-white'
@@ -270,9 +319,11 @@ export default function AdminUserPermissions() {
                   type="button"
                   onClick={handleSave}
                   disabled={isSaving}
-                  className="rounded-lg px-4 py-2 font-medium text-white shadow-sm disabled:opacity-50"
-                  style={{ backgroundColor: '#4b5563' }}
+                  className={`flex items-center gap-2 rounded-lg px-4 py-2 font-medium text-white shadow-sm transition-colors disabled:opacity-50 ${
+                    isDirty ? 'bg-amber-500 hover:bg-amber-600' : 'bg-gray-500 hover:bg-gray-600'
+                  }`}
                 >
+                  {isDirty && <span className="h-2 w-2 rounded-full bg-white opacity-90" />}
                   {isSaving ? '儲存中...' : '儲存'}
                 </button>
               </div>
@@ -419,6 +470,36 @@ export default function AdminUserPermissions() {
         )}
       </div>
       </div>
+
+      {/* ── 未儲存確認 ── */}
+      {showUnsavedConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm rounded-xl bg-white shadow-2xl p-6 space-y-4">
+            <p className="text-base font-semibold text-gray-800">有未儲存的變更</p>
+            <p className="text-sm text-gray-500">離開此使用者將捨棄目前的修改，確定要繼續嗎？</p>
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setShowUnsavedConfirm(false)}
+                className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowUnsavedConfirm(false)
+                  setSelectedUserId(pendingUserId)
+                  setPendingUserId(null)
+                }}
+                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500"
+              >
+                捨棄變更
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

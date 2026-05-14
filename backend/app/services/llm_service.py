@@ -81,6 +81,11 @@ def _get_llm_params(
         litellm_model = f"ollama_chat/{model[6:]}"
         # 本機服務（Ollama / LM Studio / vLLM）通常不需要真實 key；用 "local" 作 placeholder
         return litellm_model, db_key or "local", db_base or None
+    if model.startswith("anthropic/") or model.startswith("claude-"):
+        db_key, _ = _db_key("anthropic")
+        # 補齊前綴，確保 LiteLLM 路由正確
+        litellm_model = model if model.startswith("anthropic/") else f"anthropic/{model}"
+        return litellm_model, db_key or None, None
     db_key, _ = _db_key("openai")
     return model, db_key or None, None
 
@@ -91,6 +96,8 @@ def _infer_llm_provider(model: str) -> str:
         return "gemini"
     if m.startswith("twcc/"):
         return "twcc"
+    if m.startswith("anthropic/") or m.startswith("claude-"):
+        return "anthropic"
     return "openai"
 
 
@@ -101,6 +108,8 @@ def _get_provider_name(model: str) -> str:
         return "台智雲"
     if model.startswith("local/"):
         return "本機模型"
+    if model.startswith("anthropic/") or model.startswith("claude-"):
+        return "Anthropic"
     return "OpenAI"
 
 

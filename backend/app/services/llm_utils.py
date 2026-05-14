@@ -18,6 +18,8 @@ def get_provider_from_model(model: str) -> str:
         return "twcc"
     if m.startswith("local/"):
         return "local"
+    if m.startswith("anthropic/") or m.startswith("claude-"):
+        return "anthropic"
     return "openai"
 
 
@@ -60,6 +62,8 @@ def set_env_api_key(model: str, api_key: str) -> None:
     """依 model 設定對應的環境變數（LiteLLM 某些路徑會讀取環境變數）"""
     if model.startswith("gemini/"):
         os.environ["GEMINI_API_KEY"] = api_key
+    elif model.startswith("anthropic/") or model.startswith("claude-"):
+        os.environ["ANTHROPIC_API_KEY"] = api_key
     else:
         os.environ["OPENAI_API_KEY"] = api_key
 

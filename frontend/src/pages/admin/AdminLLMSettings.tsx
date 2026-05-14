@@ -89,6 +89,7 @@ interface FormState {
   provider: string
   label: string
   api_key: string
+  api_key_masked: string
   api_base_url: string
   available_models_entries: LLMModelEntry[]
   is_active: boolean
@@ -98,6 +99,7 @@ const EMPTY_FORM: FormState = {
   provider: 'openai',
   label: '',
   api_key: '',
+  api_key_masked: '',
   api_base_url: '',
   available_models_entries: [],
   is_active: true,
@@ -139,6 +141,9 @@ export default function AdminLLMSettings() {
   // per-model test results  key = `{configId}:{model}`
   const [testingKey, setTestingKey] = useState<TestKey | null>(null)
   const [testResultModal, setTestResultModal] = useState<{ model: string; result: LLMTestResult } | null>(null)
+
+  // reference models popup
+  const [showRefModal, setShowRefModal] = useState(false)
 
   // default LLM edit
   const [showDefaultLLMForm, setShowDefaultLLMForm] = useState(false)
@@ -211,6 +216,7 @@ export default function AdminLLMSettings() {
       provider: cfg.provider,
       label: cfg.label ?? '',
       api_key: '',
+      api_key_masked: cfg.api_key_masked ?? '',
       api_base_url: cfg.api_base_url ?? '',
       available_models_entries: cfg.available_models ?? [],
       is_active: cfg.is_active,
@@ -237,7 +243,7 @@ export default function AdminLLMSettings() {
         const body: LLMProviderConfigUpdate = {
           label: form.label || null,
           api_base_url: form.api_base_url || null,
-          available_models: availableModels.length > 0 ? availableModels : null,
+          available_models: availableModels,
           is_active: form.is_active,
         }
         if (form.api_key.trim()) body.api_key = form.api_key.trim()
@@ -249,7 +255,7 @@ export default function AdminLLMSettings() {
           label: form.label || null,
           api_key: form.api_key.trim() || null,
           api_base_url: form.api_base_url || null,
-          available_models: availableModels.length > 0 ? availableModels : null,
+          available_models: availableModels,
           is_active: true,
         }
         await createLLMConfig(body)
@@ -809,7 +815,7 @@ export default function AdminLLMSettings() {
 
               <Field
                 label={editingId !== null ? 'API Key（留空表示不變更）' : 'API Key'}
-                hint={form.provider === 'local' ? '本機服務通常不需要 API Key，可留空或填任意字串（如 local）' : undefined}
+                hint={form.provider === 'local' ? '本機服務通常不需要 API Key，可留空或填任意字串（如 local）' : editingId !== null && form.api_key_masked ? `目前：${form.api_key_masked}` : undefined}
               >
                 <div className="relative">
                   <input
@@ -869,7 +875,13 @@ export default function AdminLLMSettings() {
                       <div className="flex-1 space-y-1">
                         <input
                           type="text"
-                          placeholder="Model ID，例：gemini/gemini-2.5-flash"
+                          placeholder={
+                            form.provider === 'local'      ? 'Model ID，例：local/gemma4:26b' :
+                            form.provider === 'gemini'     ? 'Model ID，例：gemini/gemini-2.5-flash' :
+                            form.provider === 'anthropic'  ? 'Model ID，例：anthropic/claude-3-5-haiku-20241022' :
+                            form.provider === 'twcc'       ? 'Model ID，例：twcc/Llama3.3-FFM-70B-32K' :
+                                                             'Model ID，例：gpt-4o-mini'
+                          }
                           value={entry.model}
                           onChange={(e) => {
                             const next = [...form.available_models_entries]
@@ -887,7 +899,7 @@ export default function AdminLLMSettings() {
                             next[idx] = { ...next[idx], note: e.target.value }
                             setForm((f) => ({ ...f, available_models_entries: next }))
                           }}
-                          className="w-full rounded-lg border border-gray-200 px-3 py-1.5 text-base text-gray-500 focus:outline-none focus:ring-2 focus:ring-gray-300"
+                          className="w-full rounded-lg border border-gray-200 px-3 py-1.5 text-base text-gray-700 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-300"
                         />
                       </div>
                       <button
@@ -912,13 +924,10 @@ export default function AdminLLMSettings() {
                   {defaultModelsForProvider.length > 0 && (
                     <button
                       type="button"
-                      onClick={() => setForm((f) => ({
-                        ...f,
-                        available_models_entries: defaultModelsForProvider.map((m) => ({ model: m, note: '' })),
-                      }))}
-                      className="text-base text-blue-600 hover:underline"
+                      onClick={() => setShowRefModal(true)}
+                      className="text-base text-blue-500 hover:underline"
                     >
-                      使用預設清單
+                      參考設定
                     </button>
                   )}
                 </div>
@@ -1316,6 +1325,31 @@ export default function AdminLLMSettings() {
             </div>
             <div className="px-6 py-4 border-t border-gray-100 flex justify-end">
               <button onClick={() => setEmbeddingTestResult(null)} className="rounded-lg bg-gray-700 px-5 py-2 text-base font-medium text-white hover:bg-gray-600 transition-colors">關閉</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal：參考設定 ── */}
+      {showRefModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm rounded-xl bg-white shadow-2xl">
+            <ModalHeader title="參考設定（僅供參考）" onClose={() => setShowRefModal(false)} />
+            <div className="px-6 py-5 space-y-2">
+              <p className="text-base text-gray-500 mb-3">以下為 {form.provider} 常用 Model ID，可手動複製填入：</p>
+              <ul className="space-y-1.5">
+                {defaultModelsForProvider.map((m) => (
+                  <li key={m} className="font-mono text-base text-gray-800 bg-gray-50 rounded-lg px-3 py-2 select-all">{m}</li>
+                ))}
+              </ul>
+            </div>
+            <div className="px-6 py-4 border-t border-gray-100 flex justify-end">
+              <button
+                onClick={() => setShowRefModal(false)}
+                className="rounded-lg bg-gray-700 px-5 py-2 text-base font-medium text-white hover:bg-gray-600 transition-colors"
+              >
+                關閉
+              </button>
             </div>
           </div>
         </div>

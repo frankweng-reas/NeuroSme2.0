@@ -18,5 +18,5 @@ echo "[2/2] 重啟 demo 容器..."
 docker compose -f docker-compose.demo.yml up -d --force-recreate
 
 echo ""
-echo "✅ Demo 已更新：https://ee.neurosme.ai:4443"
+echo "✅ Demo 已更新：https://demo.ee.neurosme.ai"
 echo "   查看 log：docker compose -f docker-compose.demo.yml logs -f"

@@ -214,6 +214,89 @@ export interface QueryStatsResponse {
 
 export type QueryStatsView = 'top_queries' | 'zero_hit'
 
+// ── KM Connectors ─────────────────────────────────────────────────────────────
+
+export interface KmConnector {
+  id: number
+  knowledge_base_id: number
+  source_type: 'slack' | string
+  display_name: string
+  config: Record<string, unknown>
+  status: 'active' | 'paused' | 'error'
+  sync_interval_minutes: number
+  last_synced_at: string | null
+  last_cursor: string | null
+  last_error: string | null
+  force_full_sync: boolean
+  created_at: string
+}
+
+export interface SlackChannel {
+  id: string
+  name: string
+  is_private: boolean
+  member_count: number | null
+}
+
+export async function listConnectors(kbId?: number): Promise<KmConnector[]> {
+  const qs = kbId != null ? `?kb_id=${kbId}` : ''
+  return apiFetch<KmConnector[]>(`/km/connectors${qs}`)
+}
+
+export async function createConnector(data: {
+  knowledge_base_id: number
+  source_type: string
+  display_name: string
+  config: Record<string, unknown>
+  credentials: Record<string, unknown>
+  sync_interval_minutes?: number
+}): Promise<KmConnector> {
+  return apiFetch<KmConnector>('/km/connectors', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+}
+
+export async function updateConnector(
+  id: number,
+  data: {
+    display_name?: string
+    config?: Record<string, unknown>
+    credentials?: Record<string, unknown>
+    sync_interval_minutes?: number
+    status?: 'active' | 'paused'
+    force_full_sync?: boolean
+  },
+): Promise<KmConnector> {
+  return apiFetch<KmConnector>(`/km/connectors/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+}
+
+export async function deleteConnector(id: number): Promise<void> {
+  return apiFetch<void>(`/km/connectors/${id}`, { method: 'DELETE' })
+}
+
+export async function triggerConnectorSync(id: number): Promise<void> {
+  return apiFetch<void>(`/km/connectors/${id}/sync`, { method: 'POST' })
+}
+
+export async function validateSlackToken(token: string): Promise<{
+  ok: boolean
+  workspace: string
+  user: string
+  channels: SlackChannel[]
+}> {
+  return apiFetch('/km/connectors/slack/validate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  })
+}
+
 export async function getKbQueryStats(
   kbId: number,
   options: {

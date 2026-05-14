@@ -31,6 +31,7 @@ from app.models.bot import Bot, BotKnowledgeBase
 from app.models.bot_widget_session import BotWidgetSession, BotWidgetMessage
 from app.models.km_query_log import KmQueryLog
 from app.models.bot_query_log import BotQueryLog
+from app.models.km_connector import KmConnector
 
 __all__ = [
     "Base", "Tenant", "User", "AgentCatalog", "TenantAgent", "UserAgent",
@@ -47,4 +48,5 @@ __all__ = [
     "BotWidgetSession", "BotWidgetMessage",
     "KmQueryLog",
     "BotQueryLog",
+    "KmConnector",
 ]

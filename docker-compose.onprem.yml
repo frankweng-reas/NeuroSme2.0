@@ -40,13 +40,13 @@ services:
 
   # ── 前端（React SPA） ────────────────────────────────────────
   frontend:
-    image: ghcr.io/reas/neurosme-frontend:latest
+    image: ghcr.io/frankweng-reas/neurosme-frontend:latest
     restart: unless-stopped
     # 不暴露 port 給外部；透過 nginx 路由
 
   # ── NeuroSme 後端 ────────────────────────────────────────────
   backend:
-    image: ghcr.io/reas/neurosme-backend:latest
+    image: ghcr.io/frankweng-reas/neurosme-backend:latest
     restart: unless-stopped
     # 讓容器內固定用 host.docker.internal 連主機上的 Ollama（網段隨 compose 變化仍可用）
     extra_hosts:
@@ -71,7 +71,7 @@ services:
 
   # ── NeuroSme 資料庫 ──────────────────────────────────────────
   neurosme-db:
-    image: neurosme2-postgres:latest
+    image: ghcr.io/frankweng-reas/neurosme2-postgres:latest
     restart: unless-stopped
     environment:
       POSTGRES_USER: neurosme
@@ -87,7 +87,7 @@ services:
 
   # ── LocalAuth（認證服務） ─────────────────────────────────────
   localauth:
-    image: ghcr.io/reas/localauth:latest
+    image: ghcr.io/frankweng-reas/localauth:latest
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://localauth:ccb7e57879127b441728934b2fa56dc3db1d40ceae05084c@localauth-db:5432/localauth

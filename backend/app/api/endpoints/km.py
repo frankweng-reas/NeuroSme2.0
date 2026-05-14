@@ -66,9 +66,11 @@ ALLOWED_CONTENT_TYPES = {
     "text/plain",
     "text/markdown",
     "text/x-markdown",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/msword",
 }
 
-ALLOWED_EXTENSIONS = {".pdf", ".txt", ".md", ".markdown"}
+ALLOWED_EXTENSIONS = {".pdf", ".txt", ".md", ".markdown", ".docx", ".doc"}
 
 MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MB
 
