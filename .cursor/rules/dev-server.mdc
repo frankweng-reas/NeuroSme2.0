@@ -33,7 +33,7 @@ alwaysApply: true
 - 開發環境完整說明：`~/NeuroSme2.0/DEV-SETUP.md`
 
 ## GCP 防火牆（開放 port）
-- 22（SSH）、80（HTTP）、443（HTTPS）、3000（reas-portal）
+- 22（SSH）、80（HTTP）、443（HTTPS）、3000（reas-portal）、8443（NeuroSme dev）
 
 ## 常用指令
 ```bash
@@ -46,6 +46,8 @@ cd ~/NeuroSme2.0 && docker compose -f docker-compose.dev.yml restart
 # 查看 log
 tail -f /tmp/neurosme-frontend.log
 tail -f /tmp/neurosme-backend.log
+tail -f /tmp/reas-backend.log
+tail -f /tmp/reas-frontend.log
 ```
 
 ## 注意事項

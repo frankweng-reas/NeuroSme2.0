@@ -498,7 +498,12 @@ async def chat_completions(
                 selected, llm_usage, llm_latency = candidates, None, 0
 
             if not selected:
-                faq_answer = "根據目前的知識庫，找不到相關資訊。"
+                faq_answer = _clean_rag_response(
+                    _NOT_FOUND_MARKER,
+                    agent_type=prepared.agent_id,
+                    fallback_message=prepared.bot_fallback_message,
+                    fallback_message_enabled=prepared.bot_fallback_message_enabled,
+                )
             else:
                 parts = []
                 for chunk, _ in selected:
@@ -779,7 +784,12 @@ async def chat_completions_stream(
             selected, llm_usage, llm_latency = candidates, None, 0
 
         if not selected:
-            faq_answer = "根據目前的知識庫，找不到相關資訊。"
+            faq_answer = _clean_rag_response(
+                _NOT_FOUND_MARKER,
+                agent_type=prepared.agent_id,
+                fallback_message=prepared.bot_fallback_message,
+                fallback_message_enabled=prepared.bot_fallback_message_enabled,
+            )
         else:
             parts = []
             for chunk, _ in selected:
